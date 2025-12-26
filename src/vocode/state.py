@@ -5,6 +5,7 @@ from pydantic import model_validator
 from datetime import datetime
 from .lib.date import utcnow
 from uuid import UUID, uuid4
+from .settings import ToolSpec  # type: ignore
 
 from .models import Role
 
@@ -33,7 +34,7 @@ class RunStatus(str, Enum):
 class StepType(str, Enum):
     # Any message sent by the node of any type
     OUTPUT_MESSAGE = "output_message"
-    # Any input message sent by the user
+    # Any input message sent by the user or the coding tool
     INPUT_MESSAGE = "input_message"
     # Any sort of completion step, such as LLM finishing its output
     COMPLETION = "completion"
@@ -75,6 +76,10 @@ class ToolCallReq(BaseModel):
     name: str = Field(..., description="Function name to call")
     arguments: Dict[str, Any] = Field(
         ..., description="Decoded JSON arguments passed to the function"
+    )
+    tool_spec: Optional[ToolSpec] = Field(
+        default=None,
+        description="Effective ToolSpec used for this call, if any.",
     )
     created_at: datetime = Field(default_factory=utcnow)
 

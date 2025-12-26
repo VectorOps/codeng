@@ -13,7 +13,7 @@ from .settings import KnowProjectSettings, Settings
 from .settings.loader import load_settings
 from .templates import write_default_config
 from .state import LLMUsageStats
-from .know import KnowProject
+from .know import KnowProject, convert_know_tool
 
 
 class ProjectState:
@@ -60,6 +60,7 @@ class Project:
         self.base_path: Path = base_path
         self.config_relpath: Path = config_relpath
         self.settings: Optional[Settings] = settings
+        self.tools: Dict[str, "BaseTool"] = {}
         self.know: KnowProject = KnowProject()
         # Project-level shared state for executors
         self.project_state: ProjectState = ProjectState()
@@ -90,16 +91,43 @@ class Project:
             use_scm=use_scm,
         )
 
-    async def shutdown(self) -> None:
-        """Gracefully shut down project components."""
-        pass
-
+    # Project db
     async def refresh(
         self,
         repo: Optional["Repo"] = None,
         files: Optional[List[FileChangeModel]] = None,
     ) -> None:
-        pass
+        await self.know.refresh(repo)
+
+    # Tool management
+    def refresh_tools_from_registry(self) -> None:
+        """
+        Refresh self.tools from the global registry and dynamic sources, excluding disabled tools per settings.
+        """
+        from .tools import get_all_tools
+
+        disabled_tool_names = (
+            {
+                entry.name
+                for entry in (self.settings.tools or [])
+                if entry.enabled is False
+            }
+            if self.settings
+            else set()
+        )
+
+        # Code tools
+        all_tools = get_all_tools()
+        self.tools = {
+            name: cls(self)
+            for name, cls in all_tools.items()
+            if name not in disabled_tool_names
+        }
+
+        # Know tools
+        for t in self.know.pm.get_enabled_tools():
+            if t.tool_name not in disabled_tool_names:
+                self.tools[t.tool_name] = convert_know_tool(self, t)
 
     # LLM usage totals
     def add_llm_usage(
@@ -120,8 +148,15 @@ class Project:
         if self.settings and self.settings.know:
             await self.know.start(self.settings.know)
 
+        # Register tools
+        self.refresh_tools_from_registry()
+
         # Perform an initial refresh of all 'know' repositories on start
-        await self.know.refresh_all(progress_sender=self.send_message)
+        await self.know.refresh_all()
+
+    async def shutdown(self) -> None:
+        """Gracefully shut down project components."""
+        await self.know.shutdown()
 
 
 def _find_project_root_with_config(start: Path, rel_config: Path) -> Optional[Path]:

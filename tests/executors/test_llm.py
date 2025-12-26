@@ -144,6 +144,84 @@ async def test_llm_executor_with_litellm_mock_response(
     assert completion_step.is_complete is True
 
 
+@pytest.mark.asyncio
+async def test_llm_executor_populates_tool_spec_on_tool_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
+        async def gen() -> Any:
+            yield FakeChunk("Tool answer")
+
+        return gen()
+
+    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
+        parts: List[str] = []
+        for chunk in chunks:
+            choice0 = chunk.choices[0]
+            if choice0.delta.content:
+                parts.append(choice0.delta.content)
+        full_text = "".join(parts)
+
+        tool_args = "{}"
+        tool_call = FakeToolCall("echo", tool_args)
+        return FakeResponse(full_text, tool_calls=[tool_call])
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(litellm, "stream_chunk_builder", fake_stream_chunk_builder)
+
+    project = StubProject()
+
+    global_tool = vocode_settings.ToolSpec(
+        name="echo",
+        enabled=True,
+        config={"x": 2},
+    )
+    project.settings.tools = [global_tool]
+
+    node_tool = vocode_settings.ToolSpec(
+        name="echo",
+        enabled=True,
+        config={"x": 1},
+    )
+
+    node = LLMNode(
+        name="node-tools-call",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        tools=[node_tool],
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    user_msg = state.Message(role=models.Role.USER, text="Hi")
+    execution = state.NodeExecution(
+        node="node-tools-call",
+        input_messages=[user_msg],
+        status=state.RunStatus.RUNNING,
+    )
+    run = state.WorkflowExecution(
+        workflow_name="wf",
+        node_executions={execution.id: execution},
+        steps=[],
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    final_message_step = steps[-2]
+    assert final_message_step.message is not None
+    tool_reqs = final_message_step.message.tool_call_requests
+    assert len(tool_reqs) == 1
+
+    req = tool_reqs[0]
+    assert req.name == "echo"
+    assert req.tool_spec is not None
+    assert isinstance(req.tool_spec, vocode_settings.ToolSpec)
+    assert req.tool_spec.config.get("x") == 2
+
+
 def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> None:
     project = StubProject()
 
