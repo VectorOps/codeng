@@ -290,6 +290,8 @@ workflows:
           - name: done
       - $include:
           template: nodes/coder.yaml
+        tools:
+          - read_files
       - $include:
           template: nodes/apply_patch.yaml
         confirmation: auto

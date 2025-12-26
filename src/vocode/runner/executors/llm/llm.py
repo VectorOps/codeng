@@ -4,10 +4,9 @@ import asyncio
 import json
 import litellm
 
-from vocode import state
+from vocode import state, models
 from vocode.logger import logger
-from vocode.models import Role
-from .helpers import build_effective_tool_specs
+from . import helpers as llm_helpers
 from ...base import BaseExecutor, ExecutorInput
 
 
@@ -26,6 +25,14 @@ class LLMExecutor(BaseExecutor):
             system_parts.append(cfg.system)
         if cfg.system_append:
             system_parts.append(cfg.system_append)
+        outcome_names = llm_helpers.get_outcome_names(cfg)
+        if len(outcome_names) > 1 and cfg.outcome_strategy == models.OutcomeStrategy.TAG:
+            outcome_desc_bullets = llm_helpers.get_outcome_desc_bullets(cfg)
+            tag_instruction = llm_helpers.build_tag_system_instruction(
+                outcome_names,
+                outcome_desc_bullets,
+            )
+            system_parts.append(tag_instruction)
 
         if system_parts:
             system_prompt = "\n\n".join(p for p in system_parts if p).strip()
@@ -83,7 +90,7 @@ class LLMExecutor(BaseExecutor):
         self,
         base_step: state.Step,
         *,
-        role: Role,
+        role: models.Role,
         step_type: state.StepType,
         text: str,
         usage: Optional[state.LLMUsageStats] = None,
@@ -108,7 +115,7 @@ class LLMExecutor(BaseExecutor):
 
     def _build_tools(self) -> Optional[List[Dict[str, Any]]]:
         cfg = self.config
-        effective_specs = build_effective_tool_specs(self.project, cfg)
+        effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
         if not effective_specs:
             return None
 
@@ -131,6 +138,21 @@ class LLMExecutor(BaseExecutor):
 
         conv = self.build_messages(inp)
         tools = self._build_tools()
+        outcome_names = llm_helpers.get_outcome_names(cfg)
+        if len(outcome_names) > 1 and cfg.outcome_strategy == models.OutcomeStrategy.FUNCTION:
+            outcome_desc_bullets = llm_helpers.get_outcome_desc_bullets(cfg)
+            outcome_choice_desc = llm_helpers.get_outcome_choice_desc(
+                cfg,
+                outcome_desc_bullets,
+            )
+            choose_tool = llm_helpers.build_choose_outcome_tool(
+                outcome_names,
+                outcome_desc_bullets,
+                outcome_choice_desc,
+            )
+            if tools is None:
+                tools = []
+            tools.append(choose_tool)
 
         step = state.Step(
             execution=inp.execution,
@@ -192,7 +214,7 @@ class LLMExecutor(BaseExecutor):
                         assistant_partial += content_piece
                         interim_step = self._build_step_from_message(
                             step,
-                            role=Role.ASSISTANT,
+                            role=models.Role.ASSISTANT,
                             step_type=state.StepType.OUTPUT_MESSAGE,
                             text=assistant_partial,
                         )
@@ -229,7 +251,7 @@ class LLMExecutor(BaseExecutor):
 
                 error_step = self._build_step_from_message(
                     step,
-                    role=Role.SYSTEM,
+                    role=models.Role.SYSTEM,
                     step_type=state.StepType.REJECTION,
                     text=f"LLM error: {e}",
                 )
@@ -253,8 +275,21 @@ class LLMExecutor(BaseExecutor):
         if isinstance(content, str):
             assistant_text = content
 
+        outcome_name: Optional[str] = None
         tool_call_reqs: List[state.ToolCallReq] = []
         tool_calls_data = message_data.tool_calls or []
+
+        if (
+            len(outcome_names) > 1
+            and cfg.outcome_strategy == models.OutcomeStrategy.TAG
+        ):
+            parsed_outcome = llm_helpers.parse_outcome_from_text(
+                assistant_text,
+                outcome_names,
+            )
+            if parsed_outcome:
+                outcome_name = parsed_outcome
+                assistant_text = llm_helpers.strip_outcome_line(assistant_text)
 
         for tc in tool_calls_data:
             tc_id = tc.id
@@ -271,6 +306,15 @@ class LLMExecutor(BaseExecutor):
                 arguments = json.loads(arguments_raw)
             except Exception:
                 arguments = {}
+            if (
+                len(outcome_names) > 1
+                and cfg.outcome_strategy == models.OutcomeStrategy.FUNCTION
+                and func_name == llm_helpers.CHOOSE_OUTCOME_TOOL_NAME
+            ):
+                cand = arguments.get("outcome")
+                if isinstance(cand, str) and cand in outcome_names:
+                    outcome_name = cand
+                continue
 
             tool_call_reqs.append(
                 state.ToolCallReq(
@@ -295,7 +339,7 @@ class LLMExecutor(BaseExecutor):
 
         message_step = self._build_step_from_message(
             step,
-            role=Role.ASSISTANT,
+            role=models.Role.ASSISTANT,
             step_type=state.StepType.OUTPUT_MESSAGE,
             text=assistant_text,
             usage=usage_stats,
@@ -303,11 +347,13 @@ class LLMExecutor(BaseExecutor):
         )
         yield message_step
 
+        final_outcome_name = outcome_name if len(outcome_names) > 1 else None
+
         completion_step = state.Step(
             execution=inp.execution,
             type=state.StepType.COMPLETION,
             message=None,
-            outcome_name=None,
+            outcome_name=final_outcome_name,
             state=None,
             llm_usage=usage_stats,
         )
