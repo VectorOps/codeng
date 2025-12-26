@@ -1,4 +1,5 @@
 from typing import AsyncIterator, List, Dict, Any, Optional
+from typing import Final
 
 import asyncio
 import json
@@ -9,6 +10,10 @@ from vocode.logger import logger
 from . import helpers as llm_helpers
 from ...base import BaseExecutor, ExecutorInput
 
+INCLUDED_STEP_TYPES: Final = (
+    state.StepType.OUTPUT_MESSAGE,
+    state.StepType.INPUT_MESSAGE,
+)
 
 class LLMExecutor(BaseExecutor):
     def build_messages(self, inp: ExecutorInput) -> List[Dict]:
@@ -81,8 +86,11 @@ class LLMExecutor(BaseExecutor):
             _append_message(m)
 
         for s in execution.steps:
-            if s.message is not None:
-                _append_message(s.message)
+            if s.message is None:
+                continue
+            if s.type not in INCLUDED_STEP_TYPES:
+                continue
+            _append_message(s.message)
 
         return messages
 
@@ -137,6 +145,8 @@ class LLMExecutor(BaseExecutor):
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
+
+        effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
 
         conv = self.build_messages(inp)
         tools = self._build_tools()
@@ -319,12 +329,14 @@ class LLMExecutor(BaseExecutor):
                     outcome_name = cand
                 continue
 
+            tool_spec = effective_specs.get(func_name)
             tool_call_reqs.append(
                 state.ToolCallReq(
                     id=tc_id,
                     type=tc_type,
                     name=func_name,
                     arguments=arguments,
+                    tool_spec=tool_spec,
                 )
             )
 
