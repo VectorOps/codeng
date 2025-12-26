@@ -11,4 +11,3 @@
      - Call executor
 3. Final message from node
    - Emit corresponding step type without a message
-4.

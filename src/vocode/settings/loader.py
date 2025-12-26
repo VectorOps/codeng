@@ -7,7 +7,7 @@ from pydantic import BaseModel
 import yaml
 import json5  # type: ignore
 
-from .settings import (
+from .models import (
     Settings,
     VOCODE_TEMPLATE_BASE,
     TEMPLATE_INCLUDE_KEYS,

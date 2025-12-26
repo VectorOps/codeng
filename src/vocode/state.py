@@ -3,6 +3,7 @@ from typing import List, Optional, Annotated, Dict, Any, Union
 from pydantic import BaseModel, Field, StringConstraints
 from pydantic import model_validator
 from datetime import datetime
+from .lib.date import utcnow
 from uuid import UUID, uuid4
 
 from .models import Role
@@ -75,7 +76,7 @@ class ToolCallReq(BaseModel):
     arguments: Dict[str, Any] = Field(
         ..., description="Decoded JSON arguments passed to the function"
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class ToolCallResp(BaseModel):
@@ -95,7 +96,7 @@ class ToolCallResp(BaseModel):
         default=None,
         description="Decoded JSON result of the function call; may be a dict or a list of dicts; None until completed",
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class Message(BaseModel):
@@ -117,7 +118,7 @@ class Message(BaseModel):
         default_factory=list,
         description="Tool call responses",
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class NodeExecution(BaseModel):
@@ -139,7 +140,7 @@ class NodeExecution(BaseModel):
         default=None,
         description="Any internal state that is maintained by the corresponding step runner.",
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class Step(BaseModel):
@@ -156,6 +157,9 @@ class Step(BaseModel):
     message: Optional[Message] = Field(
         default=None, description="Message carried by this step, if any."
     )
+    outcome_name: Optional[str] = Field(
+        default=None, description="Outcome name, if any."
+    )
     state: Optional[BaseModel] = Field(
         default=None,
         description="Any internal state that is maintained by the corresponding step runner.",
@@ -163,7 +167,7 @@ class Step(BaseModel):
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this step, if any."
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class WorkflowExecution(BaseModel):
@@ -181,4 +185,34 @@ class WorkflowExecution(BaseModel):
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this step, if any."
     )
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+
+    def delete_step(self, step_id: UUID) -> None:
+        self.delete_steps([step_id])
+
+    def delete_steps(self, step_ids: List[UUID]) -> None:
+        """
+        Delete one or more steps from the execution state.
+        """
+        if not step_ids:
+            return
+        step_ids_set = set(step_ids)
+        executions_step_ids: Dict[UUID, List[UUID]] = {}
+        remaining_steps: List[Step] = []
+        for step in self.steps:
+            if step.id in step_ids_set:
+                execution_id = step.execution.id
+                if execution_id in self.node_executions:
+                    if execution_id not in executions_step_ids:
+                        executions_step_ids[execution_id] = []
+                    executions_step_ids[execution_id].append(step.id)
+            else:
+                remaining_steps.append(step)
+        self.steps = remaining_steps
+        for execution_id, removed_ids in executions_step_ids.items():
+            execution = self.node_executions.get(execution_id)
+            if execution is not None:
+                removed_set = set(removed_ids)
+                execution.steps = [
+                    step for step in execution.steps if step.id not in removed_set
+                ]

@@ -48,6 +48,7 @@ TBD:
 
 ## Python best practices for this repo
 - You must never add any comments unless explicitly requested
+- Do not use getattr or hasattr on strongly typed objects, such as pydantic BaseModel
 - Validation:
   - Normalize with `@model_validator(mode="before")`.
   - Cross-field checks in `@model_validator(mode="after")`.
