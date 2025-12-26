@@ -229,12 +229,13 @@ class Node(BaseModel):
         return cls(**v)
 
     @field_validator("type", mode="after")
-    def _validate_type(self, v: str) -> str:
-        field = getattr(self, "model_fields", {}).get("type")
-        expected = getattr(field, "default", None)
+    @classmethod
+    def _validate_type(cls, v: str) -> str:
+        field = cls.model_fields.get("type")
+        expected = getattr(field, "default", None) if field is not None else None
         if isinstance(expected, str) and v != expected:
             raise ValueError(
-                f"Invalid type '{v}' for {self.__name__}; expected '{expected}'"
+                f"Invalid type '{v}' for {cls.__name__}; expected '{expected}'"
             )
         return v
 

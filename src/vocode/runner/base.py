@@ -8,7 +8,7 @@ from typing import (
     AsyncIterator,
 )
 from uuid import UUID
-from pyndantic import BaseModel, Field
+from pydantic import BaseModel, Field
 from .. import models, state
 
 
@@ -49,8 +49,8 @@ class BaseExecutor:
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         """
-        Async generator from Executor to Runner. Executors yields individual step, but
-        might yield it multiple times due to streaming logic.
+        Async generator from Executor to Runner. Executors yields steps. If step is alread
+        is in the state, then it's updated. If it is a new state - it's appended to the state.
         """
         raise NotImplementedError(
             "Executor subclasses must implement 'run' as an async generator"

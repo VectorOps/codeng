@@ -9,9 +9,8 @@ from pydantic import BaseModel, Field
 from pydantic import model_validator, field_validator
 import yaml
 import json5  # type: ignore
-from .models import Node, Edge
-from .state import LogLevel
-from .lib.validators import get_value_by_dotted_key, regex_matches_value
+from vocode import models
+from vocode.lib.validators import get_value_by_dotted_key, regex_matches_value
 
 
 from knowlt.settings import ProjectSettings as KnowProjectSettings
@@ -41,13 +40,21 @@ INCLUDE_KEY: Final[str] = "$include"
 EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT: Final[int] = 10 * 1024
 
 
+class LogLevel(str, Enum):
+    debug = "debug"
+    info = "info"
+    warning = "warning"
+    error = "error"
+    critical = "critical"
+
+
 class WorkflowConfig(BaseModel):
     name: Optional[str] = None
     # Human-readable purpose/summary for this workflow; used in tool descriptions.
     description: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
-    nodes: List[Node] = Field(default_factory=list)
-    edges: List[Edge] = Field(default_factory=list)
+    nodes: List[models.Node] = Field(default_factory=list)
+    edges: List[models.Edge] = Field(default_factory=list)
     agent_workflows: Optional[List[str]] = None
 
 
