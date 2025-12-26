@@ -1,0 +1,57 @@
+from typing import (
+    Optional,
+    ClassVar,
+    Dict,
+    List,
+    Any,
+    Type,
+    AsyncIterator,
+)
+from uuid import UUID
+from pyndantic import BaseModel, Field
+from .. import models, state
+
+
+class ExecutorInput(BaseModel):
+    execution: state.NodeExecution
+    run: state.WorkflowExecution
+
+
+class BaseExecutor:
+    # Subclasses must set 'type' to the Node.type they handle
+    type: ClassVar[Optional[str]] = None
+    _registry: ClassVar[Dict[str, Type["BaseExecutor"]]] = {}
+
+    def __init_subclass__(cls, **kwargs):
+        """Register Executor subclasses by their 'type' into the registry."""
+        super().__init_subclass__(**kwargs)
+        t = getattr(cls, "type", None)
+        if isinstance(t, str) and t:
+            BaseExecutor._registry[t] = cls
+
+    def __init__(self, config: models.Node, project: "Project"):
+        """Initialize an executor instance with its corresponding Node config and Project."""
+        self.config = config
+        self.project = project
+
+    @classmethod
+    def register(cls, type_name: str, exec_cls: Type["BaseExecutor"]) -> None:
+        """Manually register an Executor class under a node type name."""
+        cls._registry[type_name] = exec_cls
+
+    @classmethod
+    def create_for_node(cls, node: models.Node, project: "Project") -> "BaseExecutor":
+        """Create an Executor instance for the given Node using the registry."""
+        sub = cls._registry.get(node.type)
+        if sub is None:
+            raise ValueError(f"No executor registered for node type '{node.type}'")
+        return sub(config=node, project=project)
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        """
+        Async generator from Executor to Runner. Executors yields individual step, but
+        might yield it multiple times due to streaming logic.
+        """
+        raise NotImplementedError(
+            "Executor subclasses must implement 'run' as an async generator"
+        )

@@ -1,0 +1,14 @@
+#+title: Notes
+
+1. Data model
+   - Executor gets a workflow and prepopulated NodeExecution
+   - If NodeExecution.state is None, generate state with initial messages
+   - If NodeExecution.state is not None, need to process new Steps added to the NodeExecution (inputs, etc)
+2. Tool calling
+   - If Step contains tool call request, runner must:
+     - Confirm all tool calls
+     - Generate Step with a response message per tool call for same NodeExecution
+     - Call executor
+3. Final message from node
+   - Emit corresponding step type without a message
+4.

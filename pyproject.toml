@@ -1,0 +1,32 @@
+[project]
+name = "vopscode"
+version = "0.1.0"
+description = "vectorops code"
+readme = "readme.md"
+requires-python = ">=3.13"
+dependencies = [
+    "devtools>=0.12.2",
+    "litellm>=1.78.3",
+    "pydantic>=2.11.7",
+    "pytest>=8.4.1",
+    "pyyaml>=6.0.2",
+    "gitpython>=3.1.36",
+    "structlog>=25.4.0",
+    "json5>=0.9",
+    "knowlt @ git+https://github.com/vectorops/knowlt.git",
+]
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.mypy]
+plugins = ['pydantic.mypy']
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.1",
+    "pytest-asyncio>=1.1.0",
+]
