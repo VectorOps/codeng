@@ -1,1 +1,5 @@
 #+title: Todo
+
+* [ ] Runner
+** [ ] Add is_complete to Step to differentiate between intermediate and final results
+** [ ] Add tool support by checking if complete step was received and it contains tool calls

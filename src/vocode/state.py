@@ -167,6 +167,13 @@ class Step(BaseModel):
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this step, if any."
     )
+    is_complete: bool = Field(
+        default=False,
+        description=(
+            "True if this step represents a final, stable result "
+            "rather than an intermediate update."
+        ),
+    )
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -180,7 +187,7 @@ class WorkflowExecution(BaseModel):
         description="Unique identifier for this workflow execution",
     )
     workflow_name: str = Field()
-    node_executions: Dict[UUID, NodeExecution] = Field(default_factory=list)
+    node_executions: Dict[UUID, NodeExecution] = Field(default_factory=dict)
     steps: List[Step] = Field(default_factory=list)
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this step, if any."

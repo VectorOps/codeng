@@ -96,6 +96,7 @@ class LLMExecutor(BaseExecutor):
         usage: Optional[state.LLMUsageStats] = None,
         tool_call_requests: Optional[List[state.ToolCallReq]] = None,
         tool_call_responses: Optional[List[state.ToolCallResp]] = None,
+        is_complete: bool = False,
     ) -> state.Step:
         message = state.Message(
             role=role,
@@ -107,6 +108,7 @@ class LLMExecutor(BaseExecutor):
         update: Dict[str, Any] = {
             "type": step_type,
             "message": message,
+            "is_complete": is_complete,
         }
         if usage is not None:
             update["llm_usage"] = usage
@@ -254,6 +256,7 @@ class LLMExecutor(BaseExecutor):
                     role=models.Role.SYSTEM,
                     step_type=state.StepType.REJECTION,
                     text=f"LLM error: {e}",
+                    is_complete=True,
                 )
                 yield error_step
                 return
@@ -344,6 +347,7 @@ class LLMExecutor(BaseExecutor):
             text=assistant_text,
             usage=usage_stats,
             tool_call_requests=tool_call_reqs or None,
+            is_complete=True,
         )
         yield message_step
 
@@ -356,5 +360,6 @@ class LLMExecutor(BaseExecutor):
             outcome_name=final_outcome_name,
             state=None,
             llm_usage=usage_stats,
+            is_complete=True,
         )
         yield completion_step
