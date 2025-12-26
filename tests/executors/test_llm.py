@@ -136,6 +136,13 @@ async def test_llm_executor_with_litellm_mock_response(
 
     assert completion_step.llm_usage is final_message_step.llm_usage
 
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    for s in output_steps[:-1]:
+        assert s.is_complete is False
+    assert output_steps[-1].is_complete is True
+    assert completion_step.is_complete is True
+
 
 def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> None:
     project = StubProject()
@@ -267,6 +274,13 @@ async def test_llm_executor_outcome_tag_selection(
     assert final_message_step.message is not None
     assert "OUTCOME:" not in final_message_step.message.text
 
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    for s in output_steps[:-1]:
+        assert s.is_complete is False
+    assert output_steps[-1].is_complete is True
+    assert completion_step.is_complete is True
+
 
 @pytest.mark.asyncio
 async def test_llm_executor_outcome_function_selection(
@@ -344,3 +358,10 @@ async def test_llm_executor_outcome_function_selection(
         for step in steps
         if step.message is not None
     )
+
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    for s in output_steps[:-1]:
+        assert s.is_complete is False
+    assert output_steps[-1].is_complete is True
+    assert completion_step.is_complete is True
