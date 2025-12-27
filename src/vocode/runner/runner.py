@@ -72,6 +72,7 @@ class Runner:
         try:
             raw_result = await tool.run(spec, req.arguments)
         except Exception as exc:
+            # TODO: send exception back?
             return state.ToolCallResp(
                 id=req.id,
                 status=state.ToolCallStatus.FAILED,
@@ -96,7 +97,7 @@ class Runner:
     ) -> state.Step:
         prompt_message = state.Message(
             role=models.Role.ASSISTANT,
-            text="",
+            text="Please approve the tool call",
             tool_call_requests=[req],
         )
         prompt_step = state.Step(
