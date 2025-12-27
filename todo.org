@@ -3,5 +3,16 @@
 * [ ] Runner
 ** [X] Add is_complete to Step to differentiate between intermediate and final results
 ** [X] Add tool support by checking if complete step was received and it contains tool calls
-** [ ] Create a separate BaseModel for runner generator responses, do not use Step. Convert response to a step.
+** [X] Create a separate BaseModel for runner generator responses, do not use Step. Convert response to a step.
 ** [X] Tool rejection might include a message - pass that as a tool response
+* [ ] Migrate tools
+** [ ] Patch
+** [ ] Shell / Exec
+** [ ] TODO
+* [ ] Migrate nodes
+** [ ] Patch
+** [ ] Exec (rename to Shell)
+* [ ] UI
+** [ ] Create an in-memory bidirectional communication channel
+* [ ] LLM Node
+** [ ] Require outcome to be provided and loop until it is provided

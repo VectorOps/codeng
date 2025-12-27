@@ -4,7 +4,7 @@ from vocode import models, state
 from vocode import settings as vocode_settings
 from vocode.project import Project
 from vocode.graph import RuntimeGraph
-from vocode.lib import validators
+from vocode.lib import message_helpers, validators
 from .base import BaseExecutor, ExecutorInput
 from .proto import RunEventReq, RunEventResp, RunEventResponseType
 
@@ -227,37 +227,19 @@ class Runner:
             return [final_message] if final_message is not None else []
 
         if mode == models.ResultMode.CONCATENATE_FINAL:
-            if not execution.input_messages and final_message is None:
-                return []
-
-            text_parts: list[str] = []
-            for m in execution.input_messages:
-                if m.text:
-                    text_parts.append(m.text)
-            if final_message is not None and final_message.text:
-                text_parts.append(final_message.text)
-
-            combined_text = "\n\n".join(text_parts)
-
+            merged_messages: list[state.Message] = []
+            if execution.input_messages:
+                merged_messages.extend(execution.input_messages)
             if final_message is not None:
-                role = final_message.role
-            elif execution.input_messages:
-                role = execution.input_messages[-1].role
-            else:
-                role = models.Role.USER
+                merged_messages.append(final_message)
 
-            tool_call_requests: list[state.ToolCallReq] = []
-            tool_call_responses: list[state.ToolCallResp] = []
-            if final_message is not None:
-                tool_call_requests = list(final_message.tool_call_requests)
-                tool_call_responses = list(final_message.tool_call_responses)
-
-            combined_message = state.Message(
-                role=role,
-                text=combined_text,
-                tool_call_requests=tool_call_requests,
-                tool_call_responses=tool_call_responses,
+            combined_message = message_helpers.concatenate_messages(
+                merged_messages,
+                tool_message=final_message,
+                default_role=models.Role.USER,
             )
+            if combined_message is None:
+                return []
             return [combined_message]
 
         return []
