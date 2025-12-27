@@ -89,6 +89,81 @@ class Runner:
             result=result_data,
         )
 
+    def _create_tool_prompt_step(
+        self,
+        execution: state.NodeExecution,
+        req: state.ToolCallReq,
+    ) -> state.Step:
+        prompt_message = state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        )
+        prompt_step = state.Step(
+            execution=execution,
+            type=state.StepType.PROMPT,
+            message=prompt_message,
+        )
+        return self._persist_step(prompt_step)
+
+    def _process_tool_approval_response(
+        self,
+        req: state.ToolCallReq,
+        response_step: Optional[state.Step],
+        approved: list[state.ToolCallReq],
+        tool_responses: list[state.ToolCallResp],
+    ) -> bool:
+        if response_step is None:
+            return False
+        if response_step.type == state.StepType.APPROVAL:
+            approved.append(req)
+            return True
+        if response_step.type == state.StepType.REJECTION:
+            parts: list[str] = ["A user rejected the tool call."]
+            if response_step.message is not None:
+                text = response_step.message.text.strip()
+                if text:
+                    parts.append(text)
+            rejection_text = " ".join(parts)
+            tool_responses.append(
+                state.ToolCallResp(
+                    id=req.id,
+                    status=state.ToolCallStatus.REJECTED,
+                    name=req.name,
+                    result={"message": rejection_text},
+                )
+            )
+            return True
+        return False
+
+    async def _execute_approved_tool_calls(
+        self,
+        approved: list[state.ToolCallReq],
+    ) -> list[state.ToolCallResp]:
+        responses: list[state.ToolCallResp] = []
+        for req in approved:
+            resp = await self._execute_tool_call(req)
+            responses.append(resp)
+        return responses
+
+    def _create_tool_result_step(
+        self,
+        execution: state.NodeExecution,
+        tool_responses: list[state.ToolCallResp],
+    ) -> state.Step:
+        tool_message = state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_responses=tool_responses,
+        )
+        tool_step = state.Step(
+            execution=execution,
+            type=state.StepType.INPUT_MESSAGE,
+            message=tool_message,
+            is_complete=True,
+        )
+        return self._persist_step(tool_step)
+
     # History management
     def _persist_step(self, step: state.Step) -> state.Step:
         execution = step.execution
@@ -325,17 +400,10 @@ class Runner:
                             continue
 
                         while True:
-                            prompt_message = state.Message(
-                                role=models.Role.ASSISTANT,
-                                text="",
-                                tool_call_requests=[req],
+                            persisted_prompt = self._create_tool_prompt_step(
+                                current_execution,
+                                req,
                             )
-                            prompt_step = state.Step(
-                                execution=current_execution,
-                                type=state.StepType.PROMPT,
-                                message=prompt_message,
-                            )
-                            persisted_prompt = self._persist_step(prompt_step)
                             req_event = RunEventReq(
                                 execution=self.execution,
                                 step=persisted_prompt,
@@ -345,50 +413,23 @@ class Runner:
                                 req_event, resp_event
                             )
 
-                            if (
-                                response_step is not None
-                                and response_step.type == state.StepType.APPROVAL
+                            if self._process_tool_approval_response(
+                                req,
+                                response_step,
+                                approved,
+                                tool_responses,
                             ):
-                                approved.append(req)
                                 break
 
-                            if (
-                                response_step is not None
-                                and response_step.type == state.StepType.REJECTION
-                            ):
-                                parts = ["A user rejected the tool call."]
-                                if response_step.message is not None:
-                                    text = response_step.message.text.strip()
-                                    if text:
-                                        parts.append(text)
-                                rejection_text = " ".join(parts)
-                                tool_responses.append(
-                                    state.ToolCallResp(
-                                        id=req.id,
-                                        status=state.ToolCallStatus.REJECTED,
-                                        name=req.name,
-                                        result={"message": rejection_text},
-                                    )
-                                )
-                                break
-
-                    for req in approved:
-                        resp = await self._execute_tool_call(req)
-                        tool_responses.append(resp)
+                    if approved:
+                        responses = await self._execute_approved_tool_calls(approved)
+                        tool_responses.extend(responses)
 
                     if tool_responses:
-                        tool_message = state.Message(
-                            role=models.Role.ASSISTANT,
-                            text="",
-                            tool_call_responses=tool_responses,
+                        self._create_tool_result_step(
+                            current_execution,
+                            tool_responses,
                         )
-                        tool_step = state.Step(
-                            execution=current_execution,
-                            type=state.StepType.INPUT_MESSAGE,
-                            message=tool_message,
-                            is_complete=True,
-                        )
-                        self._persist_step(tool_step)
 
                 continue
 
