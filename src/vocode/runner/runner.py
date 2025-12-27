@@ -191,15 +191,19 @@ class Runner:
         self,
         node_name: str,
     ) -> Optional[state.NodeExecution]:
+        latest: Optional[state.NodeExecution] = None
         for execution in self.execution.node_executions.values():
-            if execution.node == node_name:
-                return execution
-        return None
+            if execution.node != node_name:
+                continue
+            if latest is None or execution.created_at > latest.created_at:
+                latest = execution
+        return latest
 
     def _create_node_execution(
         self,
         node_name: str,
         input_messages: Optional[list[state.Message]] = None,
+        previous_execution: Optional[state.NodeExecution] = None,
     ) -> state.NodeExecution:
         effective_input_messages: list[state.Message] = []
         if input_messages is not None:
@@ -207,6 +211,7 @@ class Runner:
         execution = state.NodeExecution(
             node=node_name,
             input_messages=effective_input_messages,
+            previous=previous_execution,
             status=state.RunStatus.RUNNING,
         )
         self.execution.node_executions[execution.id] = execution
@@ -504,7 +509,13 @@ class Runner:
 
             current_execution.status = state.RunStatus.FINISHED
             current_runtime_node = next_runtime_node
+
+            previous_for_next: Optional[state.NodeExecution] = None
+            if current_runtime_node.model.reset_policy == models.StateResetPolicy.KEEP:
+                previous_for_next = self._find_node_execution(current_runtime_node.name)
+
             current_execution = self._create_node_execution(
                 current_runtime_node.name,
                 input_messages=next_input_messages,
+                previous_execution=previous_for_next,
             )

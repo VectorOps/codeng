@@ -8,7 +8,7 @@ import litellm
 from vocode import state, models
 from vocode.logger import logger
 from . import helpers as llm_helpers
-from ...base import BaseExecutor, ExecutorInput
+from ...base import BaseExecutor, ExecutorInput, iter_execution_messages
 
 INCLUDED_STEP_TYPES: Final = (
     state.StepType.OUTPUT_MESSAGE,
@@ -82,15 +82,10 @@ class LLMExecutor(BaseExecutor):
                         tool_msg["content"] = json.dumps(resp.result)
                     messages.append(tool_msg)
 
-        for m in execution.input_messages:
-            _append_message(m)
-
-        for s in execution.steps:
-            if s.message is None:
+        for msg, step_type in iter_execution_messages(execution):
+            if step_type is not None and step_type not in INCLUDED_STEP_TYPES:
                 continue
-            if s.type not in INCLUDED_STEP_TYPES:
-                continue
-            _append_message(s.message)
+            _append_message(msg)
 
         return messages
 

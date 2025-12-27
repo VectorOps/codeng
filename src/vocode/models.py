@@ -25,8 +25,6 @@ class StateResetPolicy(str, Enum):
     RESET = "reset"
     # Keep complete state from previous run
     KEEP = "keep"
-    # Only keep final messages without tool calls
-    FINAL_ONLY = "final_only"
 
 
 class ResultMode(str, Enum):
