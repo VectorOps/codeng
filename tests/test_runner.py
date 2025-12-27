@@ -89,6 +89,42 @@ class FakeExecutor(BaseExecutor):
 BaseExecutor.register("fake", FakeExecutor)
 
 
+class LoopExecutor(BaseExecutor):
+    type = "loop"
+
+    def __init__(self, config: models.Node, project):
+        super().__init__(config, project)
+        self._run_counts: Dict[str, int] = {}
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        execution = inp.execution
+        node_name = execution.node
+        count = self._run_counts.get(node_name, 0) + 1
+        self._run_counts[node_name] = count
+
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text=f"loop-{count}",
+        )
+        step = state.Step(
+            execution=execution,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message=msg,
+        )
+        yield step
+
+        outcome = "again" if count == 1 else "done"
+        completion = state.Step(
+            execution=execution,
+            type=state.StepType.COMPLETION,
+            outcome_name=outcome,
+        )
+        yield completion
+
+
+BaseExecutor.register("loop", LoopExecutor)
+
+
 class DummyWorkflow:
     def __init__(self, name: str, graph: models.Graph):
         self.name = name

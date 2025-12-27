@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from vocode import state, models
+from vocode.runner.base import BaseExecutor, ExecutorInput, iter_execution_messages
 
 
 def _make_message(text: str = "msg") -> state.Message:
@@ -81,3 +82,83 @@ def test_delete_step_delegates_to_delete_steps() -> None:
 
     assert run.steps == []
     assert exec1.steps == []
+
+
+def test_iter_execution_messages_traverses_previous_chain_in_order() -> None:
+    exec1 = state.NodeExecution(
+        node="node",
+        input_messages=[
+            state.Message(role=models.Role.USER, text="in-1-a"),
+            state.Message(role=models.Role.USER, text="in-1-b"),
+        ],
+        status=state.RunStatus.RUNNING,
+    )
+    step1 = state.Step(
+        execution=exec1,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message=state.Message(role=models.Role.ASSISTANT, text="out-1-a"),
+    )
+    step2 = state.Step(
+        execution=exec1,
+        type=state.StepType.INPUT_MESSAGE,
+        message=state.Message(role=models.Role.USER, text="in-1-c"),
+    )
+    exec1.steps = [step1, step2]
+
+    exec2 = state.NodeExecution(
+        node="node",
+        input_messages=[
+            state.Message(role=models.Role.USER, text="in-2-a"),
+        ],
+        status=state.RunStatus.RUNNING,
+        previous=exec1,
+    )
+    step3 = state.Step(
+        execution=exec2,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message=state.Message(role=models.Role.ASSISTANT, text="out-2-a"),
+    )
+    exec2.steps = [step3]
+
+    texts = [m.text for (m, _t) in iter_execution_messages(exec2)]
+    assert texts == ["in-1-a", "in-1-b", "out-1-a", "in-1-c", "in-2-a", "out-2-a"]
+
+
+def test_iter_execution_messages_traverses_previous_chain_in_order() -> None:
+    exec1 = state.NodeExecution(
+        node="node",
+        input_messages=[
+            state.Message(role=models.Role.USER, text="in-1-a"),
+            state.Message(role=models.Role.USER, text="in-1-b"),
+        ],
+        status=state.RunStatus.RUNNING,
+    )
+    step1 = state.Step(
+        execution=exec1,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message=state.Message(role=models.Role.ASSISTANT, text="out-1-a"),
+    )
+    step2 = state.Step(
+        execution=exec1,
+        type=state.StepType.INPUT_MESSAGE,
+        message=state.Message(role=models.Role.USER, text="in-1-c"),
+    )
+    exec1.steps = [step1, step2]
+
+    exec2 = state.NodeExecution(
+        node="node",
+        input_messages=[
+            state.Message(role=models.Role.USER, text="in-2-a"),
+        ],
+        status=state.RunStatus.RUNNING,
+        previous=exec1,
+    )
+    step3 = state.Step(
+        execution=exec2,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message=state.Message(role=models.Role.ASSISTANT, text="out-2-a"),
+    )
+    exec2.steps = [step3]
+
+    texts = [m.text for (m, _t) in iter_execution_messages(exec2)]
+    assert texts == ["in-1-a", "in-1-b", "out-1-a", "in-1-c", "in-2-a", "out-2-a"]

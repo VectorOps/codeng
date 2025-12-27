@@ -135,6 +135,10 @@ class NodeExecution(BaseModel):
         default_factory=uuid4, description="Unique identifier for this node execution"
     )
     node: str = Field(..., description="Node name this execution pertains to")
+    previous: Optional["NodeExecution"] = Field(
+        default=None,
+        description="Previous execution for the same node, if any.",
+    )
     input_messages: List[Message] = Field(
         default_factory=list,
         description="Initial input messages for this node",

@@ -55,3 +55,21 @@ class BaseExecutor:
         raise NotImplementedError(
             "Executor subclasses must implement 'run' as an async generator"
         )
+
+
+def iter_execution_messages(
+    execution: state.NodeExecution,
+):
+    chain: List[state.NodeExecution] = []
+    current = execution
+    while current is not None:
+        chain.append(current)
+        current = current.previous
+
+    for exec_item in reversed(chain):
+        for msg in exec_item.input_messages:
+            yield msg, None
+        for step in exec_item.steps:
+            if step.message is None:
+                continue
+            yield step.message, step.type
