@@ -74,17 +74,28 @@ class FakeResponse:
 async def test_llm_executor_with_litellm_mock_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_acompletion = litellm.acompletion
-
     async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
-        kwargs.setdefault(
-            "mock_response",
-            "It's simple to use and easy to get started",
-        )
-        kwargs.setdefault("stream", True)
-        return await original_acompletion(*args, **kwargs)
+        async def gen() -> Any:
+            yield FakeChunk("It's simple to use and easy to get started")
+
+        return gen()
+
+    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
+        parts: List[str] = []
+        for chunk in chunks:
+            choice0 = chunk.choices[0]
+            if choice0.delta.content:
+                parts.append(choice0.delta.content)
+        full_text = "".join(parts)
+
+        return FakeResponse(full_text)
 
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(
+        litellm,
+        "stream_chunk_builder",
+        fake_stream_chunk_builder,
+    )
 
     project = StubProject()
     node = LLMNode(

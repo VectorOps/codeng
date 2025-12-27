@@ -2,6 +2,6 @@
 
 * [ ] Runner
 ** [X] Add is_complete to Step to differentiate between intermediate and final results
-** [ ] Add tool support by checking if complete step was received and it contains tool calls
+** [X] Add tool support by checking if complete step was received and it contains tool calls
 ** [ ] Create a separate BaseModel for runner generator responses, do not use Step. Convert response to a step.
-** [ ] Tool rejection might include a message - pass that as a tool response
+** [X] Tool rejection might include a message - pass that as a tool response
