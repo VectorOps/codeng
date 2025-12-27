@@ -6,12 +6,10 @@ from vocode.project import Project
 from vocode.graph import RuntimeGraph
 from vocode.lib import validators
 from .base import BaseExecutor, ExecutorInput
-from pydantic import BaseModel, Field
+from .proto import RunEventReq, RunEventResp, RunEventResponseType
 
 
-class RunEvent(BaseModel):
-    run: state.WorkflowExecution = Field(...)
-    step: state.Step = Field(...)
+RunEvent = RunEventReq
 
 
 class Runner:
@@ -123,22 +121,123 @@ class Runner:
 
         return step
 
-    def _ensure_node_execution(self, node_name: str) -> state.NodeExecution:
+    def _build_next_input_messages(
+        self,
+        execution: state.NodeExecution,
+        node_model: models.Node,
+    ) -> list[state.Message]:
+        mode = node_model.message_mode
+
+        if mode == models.ResultMode.ALL_MESSAGES:
+            messages: list[state.Message] = []
+            messages.extend(execution.input_messages)
+            for s in execution.steps:
+                if s.message is None:
+                    continue
+                if s.type not in (
+                    state.StepType.OUTPUT_MESSAGE,
+                    state.StepType.INPUT_MESSAGE,
+                ):
+                    continue
+                messages.append(s.message)
+            return messages
+
+        final_message: Optional[state.Message] = None
+        for s in reversed(execution.steps):
+            if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None:
+                final_message = s.message
+                break
+
+        if mode == models.ResultMode.FINAL_RESPONSE:
+            return [final_message] if final_message is not None else []
+
+        if mode == models.ResultMode.CONCATENATE_FINAL:
+            if not execution.input_messages and final_message is None:
+                return []
+
+            text_parts: list[str] = []
+            for m in execution.input_messages:
+                if m.text:
+                    text_parts.append(m.text)
+            if final_message is not None and final_message.text:
+                text_parts.append(final_message.text)
+
+            combined_text = "\n\n".join(text_parts)
+
+            if final_message is not None:
+                role = final_message.role
+            elif execution.input_messages:
+                role = execution.input_messages[-1].role
+            else:
+                role = models.Role.USER
+
+            tool_call_requests: list[state.ToolCallReq] = []
+            tool_call_responses: list[state.ToolCallResp] = []
+            if final_message is not None:
+                tool_call_requests = list(final_message.tool_call_requests)
+                tool_call_responses = list(final_message.tool_call_responses)
+
+            combined_message = state.Message(
+                role=role,
+                text=combined_text,
+                tool_call_requests=tool_call_requests,
+                tool_call_responses=tool_call_responses,
+            )
+            return [combined_message]
+
+        return []
+
+    def _find_node_execution(
+        self,
+        node_name: str,
+    ) -> Optional[state.NodeExecution]:
         for execution in self.execution.node_executions.values():
             if execution.node == node_name:
                 return execution
+        return None
 
+    def _create_node_execution(
+        self,
+        node_name: str,
+        input_messages: Optional[list[state.Message]] = None,
+    ) -> state.NodeExecution:
+        effective_input_messages: list[state.Message] = []
+        if input_messages is not None:
+            effective_input_messages.extend(input_messages)
         execution = state.NodeExecution(
             node=node_name,
+            input_messages=effective_input_messages,
             status=state.RunStatus.RUNNING,
         )
-        if self.initial_message is not None and not self.execution.steps:
-            execution.input_messages.append(self.initial_message)
         self.execution.node_executions[execution.id] = execution
         return execution
 
+    def _handle_run_event_response(
+        self, req: RunEventReq, resp: Optional[RunEventResp]
+    ) -> Optional[state.Step]:
+        if resp is None:
+            return None
+        if resp.resp_type == RunEventResponseType.NOOP:
+            return None
+        base_execution = req.step.execution
+        message = resp.message
+        if resp.resp_type == RunEventResponseType.APPROVE:
+            step_type = state.StepType.APPROVAL
+        elif resp.resp_type == RunEventResponseType.DECLINE:
+            step_type = state.StepType.REJECTION
+        elif resp.resp_type == RunEventResponseType.MESSAGE:
+            step_type = state.StepType.INPUT_MESSAGE
+        else:
+            return None
+        step = state.Step(
+            execution=base_execution,
+            type=step_type,
+            message=message,
+        )
+        return self._persist_step(step)
+
     # Main runner loop
-    async def run(self) -> AsyncIterator[RunEvent]:
+    async def run(self) -> AsyncIterator[RunEventReq]:
         if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
             raise RuntimeError(
                 f"run() not allowed when runner status is '{self.status}'. Allowed: 'idle', 'stopped'"
@@ -157,19 +256,27 @@ class Runner:
             )
         else:
             current_runtime_node = self.graph.root
+            if current_runtime_node is not None:
+                existing_execution = self._find_node_execution(
+                    current_runtime_node.name
+                )
+                if existing_execution is not None:
+                    current_execution = existing_execution
+                else:
+                    initial_messages: list[state.Message] = []
+                    if self.initial_message is not None:
+                        initial_messages.append(self.initial_message)
+                    current_execution = self._create_node_execution(
+                        current_runtime_node.name,
+                        input_messages=initial_messages,
+                    )
 
         if current_runtime_node is None:
             self.status = state.RunnerStatus.FINISHED
             return
 
         while True:
-            if (
-                current_execution is None
-                or current_execution.node != current_runtime_node.name
-            ):
-                current_execution = self._ensure_node_execution(
-                    current_runtime_node.name
-                )
+            # current_execution should already refer to the execution for the current node
 
             executor = self._executors[current_runtime_node.name]
             executor_input = ExecutorInput(
@@ -181,8 +288,9 @@ class Runner:
 
             async for step in executor.run(executor_input):
                 persisted_step = self._persist_step(step)
-                response = yield RunEvent(run=self.execution, step=persisted_step)
-                self._persist_step(response)
+                req = RunEventReq(execution=self.execution, step=persisted_step)
+                resp = yield req
+                self._handle_run_event_response(req, resp)
 
                 if (
                     persisted_step.message is not None
@@ -223,20 +331,29 @@ class Runner:
                                 message=prompt_message,
                             )
                             persisted_prompt = self._persist_step(prompt_step)
-                            response = yield RunEvent(
-                                run=self.execution,
+                            req_event = RunEventReq(
+                                execution=self.execution,
                                 step=persisted_prompt,
                             )
-                            self._persist_step(response)
+                            resp_event = yield req_event
+                            response_step = self._handle_run_event_response(
+                                req_event, resp_event
+                            )
 
-                            if response.type == state.StepType.APPROVAL:
+                            if (
+                                response_step is not None
+                                and response_step.type == state.StepType.APPROVAL
+                            ):
                                 approved.append(req)
                                 break
 
-                            if response.type == state.StepType.REJECTION:
+                            if (
+                                response_step is not None
+                                and response_step.type == state.StepType.REJECTION
+                            ):
                                 parts = ["A user rejected the tool call."]
-                                if response.message is not None:
-                                    text = response.message.text.strip()
+                                if response_step.message is not None:
+                                    text = response_step.message.text.strip()
                                     if text:
                                         parts.append(text)
                                 rejection_text = " ".join(parts)
@@ -285,18 +402,30 @@ class Runner:
                         message=prompt_message,
                     )
                     persisted_prompt = self._persist_step(prompt_step)
-                    response = yield RunEvent(run=self.execution, step=persisted_prompt)
-                    self._persist_step(response)
+                    req_event = RunEventReq(
+                        execution=self.execution,
+                        step=persisted_prompt,
+                    )
+                    resp_event = yield req_event
+                    response_step = self._handle_run_event_response(
+                        req_event, resp_event
+                    )
 
-                    if response.type == state.StepType.INPUT_MESSAGE:
+                    if (
+                        response_step is not None
+                        and response_step.type == state.StepType.INPUT_MESSAGE
+                    ):
                         if (
-                            response.message is not None
-                            and response.message.text.strip()
+                            response_step.message is not None
+                            and response_step.message.text.strip()
                         ):
                             loop_current_node = True
                         break
 
-                    if response.type == state.StepType.APPROVAL:
+                    if (
+                        response_step is not None
+                        and response_step.type == state.StepType.APPROVAL
+                    ):
                         break
 
                     continue
@@ -330,8 +459,12 @@ class Runner:
                         message=error_message,
                     )
                     persisted_error = self._persist_step(error_step)
-                    response = yield RunEvent(run=self.execution, step=persisted_error)
-                    self._persist_step(response)
+                    req_event = RunEventReq(
+                        execution=self.execution,
+                        step=persisted_error,
+                    )
+                    resp_event = yield req_event
+                    self._handle_run_event_response(req_event, resp_event)
                     current_execution.status = state.RunStatus.FINISHED
                     self.status = state.RunnerStatus.FINISHED
                     return
@@ -350,8 +483,12 @@ class Runner:
                         message=error_message,
                     )
                     persisted_error = self._persist_step(error_step)
-                    response = yield RunEvent(run=self.execution, step=persisted_error)
-                    self._persist_step(response)
+                    req_event = RunEventReq(
+                        execution=self.execution,
+                        step=persisted_error,
+                    )
+                    resp_event = yield req_event
+                    self._handle_run_event_response(req_event, resp_event)
                     current_execution.status = state.RunStatus.FINISHED
                     self.status = state.RunnerStatus.FINISHED
                     return
@@ -360,7 +497,14 @@ class Runner:
                 current_execution.status = state.RunStatus.FINISHED
                 self.status = state.RunnerStatus.FINISHED
                 return
+            next_input_messages = self._build_next_input_messages(
+                current_execution,
+                current_runtime_node.model,
+            )
 
             current_execution.status = state.RunStatus.FINISHED
             current_runtime_node = next_runtime_node
-            current_execution = None
+            current_execution = self._create_node_execution(
+                current_runtime_node.name,
+                input_messages=next_input_messages,
+            )

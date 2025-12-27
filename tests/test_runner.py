@@ -5,6 +5,7 @@ import pytest
 from vocode import state, models
 from vocode.runner.base import BaseExecutor, ExecutorInput
 from vocode.runner.runner import Runner, RunEvent
+from vocode.runner.proto import RunEventResp, RunEventResponseType
 
 
 class FakeExecutor(BaseExecutor):
@@ -142,12 +143,14 @@ async def test_runner_execution_flow():
         text="hello",
     )
 
-    runner = Runner(workflow=workflow, project=object(), initial_message=initial_message)
+    runner = Runner(
+        workflow=workflow, project=object(), initial_message=initial_message
+    )
 
     agen = runner.run()
     events: list[RunEvent] = []
     prompt_count = 0
-    ack = None
+    ack: RunEventResp | None = None
 
     while True:
         try:
@@ -165,9 +168,8 @@ async def test_runner_execution_flow():
         if step.type == state.StepType.PROMPT and execution.node == "node1":
             prompt_count += 1
             if prompt_count == 1:
-                ack = state.Step(
-                    execution=execution,
-                    type=state.StepType.REJECTION,
+                ack = RunEventResp(
+                    resp_type=RunEventResponseType.DECLINE,
                     message=None,
                 )
             elif prompt_count == 2:
@@ -175,9 +177,8 @@ async def test_runner_execution_flow():
                     role=models.Role.USER,
                     text="more please",
                 )
-                ack = state.Step(
-                    execution=execution,
-                    type=state.StepType.INPUT_MESSAGE,
+                ack = RunEventResp(
+                    resp_type=RunEventResponseType.MESSAGE,
                     message=msg,
                 )
             else:
@@ -185,15 +186,13 @@ async def test_runner_execution_flow():
                     role=models.Role.USER,
                     text="",
                 )
-                ack = state.Step(
-                    execution=execution,
-                    type=state.StepType.INPUT_MESSAGE,
+                ack = RunEventResp(
+                    resp_type=RunEventResponseType.MESSAGE,
                     message=msg,
                 )
         else:
-            ack = state.Step(
-                execution=execution,
-                type=state.StepType.APPROVAL,
+            ack = RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
                 message=None,
             )
 
@@ -218,9 +217,7 @@ async def test_runner_execution_flow():
     assert any("run2-final" in s.message.text for s in node1_output_steps)
 
     node1_input_steps = [
-        s
-        for s in node1_exec.steps
-        if s.type == state.StepType.INPUT_MESSAGE
+        s for s in node1_exec.steps if s.type == state.StepType.INPUT_MESSAGE
     ]
     assert len(node1_input_steps) >= 2
 
@@ -250,3 +247,193 @@ async def test_runner_execution_flow():
         isinstance(e.step, state.Step) and e.step.execution.node == "node3"
         for e in events
     )
+
+
+@pytest.mark.asyncio
+async def test_result_mode_final_response_forwards_final_message():
+    node1 = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[models.OutcomeSlot(name="branch")],
+        confirmation=models.Confirmation.AUTO,
+        message_mode=models.ResultMode.FINAL_RESPONSE,
+    )
+    node2 = models.Node(
+        name="node2",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    edges = [
+        models.Edge(
+            source_node="node1",
+            source_outcome="branch",
+            target_node="node2",
+        ),
+    ]
+    graph = models.Graph(nodes=[node1, node2], edges=edges)
+    workflow = DummyWorkflow(name="wf-final-response", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="hello",
+    )
+
+    runner = Runner(
+        workflow=workflow, project=object(), initial_message=initial_message
+    )
+
+    agen = runner.run()
+    ack: RunEventResp | None = None
+
+    while True:
+        try:
+            if ack is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(ack)
+        except StopAsyncIteration:
+            break
+
+        ack = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    node1_exec = node_execs_by_name["node1"]
+    node2_exec = node_execs_by_name["node2"]
+
+    assert [m.text for m in node1_exec.input_messages] == ["hello"]
+    assert [m.text for m in node2_exec.input_messages] == ["run1-final"]
+
+
+@pytest.mark.asyncio
+async def test_result_mode_all_messages_forwards_all_messages():
+    node1 = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[models.OutcomeSlot(name="branch")],
+        confirmation=models.Confirmation.AUTO,
+        message_mode=models.ResultMode.ALL_MESSAGES,
+    )
+    node2 = models.Node(
+        name="node2",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    edges = [
+        models.Edge(
+            source_node="node1",
+            source_outcome="branch",
+            target_node="node2",
+        ),
+    ]
+    graph = models.Graph(nodes=[node1, node2], edges=edges)
+    workflow = DummyWorkflow(name="wf-all-messages", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="hello",
+    )
+
+    runner = Runner(
+        workflow=workflow, project=object(), initial_message=initial_message
+    )
+
+    agen = runner.run()
+    ack: RunEventResp | None = None
+
+    while True:
+        try:
+            if ack is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(ack)
+        except StopAsyncIteration:
+            break
+
+        ack = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    node1_exec = node_execs_by_name["node1"]
+    node2_exec = node_execs_by_name["node2"]
+
+    texts_node1 = [m.text for m in node1_exec.input_messages]
+    assert texts_node1 == ["hello"]
+
+    texts_node2 = [m.text for m in node2_exec.input_messages]
+    assert texts_node2 == ["hello", "run1-final"]
+
+
+@pytest.mark.asyncio
+async def test_result_mode_concatenate_final_builds_single_message():
+    node1 = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[models.OutcomeSlot(name="branch")],
+        confirmation=models.Confirmation.AUTO,
+        message_mode=models.ResultMode.CONCATENATE_FINAL,
+    )
+    node2 = models.Node(
+        name="node2",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    edges = [
+        models.Edge(
+            source_node="node1",
+            source_outcome="branch",
+            target_node="node2",
+        ),
+    ]
+    graph = models.Graph(nodes=[node1, node2], edges=edges)
+    workflow = DummyWorkflow(name="wf-concat-final", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="hello",
+    )
+
+    runner = Runner(
+        workflow=workflow, project=object(), initial_message=initial_message
+    )
+
+    agen = runner.run()
+    ack: RunEventResp | None = None
+
+    while True:
+        try:
+            if ack is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(ack)
+        except StopAsyncIteration:
+            break
+
+        ack = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    node2_exec = node_execs_by_name["node2"]
+
+    assert len(node2_exec.input_messages) == 1
+    combined = node2_exec.input_messages[0]
+    assert combined.text == "hello\n\nrun1-final"
+    assert combined.role == models.Role.ASSISTANT
