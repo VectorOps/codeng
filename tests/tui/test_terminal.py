@@ -14,7 +14,7 @@ class DummyComponent(tui_terminal.Component):
         self.text = text
 
     def render(self, terminal: tui_terminal.Terminal) -> tui_terminal.Lines:
-        return [[rich_segment.Segment(self.text)]]
+        return terminal.console.render_lines(self.text)
 
 
 
@@ -77,6 +77,38 @@ def test_terminal_incremental_render_updates_component() -> None:
     output = buffer.getvalue()
     assert "second" in output
     assert tui_terminal.ERASE_SCROLLBACK not in output
+
+
+def test_incremental_render_updates_bottom_line_only_for_multiline_component() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        height=5,
+    )
+    terminal = tui_terminal.Terminal(console=console)
+    component = DummyComponent("line1\nline2\nbottom1")
+
+    terminal.append_component(component)
+    terminal.render()
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    component.text = "line1\nline2\nbottom2"
+    terminal.notify_component(component)
+    terminal.render()
+
+    output = buffer.getvalue()
+    cursor_up_once = tui_terminal.CURSOR_PREVIOUS_LINE_FMT.format(1)
+    assert "bottom2" in output
+    assert "line1" not in output
+    assert "line2" not in output
+    assert "bottom1" not in output
+    assert tui_terminal.ERASE_SCROLLBACK not in output
+    assert cursor_up_once in output
+    assert output.count(cursor_up_once) == 1
 
 
 def test_incremental_render_appends_line_with_offscreen_top() -> None:
