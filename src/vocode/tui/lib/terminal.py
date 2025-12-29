@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from itertools import zip_longest
+import typing
+
+from rich import console as rich_console
+from rich import segment as rich_segment
+
+
+SYNC_UPDATE_START: typing.Final[str] = "\x1b[?2026h"
+SYNC_UPDATE_END: typing.Final[str] = "\x1b[?2026l"
+ERASE_SCROLLBACK: typing.Final[str] = "\x1b[3J"
+ERASE_SCREEN: typing.Final[str] = "\x1b[2J"
+CURSOR_HOME: typing.Final[str] = "\x1b[H"
+CURSOR_COLUMN_1: typing.Final[str] = "\x1b[1G"
+ERASE_DOWN: typing.Final[str] = "\x1b[J"
+CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = "\x1b[{}F"
+
+
+Lines = typing.List[typing.List[rich_segment.Segment]]
+
+
+class Component(ABC):
+    def __init__(self, id: str | None = None) -> None:
+        self.id = id
+
+    @abstractmethod
+    def render(self, terminal: "Terminal") -> Lines:
+        raise NotImplementedError
+
+
+class Terminal:
+    def __init__(self, console: rich_console.Console | None = None) -> None:
+        self._console: rich_console.Console = (
+            console if console is not None else rich_console.Console()
+        )
+        self._components: typing.List[Component] = []
+        self._id_index: typing.Dict[str, Component] = {}
+        self._dirty_components: typing.Set[Component] = set()
+        self._cache: typing.Dict[Component, Lines] = {}
+        self._width: int | None = None
+        self._force_full_render: bool = False
+        self._cursor_line: int = 0
+
+        self._write_control(ERASE_SCREEN + CURSOR_HOME)
+
+    @property
+    def console(self) -> rich_console.Console:
+        return self._console
+
+    def _write_control(self, text: str) -> None:
+        file = self._console.file
+        file.write(text)
+        file.flush()
+
+    def append_component(self, component: Component) -> None:
+        if component in self._components:
+            return
+        if component.id is not None:
+            if component.id in self._id_index:
+                raise ValueError(f"Component id already exists: {component.id}")
+            self._id_index[component.id] = component
+        self._components.append(component)
+        self.notify_component(component)
+
+    def insert_component(self, index: int, component: Component) -> None:
+        if component in self._components:
+            return
+        if component.id is not None:
+            if component.id in self._id_index:
+                raise ValueError(f"Component id already exists: {component.id}")
+            self._id_index[component.id] = component
+        length = len(self._components)
+        if index >= 0:
+            position = index
+            if position > length:
+                position = length
+        else:
+            position = length + index
+            if position < 0:
+                position = 0
+        self._components.insert(position, component)
+        self.notify_component(component)
+        self._force_full_render = True
+
+    def remove_component(self, component: Component) -> None:
+        if component not in self._components:
+            return
+        self._components.remove(component)
+        if component in self._dirty_components:
+            self._dirty_components.remove(component)
+        if component in self._cache:
+            del self._cache[component]
+        for key, value in list(self._id_index.items()):
+            if value is component:
+                del self._id_index[key]
+        self._force_full_render = True
+
+    def notify_component(self, component: Component) -> None:
+        if component in self._components:
+            self._dirty_components.add(component)
+
+    def get_component(self, component_id: str) -> Component:
+        if component_id not in self._id_index:
+            raise KeyError(component_id)
+        return self._id_index[component_id]
+
+    def _print_lines(self, lines: Lines) -> None:
+        if not lines:
+            return
+
+        size = self._console.size
+        height = size.height
+        if height <= 0:
+            return
+
+        batched: typing.List[rich_segment.Segment] = []
+        for line in lines:
+            batched.extend(line)
+            batched.append(rich_segment.Segment.line())
+
+        if batched:
+            self._console.print(rich_segment.Segments(batched), end="")
+
+    def _set_cursor_line(self, line):
+        height = self._console.size.height
+        self._cursor_line = min(line, height)
+
+    def render(self) -> None:
+        if not self._components:
+            return
+
+        size = self._console.size
+        width = size.width
+        height = size.height
+
+        if width <= 0 or height <= 0:
+            return
+
+        changed_components = set(self._dirty_components)
+
+        if (
+            not changed_components
+            and not self._force_full_render
+            and self._width == width
+        ):
+            return
+
+        if self._width is None or self._force_full_render or self._width != width:
+            self._full_render()
+        else:
+            handled = self._incremental_render(changed_components)
+            if not handled:
+                self._full_render()
+
+        self._width = width
+        self._force_full_render = False
+        self._dirty_components.clear()
+
+    def _full_render(self) -> None:
+        new_cache: typing.Dict[Component, Lines] = {}
+
+        for component in self._components:
+            lines = component.render(self)
+            new_cache[component] = lines
+
+        all_lines: Lines = []
+        for component in self._components:
+            lines = new_cache.get(component, [])
+            all_lines.extend(lines)
+        self._write_control(SYNC_UPDATE_START)
+        self._write_control(ERASE_SCROLLBACK + ERASE_SCREEN + CURSOR_HOME)
+        self._print_lines(all_lines)
+        self._set_cursor_line(len(all_lines))
+        self._write_control(SYNC_UPDATE_END)
+
+        self._cache = new_cache
+
+    def _incremental_render(self, changed_components: typing.Set[Component]) -> bool:
+        if not changed_components:
+            return True
+
+        size = self._console.size
+        height = size.height
+        if height <= 0:
+            return False
+
+        remaining = set(changed_components)
+        row = self._cursor_line
+        start_index = 0
+
+        # Walk components backward and record their height to find a top-most visible component row
+        for index in range(len(self._components) - 1, -1, -1):
+            if not remaining:
+                break
+
+            start_index = index
+            component = self._components[index]
+            cached_lines = self._cache.get(component)
+            is_new = cached_lines is None
+
+            if component in remaining:
+                remaining.remove(component)
+
+            if not is_new:
+                row -= len(cached_lines)
+
+            if row < 0:
+                break
+
+        # We stopped the walk, but there are dirty components remaining - need a full repaint
+        if remaining:
+            return False
+
+        # Get a list of all components starting with the top-most changed
+        tail_components = self._components[start_index:]
+        if not tail_components:
+            return True
+
+        lines_to_output: Lines = []
+
+        # Special optimization for top-most component - we only need to render its changed lines
+        top_component = tail_components[0]
+        top_old_lines = self._cache.get(top_component, [])
+        top_new_lines = component.render(self)
+        self._cache[top_component] = top_new_lines
+
+        top_mismatch = 0
+        for i, (x, y) in enumerate(zip_longest(top_old_lines, top_new_lines)):
+            if x != y:
+                top_mismatch = i
+                break
+
+        lines_to_output.extend(top_new_lines[top_mismatch:])
+        row += top_mismatch
+
+        # If row is negative, then we have offscreen change and need to repaint
+        if row < 0:
+            return False
+
+        # Render remaining components
+        for component in tail_components[1:]:
+            if component in changed_components or component not in self._cache:
+                new_lines = component.render(self)
+                self._cache[component] = new_lines
+
+            lines = self._cache.get(component, [])
+            lines_to_output.extend(lines)
+
+        self._write_control(SYNC_UPDATE_START + CURSOR_COLUMN_1)
+
+        if row != self._cursor_line:
+            self._write_control(
+                CURSOR_PREVIOUS_LINE_FMT.format(self._cursor_line - row),
+            )
+            self._write_control(ERASE_DOWN)
+        self._print_lines(lines_to_output)
+        self._set_cursor_line(row + len(lines_to_output))
+        self._write_control(SYNC_UPDATE_END)
+
+        return True
