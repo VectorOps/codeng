@@ -207,3 +207,101 @@ class TextEditor:
         self._lines.insert(insert_row, second)
         self._cursor_row = insert_row
         self._cursor_col = 0
+
+    def kill_to_line_end(self) -> None:
+        if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
+            return
+        line = self._lines[self._cursor_row]
+        col = self._cursor_col
+        if col < len(line):
+            self._lines[self._cursor_row] = line[:col]
+
+    def kill_to_line_start(self) -> None:
+        if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
+            return
+        line = self._lines[self._cursor_row]
+        col = self._cursor_col
+        if col > 0:
+            self._lines[self._cursor_row] = line[col:]
+            self._cursor_col = 0
+
+    def kill_word_backward(self) -> None:
+        if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
+            return
+        old_row = self._cursor_row
+        old_col = self._cursor_col
+        self.move_cursor_word_left()
+        new_row = self._cursor_row
+        new_col = self._cursor_col
+        if (new_row, new_col) == (old_row, old_col):
+            return
+        if new_row == old_row:
+            line = self._lines[old_row]
+            self._lines[old_row] = line[:new_col] + line[old_col:]
+            self._cursor_col = new_col
+            return
+        prev_line = self._lines[new_row]
+        curr_line = self._lines[old_row]
+        self._lines[new_row] = prev_line[:new_col] + curr_line[old_col:]
+        del self._lines[old_row]
+        self._cursor_row = new_row
+        self._cursor_col = new_col
+
+    def kill_word_forward(self) -> None:
+        if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
+            return
+        old_row = self._cursor_row
+        old_col = self._cursor_col
+        self.move_cursor_word_right()
+        new_row = self._cursor_row
+        new_col = self._cursor_col
+        if (new_row, new_col) == (old_row, old_col):
+            return
+        if new_row == old_row:
+            line = self._lines[old_row]
+            self._lines[old_row] = line[:old_col] + line[new_col:]
+            self._cursor_col = old_col
+            return
+        line = self._lines[old_row]
+        next_line = self._lines[new_row]
+        self._lines[old_row] = line[:old_col] + next_line[new_col:]
+        del self._lines[new_row]
+        self._cursor_row = old_row
+        self._cursor_col = old_col
+
+    def _transform_word(self, transform: typing.Callable[[str], str]) -> None:
+        if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
+            return
+        line = self._lines[self._cursor_row]
+        n = len(line)
+        col = self._cursor_col
+        if col > n:
+            col = n
+        i = col
+        while i < n and not _is_word_char(line[i]):
+            i += 1
+        if i >= n:
+            return
+        j = i
+        while j < n and _is_word_char(line[j]):
+            j += 1
+        word = line[i:j]
+        if not word:
+            return
+        new_word = transform(word)
+        self._lines[self._cursor_row] = line[:i] + new_word + line[j:]
+        self._cursor_col = j
+
+    def uppercase_word(self) -> None:
+        self._transform_word(lambda s: s.upper())
+
+    def lowercase_word(self) -> None:
+        self._transform_word(lambda s: s.lower())
+
+    def capitalize_word(self) -> None:
+        def _cap(s: str) -> str:
+            if not s:
+                return s
+            return s[0].upper() + s[1:].lower()
+
+        self._transform_word(_cap)

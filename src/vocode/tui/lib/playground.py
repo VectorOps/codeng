@@ -9,15 +9,24 @@ from vocode.tui.lib.input import posix as input_posix
 
 
 class TextComponent(tui_terminal.Component):
-    def __init__(self, text: str, id: str | None = None) -> None:
+    def __init__(
+        self,
+        text: str,
+        id: str | None = None,
+        show_id_prefix: bool = False,
+    ) -> None:
         super().__init__(id=id)
         self.text = text
+        self.show_id_prefix = show_id_prefix
 
     def render(self) -> tui_terminal.Lines:
         terminal = self.terminal
         if terminal is None:
             return []
-        return terminal.console.render_lines(self.text)
+        text = self.text
+        if self.show_id_prefix and self.id is not None:
+            text = f"{self.id}: {text}"
+        return terminal.console.render_lines(text)
 
 
 async def _main() -> None:
@@ -27,7 +36,6 @@ async def _main() -> None:
     help_text = TextComponent(
         "Type in the input box below.\n"
         "Commands:\n"
-        "  /list\n"
         "  /update <id> <text>",
         id="help",
     )
@@ -53,7 +61,11 @@ async def _main() -> None:
         nonlocal counter
         component_id = f"msg-{counter}"
         counter += 1
-        component = TextComponent(message, id=component_id)
+        component = TextComponent(
+            message,
+            id=component_id,
+            show_id_prefix=True,
+        )
         terminal.insert_component(-1, component)
 
     def handle_submit(value: str) -> None:
@@ -63,21 +75,6 @@ async def _main() -> None:
             return
 
         if stripped.startswith("/"):
-            if stripped == "/list":
-                lines_text: list[str] = []
-                lines_text.append(f"cursor_line:{terminal._cursor_line}")
-                for component in terminal._components:
-                    component_id = component.id
-                    if component_id is None:
-                        continue
-                    rendered = component.render()
-                    line_count = len(rendered)
-                    lines_text.append(f"id:{component_id} lines:{line_count}")
-                message = "\n".join(lines_text) if lines_text else "(no components)"
-                append_message_component(message)
-                input_component.text = ""
-                return
-
             if stripped.startswith("/update "):
                 parts = stripped.split(" ", 2)
                 if len(parts) < 3:

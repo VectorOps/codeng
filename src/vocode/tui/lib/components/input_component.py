@@ -72,8 +72,24 @@ class InputComponent(tui_terminal.Component):
             KeyBinding("right", alt=True): self.move_cursor_word_right,
             KeyBinding("home"): self.move_cursor_line_start,
             KeyBinding("end"): self.move_cursor_line_end,
+            KeyBinding("a", ctrl=True): self.move_cursor_line_start,
+            KeyBinding("e", ctrl=True): self.move_cursor_line_end,
+            KeyBinding("b", ctrl=True): self.move_cursor_left,
+            KeyBinding("f", ctrl=True): self.move_cursor_right,
+            KeyBinding("p", ctrl=True): self.move_cursor_up,
+            KeyBinding("n", ctrl=True): self.move_cursor_down,
+            KeyBinding("b", alt=True): self.move_cursor_word_left,
+            KeyBinding("f", alt=True): self.move_cursor_word_right,
             KeyBinding("backspace"): self.backspace,
             KeyBinding("delete"): self.delete,
+            KeyBinding("d", ctrl=True): self.delete,
+            KeyBinding("k", ctrl=True): self.kill_to_line_end,
+            KeyBinding("u", ctrl=True): self.kill_to_line_start,
+            KeyBinding("w", ctrl=True): self.kill_word_backward,
+            KeyBinding("d", alt=True): self.kill_word_forward,
+            KeyBinding("u", alt=True): self.uppercase_word,
+            KeyBinding("l", alt=True): self.lowercase_word,
+            KeyBinding("c", alt=True): self.capitalize_word,
             KeyBinding("enter"): self.break_line,
             KeyBinding("enter", alt=True): self.submit,
         }
@@ -184,6 +200,34 @@ class InputComponent(tui_terminal.Component):
 
     def delete(self) -> None:
         self._editor.delete()
+        self._mark_dirty()
+
+    def kill_to_line_end(self) -> None:
+        self._editor.kill_to_line_end()
+        self._mark_dirty()
+
+    def kill_to_line_start(self) -> None:
+        self._editor.kill_to_line_start()
+        self._mark_dirty()
+
+    def kill_word_backward(self) -> None:
+        self._editor.kill_word_backward()
+        self._mark_dirty()
+
+    def kill_word_forward(self) -> None:
+        self._editor.kill_word_forward()
+        self._mark_dirty()
+
+    def uppercase_word(self) -> None:
+        self._editor.uppercase_word()
+        self._mark_dirty()
+
+    def lowercase_word(self) -> None:
+        self._editor.lowercase_word()
+        self._mark_dirty()
+
+    def capitalize_word(self) -> None:
+        self._editor.capitalize_word()
         self._mark_dirty()
 
     def break_line(self) -> None:
