@@ -17,6 +17,7 @@ class DummyComponent(tui_terminal.Component):
     def __init__(self, text: str, id: str | None = None) -> None:
         super().__init__(id=id)
         self.text = text
+
     def render(self) -> tui_terminal.Lines:
         terminal = self.terminal
         if terminal is None:
@@ -28,6 +29,7 @@ class MultiLineComponent(tui_terminal.Component):
     def __init__(self, lines: list[str], id: str | None = None) -> None:
         super().__init__(id=id)
         self.lines = lines
+
     def render(self) -> tui_terminal.Lines:
         return [[rich_segment.Segment(line)] for line in self.lines]
 
@@ -64,6 +66,7 @@ async def test_terminal_renders_on_append() -> None:
     assert tui_terminal.SYNC_UPDATE_START in output
     assert tui_terminal.ERASE_SCROLLBACK in output
     assert "hello" in output
+
 
 def test_input_component_handles_keys_and_renders_cursor() -> None:
     buffer = io.StringIO()
@@ -173,6 +176,130 @@ def test_input_component_home_end_and_word_navigation() -> None:
     assert component.cursor_col == len("hello ")
 
 
+def test_input_component_emacs_movement_keys() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=20,
+    )
+    terminal = tui_terminal.Terminal(console=console)
+    component = tui_input_component.InputComponent("abc\ndef", id="input")
+    terminal.append_component(component)
+
+    assert component.cursor_row == 1
+    assert component.cursor_col == len("def")
+
+    ctrl_a = input_base.KeyEvent(action="down", key="a", ctrl=True)
+    component.on_key_event(ctrl_a)
+    assert component.cursor_row == 1
+    assert component.cursor_col == 0
+
+    ctrl_e = input_base.KeyEvent(action="down", key="e", ctrl=True)
+    component.on_key_event(ctrl_e)
+    assert component.cursor_row == 1
+    assert component.cursor_col == len("def")
+
+    ctrl_b = input_base.KeyEvent(action="down", key="b", ctrl=True)
+    component.on_key_event(ctrl_b)
+    assert component.cursor_row == 1
+    assert component.cursor_col == len("def") - 1
+
+    ctrl_f = input_base.KeyEvent(action="down", key="f", ctrl=True)
+    component.on_key_event(ctrl_f)
+    assert component.cursor_row == 1
+    assert component.cursor_col == len("def")
+
+    ctrl_p = input_base.KeyEvent(action="down", key="p", ctrl=True)
+    component.on_key_event(ctrl_p)
+    assert component.cursor_row == 0
+
+    ctrl_n = input_base.KeyEvent(action="down", key="n", ctrl=True)
+    component.on_key_event(ctrl_n)
+    assert component.cursor_row == 1
+
+    alt_b = input_base.KeyEvent(action="down", key="b", alt=True, text="b")
+    component.text = "hello world"
+    component.on_key_event(alt_b)
+    assert component.cursor_row == 0
+    assert component.cursor_col == len("hello ")
+
+    alt_f = input_base.KeyEvent(action="down", key="f", alt=True, text="f")
+    component.on_key_event(alt_f)
+    assert component.cursor_row == 0
+    assert component.cursor_col == len("hello world")
+
+
+def test_input_component_kill_and_case_keybindings() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=40,
+    )
+    terminal = tui_terminal.Terminal(console=console)
+    component = tui_input_component.InputComponent("hello world", id="input")
+    terminal.append_component(component)
+
+    home_event = input_base.KeyEvent(action="down", key="home")
+    component.on_key_event(home_event)
+
+    alt_right = input_base.KeyEvent(action="down", key="right", alt=True)
+    component.on_key_event(alt_right)
+    assert component.cursor_col == len("hello ")
+
+    ctrl_k = input_base.KeyEvent(action="down", key="k", ctrl=True)
+    component.on_key_event(ctrl_k)
+    assert component.text == "hello "
+    assert component.cursor_col == len("hello ")
+
+    component.on_key_event(home_event)
+    assert component.cursor_col == 0
+    component.on_key_event(ctrl_k)
+    assert component.text == ""
+    assert component.cursor_col == 0
+
+    component.text = "hello world"
+    end_event = input_base.KeyEvent(action="down", key="end")
+    component.on_key_event(end_event)
+    ctrl_u = input_base.KeyEvent(action="down", key="u", ctrl=True)
+    component.on_key_event(ctrl_u)
+    assert component.text == ""
+    assert component.cursor_col == 0
+
+    component.text = "hello world"
+    component.on_key_event(end_event)
+    ctrl_w = input_base.KeyEvent(action="down", key="w", ctrl=True)
+    component.on_key_event(ctrl_w)
+    assert component.text == "hello "
+
+    component.text = "hello world"
+    component.on_key_event(home_event)
+    alt_d = input_base.KeyEvent(action="down", key="d", alt=True, text="d")
+    component.on_key_event(alt_d)
+    assert component.text == "world"
+
+    component.text = "hello world"
+    component.on_key_event(home_event)
+    alt_u = input_base.KeyEvent(action="down", key="u", alt=True, text="u")
+    component.on_key_event(alt_u)
+    assert component.text == "HELLO world"
+
+    component.text = "HELLO WORLD"
+    component.on_key_event(home_event)
+    alt_l = input_base.KeyEvent(action="down", key="l", alt=True, text="l")
+    component.on_key_event(alt_l)
+    assert component.text == "hello WORLD"
+
+    component.text = "hello world"
+    component.on_key_event(home_event)
+    alt_c = input_base.KeyEvent(action="down", key="c", alt=True, text="c")
+    component.on_key_event(alt_c)
+    assert component.text == "Hello world"
+
+
 @pytest.mark.asyncio
 async def test_terminal_no_render_without_changes() -> None:
     buffer = io.StringIO()
@@ -213,7 +340,7 @@ async def test_terminal_incremental_render_updates_component() -> None:
     output = buffer.getvalue()
     assert "second" in output
     assert tui_terminal.ERASE_SCROLLBACK not in output
-    assert tui_terminal.ERASE_DOWN not in output
+    assert tui_terminal.ERASE_DOWN in output
 
 
 @pytest.mark.asyncio
@@ -247,7 +374,9 @@ async def test_incremental_render_clear_to_bottom_mode_uses_erase_down() -> None
 
 
 @pytest.mark.asyncio
-async def test_incremental_render_updates_bottom_line_only_for_multiline_component() -> None:
+async def test_incremental_render_updates_bottom_line_only_for_multiline_component() -> (
+    None
+):
     buffer = io.StringIO()
     console = rich_console.Console(
         file=buffer,
