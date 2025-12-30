@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 import asyncio
 
 from vocode.tui.lib import terminal as tui_terminal
-from vocode.tui.lib import controls as tui_controls
+from vocode.tui.lib import input_component as tui_input_component
+from rich import box as rich_box
+from vocode.tui.lib.input import posix as input_posix
 
 
 class TextComponent(tui_terminal.Component):
@@ -18,50 +21,48 @@ class TextComponent(tui_terminal.Component):
 
 
 async def _main() -> None:
-    terminal = tui_terminal.Terminal()
+    input_handler = input_posix.PosixInputHandler()
+    terminal = tui_terminal.Terminal(input_handler=input_handler)
     header = TextComponent("Vocode TUI playground", id="header")
     help_text = TextComponent(
-        "Type text and press enter. Type 'q' to quit.\n"
+        "Type in the input box below.\n"
         "Commands:\n"
         "  /list\n"
         "  /update <id> <text>",
         id="help",
     )
+    input_component = tui_input_component.InputComponent(
+        "",
+        id="input",
+        box_style=rich_box.SQUARE,
+    )
 
     components: list[tui_terminal.Component] = []
     components.append(header)
     components.append(help_text)
+    components.append(input_component)
 
     terminal.append_component(header)
     terminal.append_component(help_text)
-    await terminal.render()
+    terminal.append_component(input_component)
+    terminal.push_focus(input_component)
 
     counter = 1
 
-    def append_component(component: tui_terminal.Component) -> None:
-        components.append(component)
-        terminal.append_component(component)
-
-    async def print_message(message: str) -> None:
+    def append_message_component(message: str) -> None:
         nonlocal counter
         component_id = f"msg-{counter}"
         counter += 1
         component = TextComponent(message, id=component_id)
-        append_component(component)
-        await terminal.render()
+        terminal.insert_component(-1, component)
 
-    while True:
-        user_input = input("> ")
-        terminal.console.control(
-            tui_controls.CustomControl.cursor_previous_line(1),
-            tui_controls.CustomControl.erase_down(),
-        )
-        if user_input.strip().lower() == "q":
-            break
+    def handle_submit(value: str) -> None:
+        stripped = value.strip()
+        if not stripped:
+            input_component.text = ""
+            return
 
-        if user_input.startswith("/"):
-            stripped = user_input.strip()
-
+        if stripped.startswith("/"):
             if stripped == "/list":
                 lines_text: list[str] = []
                 lines_text.append(f"cursor_line:{terminal._cursor_line}")
@@ -72,42 +73,50 @@ async def _main() -> None:
                     rendered = component.render()
                     line_count = len(rendered)
                     lines_text.append(f"id:{component_id} lines:{line_count}")
-                if lines_text:
-                    message = "\n".join(lines_text)
-                else:
-                    message = "(no components)"
-                await print_message(message)
-                continue
+                message = "\n".join(lines_text) if lines_text else "(no components)"
+                append_message_component(message)
+                input_component.text = ""
+                return
 
-            if user_input.startswith("/update "):
-                parts = user_input.split(" ", 2)
+            if stripped.startswith("/update "):
+                parts = stripped.split(" ", 2)
                 if len(parts) < 3:
-                    await print_message("error: usage: /update <id> <text>")
-                    continue
+                    append_message_component("error: usage: /update <id> <text>")
+                    input_component.text = ""
+                    return
                 _, target_id, new_text = parts
                 try:
                     component = terminal.get_component(target_id)
                 except KeyError:
-                    await print_message(f"error: component not found: {target_id}")
-                    continue
+                    append_message_component(f"error: component not found: {target_id}")
+                    input_component.text = ""
+                    return
                 if not isinstance(component, TextComponent):
-                    await print_message(
+                    append_message_component(
                         f"error: unsupported component type for id {target_id}"
                     )
-                    continue
+                    input_component.text = ""
+                    return
                 component.text = new_text
                 terminal.notify_component(component)
-                await terminal.render()
-                continue
+                input_component.text = ""
+                return
 
-            await print_message(f"error: unknown command: {user_input}")
-            continue
+            append_message_component(f"error: unknown command: {value}")
+            input_component.text = ""
+            return
 
-        component_id = f"msg-{counter}"
-        counter += 1
-        component = TextComponent(user_input, id=component_id)
-        append_component(component)
-        await terminal.render()
+        append_message_component(value)
+        input_component.text = ""
+
+    input_component.subscribe_submit(handle_submit)
+
+    await terminal.start()
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        await terminal.stop()
 
 
 if __name__ == "__main__":

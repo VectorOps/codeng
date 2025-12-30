@@ -7,6 +7,7 @@ import sys
 import threading
 import typing
 from dataclasses import dataclass
+import signal
 
 from . import base as input_base
 
@@ -203,6 +204,8 @@ class PosixInputHandler(input_base.InputHandler):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._stop_event: asyncio.Event | None = None
+        self._resize_installed = False
+        self._prev_winch_handler: typing.Any | None = None
 
     async def run(self) -> None:
         self.start()
@@ -222,6 +225,7 @@ class PosixInputHandler(input_base.InputHandler):
         self._loop = loop
         self._stop_event = asyncio.Event()
         self._setup_terminal()
+        self._install_winch_handler()
         self._running = True
         thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._thread = thread
@@ -236,6 +240,7 @@ class PosixInputHandler(input_base.InputHandler):
         if thread is not None:
             thread.join()
             self._thread = None
+        self._remove_winch_handler()
         self._teardown_terminal()
         self._loop = None
         self._stop_event = None
@@ -254,6 +259,42 @@ class PosixInputHandler(input_base.InputHandler):
 
         termios.tcsetattr(self._fd, termios.TCSADRAIN, self._orig_termios)
         self._orig_termios = None
+
+    def _install_winch_handler(self) -> None:
+        if not hasattr(signal, "SIGWINCH"):
+            return
+        if self._resize_installed:
+            return
+        self._prev_winch_handler = signal.getsignal(signal.SIGWINCH)
+        signal.signal(signal.SIGWINCH, self._handle_winch)
+        self._resize_installed = True
+
+    def _remove_winch_handler(self) -> None:
+        if not self._resize_installed:
+            return
+        if not hasattr(signal, "SIGWINCH"):
+            self._resize_installed = False
+            self._prev_winch_handler = None
+            return
+        prev = self._prev_winch_handler
+        if prev is not None:
+            signal.signal(signal.SIGWINCH, prev)
+        self._resize_installed = False
+        self._prev_winch_handler = None
+
+    def _handle_winch(self, signum, frame) -> None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(self._emit_resize_event)
+
+    def _emit_resize_event(self) -> None:
+        try:
+            size = os.get_terminal_size(self._fd)
+        except OSError:
+            return
+        event = input_base.ResizeEvent(width=size.columns, height=size.lines)
+        self.publish(event)
 
     def _reader_loop(self) -> None:
         try:

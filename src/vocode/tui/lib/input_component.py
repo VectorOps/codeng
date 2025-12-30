@@ -7,6 +7,8 @@ from rich import console as rich_console
 from rich import segment as rich_segment
 from rich import style as rich_style
 from rich import text as rich_text
+from rich import box as rich_box
+from rich import panel as rich_panel
 
 from vocode.tui.lib import terminal as tui_terminal
 from vocode.tui.lib.input import base as input_base
@@ -25,7 +27,12 @@ class KeyBinding:
 
 
 class InputComponent(tui_terminal.Component):
-    def __init__(self, text: str = "", id: str | None = None) -> None:
+    def __init__(
+        self,
+        text: str = "",
+        id: str | None = None,
+        box_style: rich_box.Box | None = None,
+    ) -> None:
         super().__init__(id=id)
         lines = text.splitlines() if text else []
         if not lines:
@@ -35,12 +42,13 @@ class InputComponent(tui_terminal.Component):
         last_line = self._lines[last_row]
         if last_line:
             self._cursor_row = last_row
-            self._cursor_col = len(last_line) - 1
+            self._cursor_col = len(last_line)
         else:
             self._cursor_row = last_row
             self._cursor_col = 0
         self._keymap = self._create_keymap()
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
+        self._box_style = box_style
 
     @property
     def text(self) -> str:
@@ -56,7 +64,7 @@ class InputComponent(tui_terminal.Component):
         last_line = self._lines[last_row]
         if last_line:
             self._cursor_row = last_row
-            self._cursor_col = len(last_line) - 1
+            self._cursor_col = len(last_line)
         else:
             self._cursor_row = last_row
             self._cursor_col = 0
@@ -98,10 +106,31 @@ class InputComponent(tui_terminal.Component):
     def render(self) -> Lines:
         terminal = self.terminal
         if terminal is None:
-            console = rich_console.Console()
-        else:
-            console = terminal.console
-        return self._render_lines_with_cursor(self._lines, console)
+            return []
+        console = terminal.console
+        if self._box_style is None:
+            return self._render_lines_with_cursor(self._lines, console)
+        text = self._build_text_with_cursor()
+        panel = rich_panel.Panel(text, box=self._box_style, padding=(0, 1))
+        rendered = console.render_lines(panel, pad=False, new_lines=False)
+        return typing.cast(Lines, rendered)
+
+    def _build_text_with_cursor(self) -> rich_text.Text:
+        full = rich_text.Text()
+        for row, raw in enumerate(self._lines):
+            if row > 0:
+                full.append("\n")
+            line_text = rich_text.Text(raw, overflow="fold", no_wrap=False)
+            if row == self._cursor_row:
+                cursor_col = self._cursor_col
+                if cursor_col >= len(raw):
+                    line_text.append(" ")
+                    start = len(raw)
+                else:
+                    start = cursor_col
+                line_text.stylize(CURSOR_STYLE, start, start + 1)
+            full.append_text(line_text)
+        return full
 
     def _render_lines_with_cursor(
         self,
@@ -143,13 +172,13 @@ class InputComponent(tui_terminal.Component):
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
         line = self._lines[self._cursor_row]
-        last_index = max(len(line) - 1, 0)
+        last_index = len(line)
         if self._cursor_col < last_index:
             self._cursor_col += 1
         elif self._cursor_row < len(self._lines) - 1:
             self._cursor_row += 1
             line = self._lines[self._cursor_row]
-            self._cursor_col = max(len(line) - 1, 0)
+            self._cursor_col = len(line)
         self._mark_dirty()
 
     def move_cursor_up(self) -> None:
@@ -157,7 +186,7 @@ class InputComponent(tui_terminal.Component):
             return
         self._cursor_row -= 1
         line = self._lines[self._cursor_row]
-        max_index = max(len(line) - 1, 0)
+        max_index = len(line)
         self._cursor_col = min(self._cursor_col, max_index)
         self._mark_dirty()
 
@@ -166,7 +195,7 @@ class InputComponent(tui_terminal.Component):
             return
         self._cursor_row += 1
         line = self._lines[self._cursor_row]
-        max_index = max(len(line) - 1, 0)
+        max_index = len(line)
         self._cursor_col = min(self._cursor_col, max_index)
         self._mark_dirty()
 
@@ -194,7 +223,7 @@ class InputComponent(tui_terminal.Component):
             self._lines[prev_row] = new_line
             del self._lines[self._cursor_row]
             self._cursor_row = prev_row
-            self._cursor_col = max(len(new_line) - 1, 0)
+            self._cursor_col = len(prev_line)
         self._mark_dirty()
 
     def delete(self) -> None:
@@ -203,14 +232,14 @@ class InputComponent(tui_terminal.Component):
             col = self._cursor_col
             new_line = line[:col] + line[col + 1 :]
             self._lines[self._cursor_row] = new_line
-            max_index = max(len(new_line) - 1, 0)
+            max_index = len(new_line)
             self._cursor_col = min(self._cursor_col, max_index)
         elif not line and self._cursor_row < len(self._lines) - 1:
             next_row = self._cursor_row + 1
             next_line = self._lines[next_row]
             self._lines[self._cursor_row] = line + next_line
             del self._lines[next_row]
-            self._cursor_col = max(len(self._lines[self._cursor_row]) - 1, 0)
+            self._cursor_col = min(self._cursor_col, len(self._lines[self._cursor_row]))
         self._mark_dirty()
 
     def break_line(self) -> None:
