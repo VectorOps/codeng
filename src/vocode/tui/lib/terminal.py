@@ -27,7 +27,7 @@ CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = tui_controls.CURSOR_PREVIOUS_LINE_
 
 
 Lines = typing.List[typing.List[rich_segment.Segment]]
-
+ # ConsoleOptions threaded into render calls
 
 class IncrementalRenderMode(str, enum.Enum):
     PADDING = "padding"
@@ -40,7 +40,7 @@ class Component(ABC):
         self.terminal: Terminal | None = None
 
     @abstractmethod
-    def render(self) -> Lines:
+    def render(self, options: rich_console.ConsoleOptions) -> Lines:
         raise NotImplementedError
 
     def on_key_event(self, event: input_base.KeyEvent) -> None:
@@ -351,8 +351,9 @@ class Terminal:
 
     def _full_render(self) -> None:
         new_cache: typing.Dict[Component, Lines] = {}
+        options = self._console.options
         for component in self._components:
-            lines = component.render()
+            lines = component.render(options)
             new_cache[component] = lines
 
         all_lines: Lines = []
@@ -380,6 +381,8 @@ class Terminal:
         height = size.height
         if width <= 0 or height <= 0:
             return False
+
+        options = self._console.options
 
         remaining = set(changed_components)
         row = self._cursor_line
@@ -418,7 +421,7 @@ class Terminal:
         # Special optimization for top-most component - we only need to render its changed lines
         top_component = tail_components[0]
         top_old_lines = self._cache.get(top_component, [])
-        top_new_lines = top_component.render()
+        top_new_lines = top_component.render(options)
         self._cache[top_component] = top_new_lines
 
         top_mismatch = 0
@@ -437,7 +440,7 @@ class Terminal:
         # Render remaining components
         for component in tail_components[1:]:
             if component in changed_components or component not in self._cache:
-                new_lines = component.render()
+                new_lines = component.render(options)
                 self._cache[component] = new_lines
 
             lines = self._cache.get(component, [])

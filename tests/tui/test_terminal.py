@@ -17,20 +17,24 @@ class DummyComponent(tui_terminal.Component):
     def __init__(self, text: str, id: str | None = None) -> None:
         super().__init__(id=id)
         self.text = text
-
-    def render(self) -> tui_terminal.Lines:
+    def render(
+        self,
+        options: rich_console.ConsoleOptions,
+    ) -> tui_terminal.Lines:
         terminal = self.terminal
         if terminal is None:
             return []
-        return terminal.console.render_lines(self.text)
+        return terminal.console.render_lines(self.text, options=options)
 
 
 class MultiLineComponent(tui_terminal.Component):
     def __init__(self, lines: list[str], id: str | None = None) -> None:
         super().__init__(id=id)
         self.lines = lines
-
-    def render(self) -> tui_terminal.Lines:
+    def render(
+        self,
+        options: rich_console.ConsoleOptions,
+    ) -> tui_terminal.Lines:
         return [[rich_segment.Segment(line)] for line in self.lines]
 
 
@@ -41,7 +45,10 @@ class InputComponent(tui_terminal.Component):
         self.key_events: list[input_base.KeyEvent] = []
         self.mouse_events: list[input_base.MouseEvent] = []
 
-    def render(self) -> tui_terminal.Lines:
+    def render(
+        self,
+        options: rich_console.ConsoleOptions,
+    ) -> tui_terminal.Lines:
         return []
 
     def on_key_event(self, event: input_base.KeyEvent) -> None:
@@ -91,7 +98,8 @@ def test_input_component_handles_keys_and_renders_cursor() -> None:
 
     assert component.text == "ba"
 
-    lines = component.render()
+    options = console.options
+    lines = component.render(options)
     assert lines
 
     first_line = lines[0]
