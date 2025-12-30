@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from vocode.tui.lib import terminal as tui_terminal
-from vocode.tui.lib import input_component as tui_input_component
+from vocode.tui.lib.components import input_component as tui_input_component
 from rich import box as rich_box
 from vocode.tui.lib.input import posix as input_posix
 

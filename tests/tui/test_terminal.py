@@ -8,7 +8,7 @@ from rich import segment as rich_segment
 from rich import style as rich_style
 
 from vocode.tui.lib import terminal as tui_terminal
-from vocode.tui.lib import input_component as tui_input_component
+from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.input import base as input_base
 import pytest
 
@@ -144,6 +144,33 @@ def test_input_component_submit_notifies_subscribers() -> None:
     plain_enter = input_base.KeyEvent(action="down", key="enter")
     component.on_key_event(plain_enter)
     assert component.text == "hi\n"
+
+
+def test_input_component_home_end_and_word_navigation() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=20,
+    )
+    terminal = tui_terminal.Terminal(console=console)
+    component = tui_input_component.InputComponent("hello world", id="input")
+    terminal.append_component(component)
+    assert component.cursor_row == 0
+    assert component.cursor_col == len("hello world")
+    home_event = input_base.KeyEvent(action="down", key="home")
+    component.on_key_event(home_event)
+    assert component.cursor_col == 0
+    alt_right = input_base.KeyEvent(action="down", key="right", alt=True)
+    component.on_key_event(alt_right)
+    assert component.cursor_col == len("hello ")
+    end_event = input_base.KeyEvent(action="down", key="end")
+    component.on_key_event(end_event)
+    assert component.cursor_col == len("hello world")
+    alt_left = input_base.KeyEvent(action="down", key="left", alt=True)
+    component.on_key_event(alt_left)
+    assert component.cursor_col == len("hello ")
 
 
 @pytest.mark.asyncio

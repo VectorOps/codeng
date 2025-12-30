@@ -27,8 +27,8 @@ CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = tui_controls.CURSOR_PREVIOUS_LINE_
 
 
 Lines = typing.List[typing.List[rich_segment.Segment]]
- 
- 
+
+
 class IncrementalRenderMode(str, enum.Enum):
     PADDING = "padding"
     CLEAR_TO_BOTTOM = "clear_to_bottom"
@@ -453,15 +453,10 @@ class Terminal:
 
         if row != self._cursor_line:
             self._console.control(
-                tui_controls.CustomControl.cursor_previous_line(
-                    self._cursor_line - row
-                )
+                tui_controls.CustomControl.cursor_previous_line(self._cursor_line - row)
             )
 
-        if (
-            self._settings.incremental_mode
-            is IncrementalRenderMode.CLEAR_TO_BOTTOM
-        ):
+        if self._settings.incremental_mode is IncrementalRenderMode.CLEAR_TO_BOTTOM:
             self._console.control(tui_controls.CustomControl.erase_down())
             self._print_lines(lines_to_output)
             new_cursor_line = row + len(lines_to_output)
@@ -476,14 +471,9 @@ class Terminal:
                         line.append(rich_segment.Segment(" " * pad))
                 padded_lines.append(line)
 
-            extra_lines = old_span - len(lines_to_output)
-            if extra_lines > 0 and width > 0:
-                blank_line = [rich_segment.Segment(" " * width)]
-                for _ in range(extra_lines):
-                    padded_lines.append(blank_line)
-
             self._print_lines(padded_lines)
-            new_cursor_line = row + len(padded_lines)
+            new_cursor_line = row + len(lines_to_output)
+            self._console.control(tui_controls.CustomControl.erase_down())
 
         self._set_cursor_line(new_cursor_line)
         self._console.control(tui_controls.CustomControl.sync_update_end())
