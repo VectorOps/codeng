@@ -26,10 +26,15 @@ class SelectItem(BaseModel):
 class SelectListComponent(tui_terminal.Component):
     def __init__(
         self,
-        items: typing.Iterable[SelectItem | typing.Mapping[str, typing.Any]] | None = None,
+        items: typing.Iterable[SelectItem | typing.Mapping[str, typing.Any]]
+        | None = None,
         id: str | None = None,
+        component_style: tui_terminal.ComponentStyle | None = None,
     ) -> None:
-        super().__init__(id=id)
+        super().__init__(
+            id=id,
+            component_style=component_style,
+        )
         self._items: list[SelectItem] = []
         self._selected_index: int = 0
         self._view_offset: int = 0
@@ -220,7 +225,23 @@ class SelectListComponent(tui_terminal.Component):
             new_lines=False,
         )
         lines.extend(typing.cast(Lines, hint_lines))
-        return lines
+        segments: list[rich_segment.Segment] = []
+        for line in lines:
+            segments.extend(line)
+            segments.append(rich_segment.Segment.line())
+
+        if not segments:
+            return []
+
+        renderable = rich_segment.Segments(segments)
+        styled = self.apply_style(renderable)
+        styled_lines = console.render_lines(
+            styled,
+            options=options,
+            pad=False,
+            new_lines=False,
+        )
+        return typing.cast(Lines, styled_lines)
 
     def on_key_event(self, event: input_base.KeyEvent) -> None:
         if event.action != "down":

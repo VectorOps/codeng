@@ -5,9 +5,9 @@ import asyncio
 from vocode.tui.lib import terminal as tui_terminal
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import select_list as tui_select_list
-from rich import box as rich_box
 from vocode.tui.lib.input import posix as input_posix
 from rich import console as rich_console
+from rich import box as rich_box
 
 
 class TextComponent(tui_terminal.Component):
@@ -20,6 +20,7 @@ class TextComponent(tui_terminal.Component):
         super().__init__(id=id)
         self.text = text
         self.show_id_prefix = show_id_prefix
+
     def render(
         self,
         options: rich_console.ConsoleOptions,
@@ -47,10 +48,13 @@ async def _main() -> None:
         "    ...",
         id="help",
     )
+    input_style = tui_terminal.ComponentStyle(
+        panel_box=rich_box.ROUNDED,
+    )
     input_component = tui_input_component.InputComponent(
         "",
         id="input",
-        box_style=rich_box.SQUARE,
+        component_style=input_style,
     )
 
     components: list[tui_terminal.Component] = []
@@ -76,6 +80,7 @@ async def _main() -> None:
             show_id_prefix=True,
         )
         terminal.insert_component(-1, component)
+
     def handle_submit(value: str) -> None:
         nonlocal select_counter
         stripped = value.strip()
@@ -131,6 +136,10 @@ async def _main() -> None:
                 select_component = tui_select_list.SelectListComponent(
                     items=items,
                     id=select_id,
+                    component_style=tui_terminal.ComponentStyle(
+                        padding_pad=1,
+                        padding_style="on rgb(65,65,65)",
+                    ),
                 )
 
                 def handle_select(item: tui_select_list.SelectItem) -> None:

@@ -4,6 +4,8 @@ import asyncio
 import io
 
 from rich import console as rich_console
+from rich import panel as rich_panel
+from rich import padding as rich_padding
 from rich import segment as rich_segment
 from rich import style as rich_style
 
@@ -655,3 +657,44 @@ async def test_terminal_full_render_triggered_by_resize_event() -> None:
     output = buffer.getvalue()
     assert output == first_output
     assert tui_terminal.ERASE_SCROLLBACK in output
+
+
+def test_component_style_panel_extended_properties() -> None:
+    component = DummyComponent("body")
+    style = tui_terminal.ComponentStyle(
+        panel_title="Title",
+        panel_subtitle="Subtitle",
+        panel_style="on blue",
+        panel_border_style="red",
+        panel_title_highlight=True,
+    )
+    component.component_style = style
+
+    styled = component.apply_style("content")
+    assert isinstance(styled, rich_panel.Panel)
+
+    panel = styled
+    title = panel.title
+    subtitle = panel.subtitle
+
+    assert title is not None
+    assert str(title) == "Title"
+    assert subtitle is not None
+    assert str(subtitle) == "Subtitle"
+
+
+def test_component_style_padding_uses_new_fields() -> None:
+    component = DummyComponent("body")
+    style = tui_terminal.ComponentStyle(
+        padding_pad=2,
+        padding_style="green",
+    )
+    component.component_style = style
+
+    styled = component.apply_style("x")
+    assert isinstance(styled, rich_padding.Padding)
+
+    padding = styled
+    assert padding.renderable == "x" or isinstance(
+        padding.renderable, rich_console.RenderableType
+    )
