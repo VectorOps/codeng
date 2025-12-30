@@ -33,9 +33,11 @@ class InputComponent(tui_terminal.Component):
         text: str = "",
         id: str | None = None,
         box_style: rich_box.Box | None = None,
+        single_line: bool = False,
     ) -> None:
         super().__init__(id=id)
         self._editor = components_text_editor.TextEditor(text)
+        self._single_line = single_line
         self._keymap = self._create_keymap()
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
         self._box_style = box_style
@@ -48,6 +50,10 @@ class InputComponent(tui_terminal.Component):
     def text(self, value: str) -> None:
         self._editor.text = value
         self._mark_dirty()
+
+    @property
+    def lines(self) -> typing.List[str]:
+        return self._editor.lines
 
     @property
     def cursor_row(self) -> int:
@@ -63,7 +69,7 @@ class InputComponent(tui_terminal.Component):
             terminal.notify_component(self)
 
     def _create_keymap(self) -> dict[KeyBinding, typing.Callable[[], None]]:
-        return {
+        keymap: dict[KeyBinding, typing.Callable[[], None]] = {
             KeyBinding("left"): self.move_cursor_left,
             KeyBinding("right"): self.move_cursor_right,
             KeyBinding("up"): self.move_cursor_up,
@@ -90,9 +96,14 @@ class InputComponent(tui_terminal.Component):
             KeyBinding("u", alt=True): self.uppercase_word,
             KeyBinding("l", alt=True): self.lowercase_word,
             KeyBinding("c", alt=True): self.capitalize_word,
-            KeyBinding("enter"): self.break_line,
-            KeyBinding("enter", alt=True): self.submit,
         }
+        if self._single_line:
+            keymap[KeyBinding("enter")] = self.submit
+            keymap[KeyBinding("enter", alt=True)] = self.submit
+        else:
+            keymap[KeyBinding("enter")] = self.break_line
+            keymap[KeyBinding("enter", alt=True)] = self.submit
+        return keymap
 
     def subscribe_submit(self, subscriber: typing.Callable[[str], None]) -> None:
         self._submit_subscribers.append(subscriber)

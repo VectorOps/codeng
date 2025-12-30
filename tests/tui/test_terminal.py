@@ -157,6 +157,34 @@ def test_input_component_submit_notifies_subscribers() -> None:
     assert component.text == "hi\n"
 
 
+def test_input_component_single_line_enter_submits_without_newline() -> None:
+    component = tui_input_component.InputComponent("", single_line=True)
+    submitted: list[str] = []
+
+    def subscriber(value: str) -> None:
+        submitted.append(value)
+
+    component.subscribe_submit(subscriber)
+
+    key_event_h = input_base.KeyEvent(action="down", key="char", text="h")
+    key_event_i = input_base.KeyEvent(action="down", key="char", text="i")
+    component.on_key_event(key_event_h)
+    component.on_key_event(key_event_i)
+
+    assert component.text == "hi"
+    assert submitted == []
+
+    plain_enter = input_base.KeyEvent(
+        action="down",
+        key="enter",
+        text="\n",
+    )
+    component.on_key_event(plain_enter)
+
+    assert submitted == ["hi"]
+    assert component.text == "hi"
+
+
 def test_input_component_home_end_and_word_navigation() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(
