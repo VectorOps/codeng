@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from itertools import zip_longest
 import asyncio
+import enum
 import typing
 import time
 
@@ -26,6 +27,11 @@ CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = tui_controls.CURSOR_PREVIOUS_LINE_
 
 
 Lines = typing.List[typing.List[rich_segment.Segment]]
+ 
+ 
+class IncrementalRenderMode(str, enum.Enum):
+    PADDING = "padding"
+    CLEAR_TO_BOTTOM = "clear_to_bottom"
 
 
 class Component(ABC):
@@ -44,9 +50,21 @@ class Component(ABC):
         pass
 
 
+class _SuspendAutoRender:
+    def __init__(self, terminal: Terminal) -> None:
+        self._terminal = terminal
+
+    def __enter__(self) -> None:
+        self._terminal.disable_auto_render()
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._terminal.enable_auto_render()
+
+
 class TerminalSettings(BaseModel):
     auto_render: bool = True
     min_render_interval_ms: int = 50
+    incremental_mode: IncrementalRenderMode = IncrementalRenderMode.PADDING
 
 
 class Terminal:
@@ -79,16 +97,6 @@ class Terminal:
         if self._input_handler is not None:
             self._input_handler.subscribe(self._handle_input_event)
 
-    class _SuspendAutoRender:
-        def __init__(self, terminal: Terminal) -> None:
-            self._terminal = terminal
-
-        def __enter__(self) -> None:
-            self._terminal.disable_auto_render()
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            self._terminal.enable_auto_render()
-
     @property
     def console(self) -> rich_console.Console:
         return self._console
@@ -107,7 +115,12 @@ class Terminal:
             self._request_auto_render(force=True)
 
     def suspend_auto_render(self) -> typing.ContextManager[None]:
-        return Terminal._SuspendAutoRender(self)
+        return _SuspendAutoRender(self)
+
+    # Components
+    @property
+    def components(self):
+        return self._components
 
     def append_component(self, component: Component) -> None:
         if component in self._components:
@@ -167,6 +180,7 @@ class Terminal:
             raise KeyError(component_id)
         return self._id_index[component_id]
 
+    # Focus
     def push_focus(self, component: Component) -> None:
         if component not in self._components:
             return
@@ -184,6 +198,7 @@ class Terminal:
             return
         self._focus_stack = [c for c in self._focus_stack if c is not component]
 
+    # Rendering
     def _print_lines(self, lines: Lines) -> None:
         if not lines:
             return
@@ -202,6 +217,9 @@ class Terminal:
             self._console.print(rich_segment.Segments(batched), end="")
 
     def _handle_input_event(self, event: input_base.InputEvent) -> None:
+        if isinstance(event, input_base.ResizeEvent):
+            self._handle_resize_event(event)
+            return
         if not self._focus_stack:
             return
         component = self._focus_stack[-1]
@@ -210,9 +228,14 @@ class Terminal:
         elif isinstance(event, input_base.MouseEvent):
             component.on_mouse_event(event)
 
+    def _handle_resize_event(self, event: input_base.ResizeEvent) -> None:
+        self._force_full_render = True
+        self._request_auto_render(force=True)
+
     def _set_cursor_line(self, line):
         height = self._console.size.height
         self._cursor_line = min(line, height)
+
     def _cancel_auto_render_task(self) -> None:
         task = self._auto_render_task
         if task is not None and not task.done():
@@ -250,9 +273,7 @@ class Terminal:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        self._auto_render_task = loop.create_task(
-            self._auto_render_worker(force=force)
-        )
+        self._auto_render_task = loop.create_task(self._auto_render_worker(force=force))
 
     async def render(self) -> None:
         if not self._components:
@@ -292,6 +313,7 @@ class Terminal:
         )
         if self._input_handler is None:
             return
+        self._console.control(rich_control.Control.show_cursor(False))
         if self._input_task is not None and not self._input_task.done():
             return
         loop = asyncio.get_running_loop()
@@ -309,6 +331,7 @@ class Terminal:
                 await task
             except asyncio.CancelledError:
                 pass
+        self._console.control(rich_control.Control.show_cursor(True))
 
     def run(self) -> None:
         if self._input_handler is None:
@@ -353,8 +376,9 @@ class Terminal:
             return True
 
         size = self._console.size
+        width = size.width
         height = size.height
-        if height <= 0:
+        if width <= 0 or height <= 0:
             return False
 
         remaining = set(changed_components)
@@ -418,6 +442,9 @@ class Terminal:
 
             lines = self._cache.get(component, [])
             lines_to_output.extend(lines)
+        old_span = self._cursor_line - row
+        if old_span < 0:
+            old_span = 0
 
         self._console.control(
             tui_controls.CustomControl.sync_update_start(),
@@ -428,11 +455,37 @@ class Terminal:
             self._console.control(
                 tui_controls.CustomControl.cursor_previous_line(
                     self._cursor_line - row
-                ),
-                tui_controls.CustomControl.erase_down(),
+                )
             )
-        self._print_lines(lines_to_output)
-        self._set_cursor_line(row + len(lines_to_output))
+
+        if (
+            self._settings.incremental_mode
+            is IncrementalRenderMode.CLEAR_TO_BOTTOM
+        ):
+            self._console.control(tui_controls.CustomControl.erase_down())
+            self._print_lines(lines_to_output)
+            new_cursor_line = row + len(lines_to_output)
+        else:
+            padded_lines: Lines = []
+            for line in lines_to_output:
+                current_len = sum(len(segment.text) for segment in line)
+                if current_len < width:
+                    pad = width - current_len
+                    if pad > 0:
+                        line = list(line)
+                        line.append(rich_segment.Segment(" " * pad))
+                padded_lines.append(line)
+
+            extra_lines = old_span - len(lines_to_output)
+            if extra_lines > 0 and width > 0:
+                blank_line = [rich_segment.Segment(" " * width)]
+                for _ in range(extra_lines):
+                    padded_lines.append(blank_line)
+
+            self._print_lines(padded_lines)
+            new_cursor_line = row + len(padded_lines)
+
+        self._set_cursor_line(new_cursor_line)
         self._console.control(tui_controls.CustomControl.sync_update_end())
 
         return True

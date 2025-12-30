@@ -186,6 +186,37 @@ async def test_terminal_incremental_render_updates_component() -> None:
     output = buffer.getvalue()
     assert "second" in output
     assert tui_terminal.ERASE_SCROLLBACK not in output
+    assert tui_terminal.ERASE_DOWN not in output
+
+
+@pytest.mark.asyncio
+async def test_incremental_render_clear_to_bottom_mode_uses_erase_down() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+    )
+    settings = tui_terminal.TerminalSettings(
+        auto_render=False,
+        incremental_mode=tui_terminal.IncrementalRenderMode.CLEAR_TO_BOTTOM,
+    )
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    component = DummyComponent("first")
+
+    terminal.append_component(component)
+    await terminal.render()
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    component.text = "second"
+    terminal.notify_component(component)
+    await terminal.render()
+
+    output = buffer.getvalue()
+    assert "second" in output
+    assert tui_terminal.ERASE_DOWN in output
 
 
 @pytest.mark.asyncio
@@ -406,3 +437,29 @@ async def test_terminal_start_and_stop_input_handler() -> None:
 
     await terminal.stop()
     assert handler.cancelled
+
+
+@pytest.mark.asyncio
+async def test_terminal_full_render_triggered_by_resize_event() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    component = DummyComponent("hello")
+
+    terminal.append_component(component)
+    await terminal.render()
+
+    first_output = buffer.getvalue()
+    assert first_output
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    resize_event = input_base.ResizeEvent(width=80, height=24)
+    terminal._handle_input_event(resize_event)
+    await terminal.render()
+
+    output = buffer.getvalue()
+    assert output == first_output
+    assert tui_terminal.ERASE_SCROLLBACK in output

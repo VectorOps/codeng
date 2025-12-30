@@ -38,7 +38,13 @@ class MouseEvent:
     scroll: int = 0
 
 
-InputEvent = typing.Union[KeyEvent, PasteEvent, MouseEvent]
+@dataclass(frozen=True)
+class ResizeEvent:
+    width: int
+    height: int
+
+
+InputEvent = typing.Union[KeyEvent, PasteEvent, MouseEvent, ResizeEvent]
 EventSubscriber = typing.Callable[[InputEvent], typing.Awaitable[None] | None]
 
 
