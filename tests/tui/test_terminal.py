@@ -9,7 +9,8 @@ from rich import padding as rich_padding
 from rich import segment as rich_segment
 from rich import style as rich_style
 
-from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui import lib as tui_terminal
+from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.input import base as input_base
 import pytest
@@ -19,6 +20,7 @@ class DummyComponent(tui_terminal.Component):
     def __init__(self, text: str, id: str | None = None) -> None:
         super().__init__(id=id)
         self.text = text
+
     def render(
         self,
         options: rich_console.ConsoleOptions,
@@ -33,6 +35,7 @@ class MultiLineComponent(tui_terminal.Component):
     def __init__(self, lines: list[str], id: str | None = None) -> None:
         super().__init__(id=id)
         self.lines = lines
+
     def render(
         self,
         options: rich_console.ConsoleOptions,
@@ -72,8 +75,8 @@ async def test_terminal_renders_on_append() -> None:
     await terminal.render()
 
     output = buffer.getvalue()
-    assert tui_terminal.SYNC_UPDATE_START in output
-    assert tui_terminal.ERASE_SCROLLBACK in output
+    assert tui_controls.SYNC_UPDATE_START in output
+    assert tui_controls.ERASE_SCROLLBACK in output
     assert "hello" in output
 
 
@@ -377,8 +380,8 @@ async def test_terminal_incremental_render_updates_component() -> None:
 
     output = buffer.getvalue()
     assert "second" in output
-    assert tui_terminal.ERASE_SCROLLBACK not in output
-    assert tui_terminal.ERASE_DOWN in output
+    assert tui_controls.ERASE_SCROLLBACK not in output
+    assert tui_controls.ERASE_DOWN in output
 
 
 @pytest.mark.asyncio
@@ -408,7 +411,7 @@ async def test_incremental_render_clear_to_bottom_mode_uses_erase_down() -> None
 
     output = buffer.getvalue()
     assert "second" in output
-    assert tui_terminal.ERASE_DOWN in output
+    assert tui_controls.ERASE_DOWN in output
 
 
 @pytest.mark.asyncio
@@ -437,12 +440,12 @@ async def test_incremental_render_updates_bottom_line_only_for_multiline_compone
     await terminal.render()
 
     output = buffer.getvalue()
-    cursor_up_once = tui_terminal.CURSOR_PREVIOUS_LINE_FMT.format(1)
+    cursor_up_once = tui_controls.CURSOR_PREVIOUS_LINE_FMT.format(1)
     assert "bottom2" in output
     assert "line1" not in output
     assert "line2" not in output
     assert "bottom1" not in output
-    assert tui_terminal.ERASE_SCROLLBACK not in output
+    assert tui_controls.ERASE_SCROLLBACK not in output
     assert cursor_up_once in output
     assert output.count(cursor_up_once) == 1
 
@@ -475,7 +478,7 @@ async def test_incremental_render_appends_line_with_offscreen_top() -> None:
     assert "one" not in output
     assert "two" not in output
     assert "three" not in output
-    assert tui_terminal.ERASE_SCROLLBACK not in output
+    assert tui_controls.ERASE_SCROLLBACK not in output
 
 
 @pytest.mark.asyncio
@@ -503,7 +506,7 @@ async def test_insert_component_at_beginning() -> None:
     assert "first" in output
     assert "second" in output
     assert output.index("zero") < output.index("first") < output.index("second")
-    assert tui_terminal.ERASE_SCROLLBACK in output
+    assert tui_controls.ERASE_SCROLLBACK in output
 
 
 @pytest.mark.asyncio
@@ -560,9 +563,9 @@ async def test_terminal_initializes_clearing_screen() -> None:
     await terminal.start()
 
     output = buffer.getvalue()
-    assert tui_terminal.ERASE_SCREEN in output
-    assert tui_terminal.CURSOR_HOME in output
-    assert tui_terminal.ERASE_SCROLLBACK not in output
+    assert tui_controls.ERASE_SCREEN in output
+    assert tui_controls.CURSOR_HOME in output
+    assert tui_controls.ERASE_SCROLLBACK not in output
 
 
 def test_focus_stack_routes_key_and_mouse_events_to_top_component() -> None:
@@ -656,7 +659,7 @@ async def test_terminal_full_render_triggered_by_resize_event() -> None:
 
     output = buffer.getvalue()
     assert output == first_output
-    assert tui_terminal.ERASE_SCROLLBACK in output
+    assert tui_controls.ERASE_SCROLLBACK in output
 
 
 def test_component_style_panel_extended_properties() -> None:

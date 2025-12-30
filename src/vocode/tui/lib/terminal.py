@@ -1,166 +1,24 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from itertools import zip_longest
 import asyncio
 import enum
 import typing
 import time
-from dataclasses import dataclass
 
 from rich import console as rich_console
 from rich import control as rich_control
-from rich import align as rich_align
-from rich import box as rich_box
 from rich import segment as rich_segment
-from rich import style as rich_style
-from rich import text as rich_text
-from rich import padding as rich_padding
-from rich import panel as rich_panel
 
+from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.input import base as input_base
 from pydantic import BaseModel
 
 
-SYNC_UPDATE_START: typing.Final[str] = tui_controls.SYNC_UPDATE_START
-SYNC_UPDATE_END: typing.Final[str] = tui_controls.SYNC_UPDATE_END
-ERASE_SCROLLBACK: typing.Final[str] = tui_controls.ERASE_SCROLLBACK
-ERASE_SCREEN: typing.Final[str] = tui_controls.ERASE_SCREEN
-CURSOR_HOME: typing.Final[str] = tui_controls.CURSOR_HOME
-CURSOR_COLUMN_1: typing.Final[str] = tui_controls.CURSOR_COLUMN_1
-ERASE_DOWN: typing.Final[str] = tui_controls.ERASE_DOWN
-CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = tui_controls.CURSOR_PREVIOUS_LINE_FMT
-
-
-Lines = typing.List[typing.List[rich_segment.Segment]]
-# ConsoleOptions threaded into render calls
-
-Renderable = str | rich_console.RenderableType
-
-
-@dataclass(frozen=True)
-class ComponentStyle:
-    style: rich_style.Style | str | None = None
-    panel_style: rich_style.Style | str | None = None
-    panel_border_style: rich_style.Style | str | None = None
-    panel_box: rich_box.Box | None = None
-    panel_title: str | rich_text.Text | None = None
-    panel_title_align: rich_align.AlignMethod | None = None
-    panel_title_highlight: bool | None = None
-    panel_subtitle: str | rich_text.Text | None = None
-    panel_subtitle_align: rich_align.AlignMethod | None = None
-    panel_padding: int | tuple[int, int] | tuple[int, int, int, int] | None = None
-    padding_pad: int | tuple[int, int] | tuple[int, int, int, int] | None = None
-    padding_style: rich_style.Style | str | None = None
-
-
 class IncrementalRenderMode(str, enum.Enum):
     PADDING = "padding"
     CLEAR_TO_BOTTOM = "clear_to_bottom"
-
-
-class Component(ABC):
-    def __init__(
-        self,
-        id: str | None = None,
-        component_style: ComponentStyle | None = None,
-    ) -> None:
-        self.id = id
-        self.terminal: Terminal | None = None
-        self.component_style = component_style
-
-    @abstractmethod
-    def render(self, options: rich_console.ConsoleOptions) -> Lines:
-        raise NotImplementedError
-
-    def on_key_event(self, event: input_base.KeyEvent) -> None:
-        pass
-
-    def on_mouse_event(self, event: input_base.MouseEvent) -> None:
-        pass
-
-    def apply_style(self, renderable: Renderable) -> Renderable:
-        component_style = self.component_style
-        if component_style is None:
-            return renderable
-        current: Renderable
-        style = component_style.style
-        if isinstance(renderable, str):
-            if style is not None:
-                current = rich_text.Text(renderable, style=style)
-            else:
-                current = rich_text.Text(renderable)
-        else:
-            current = renderable
-            if style is not None and isinstance(current, rich_text.Text):
-                current = rich_text.Text(str(current), style=style)
-        panel_style = component_style.panel_style
-        panel_border_style = component_style.panel_border_style
-        panel_box = component_style.panel_box
-        panel_title = component_style.panel_title
-        panel_title_align = component_style.panel_title_align
-        panel_title_highlight = component_style.panel_title_highlight
-        panel_subtitle = component_style.panel_subtitle
-        panel_subtitle_align = component_style.panel_subtitle_align
-        panel_padding = component_style.panel_padding
-
-        use_panel = False
-        if (
-            panel_style is not None
-            or panel_border_style is not None
-            or panel_box is not None
-            or panel_title is not None
-            or panel_title_align is not None
-            or panel_subtitle is not None
-            or panel_subtitle_align is not None
-            or panel_padding is not None
-            or (panel_title_highlight is not None and panel_title_highlight)
-        ):
-            use_panel = True
-
-        if use_panel:
-            panel_kwargs: dict[str, typing.Any] = {}
-            if panel_title is not None:
-                panel_kwargs["title"] = panel_title
-            if panel_subtitle is not None:
-                panel_kwargs["subtitle"] = panel_subtitle
-            if panel_style is not None:
-                panel_kwargs["style"] = panel_style
-            if panel_border_style is not None:
-                panel_kwargs["border_style"] = panel_border_style
-            if panel_box is not None:
-                panel_kwargs["box"] = panel_box
-            if panel_title_align is not None:
-                panel_kwargs["title_align"] = panel_title_align
-            if panel_subtitle_align is not None:
-                panel_kwargs["subtitle_align"] = panel_subtitle_align
-            if panel_padding is not None:
-                panel_kwargs["padding"] = panel_padding
-            if panel_title_highlight is not None:
-                panel_kwargs["highlight"] = panel_title_highlight
-
-            current = rich_panel.Panel(
-                current,
-                **panel_kwargs,
-            )
-
-        padding_pad = component_style.padding_pad
-        padding_style = component_style.padding_style
-
-        if padding_pad is not None:
-            padding_kwargs: dict[str, typing.Any] = {
-                "pad": padding_pad,
-            }
-            if padding_style is not None:
-                padding_kwargs["style"] = padding_style
-
-            current = rich_padding.Padding(
-                current,
-                **padding_kwargs,
-            )
-
-        return current
 
 
 class _SuspendAutoRender:
@@ -190,16 +48,16 @@ class Terminal:
         self._console: rich_console.Console = (
             console if console is not None else rich_console.Console()
         )
-        self._components: typing.List[Component] = []
-        self._id_index: typing.Dict[str, Component] = {}
-        self._dirty_components: typing.Set[Component] = set()
+        self._components: typing.List[tui_base.Component] = []
+        self._id_index: typing.Dict[str, tui_base.Component] = {}
+        self._dirty_components: typing.Set[tui_base.Component] = set()
         self._cache: typing.Dict[Component, Lines] = {}
         self._width: int | None = None
         self._force_full_render: bool = False
         self._cursor_line: int = 0
         self._input_handler: input_base.InputHandler | None = input_handler
         self._input_task: asyncio.Task[None] | None = None
-        self._focus_stack: list[Component] = []
+        self._focus_stack: list[tui_base.Component] = []
         self._settings: TerminalSettings = (
             settings if settings is not None else TerminalSettings()
         )
@@ -235,7 +93,7 @@ class Terminal:
     def components(self):
         return self._components
 
-    def append_component(self, component: Component) -> None:
+    def append_component(self, component: tui_base.Component) -> None:
         if component in self._components:
             return
         if component.id is not None:
@@ -246,7 +104,7 @@ class Terminal:
         self._components.append(component)
         self.notify_component(component)
 
-    def insert_component(self, index: int, component: Component) -> None:
+    def insert_component(self, index: int, component: tui_base.Component) -> None:
         if component in self._components:
             return
         if component.id is not None:
@@ -267,7 +125,7 @@ class Terminal:
         self.notify_component(component)
         self._force_full_render = True
 
-    def remove_component(self, component: Component) -> None:
+    def remove_component(self, component: tui_base.Component) -> None:
         if component not in self._components:
             return
         self._components.remove(component)
@@ -283,36 +141,36 @@ class Terminal:
         component.terminal = None
         self._force_full_render = True
 
-    def notify_component(self, component: Component) -> None:
+    def notify_component(self, component: tui_base.Component) -> None:
         if component in self._components:
             self._dirty_components.add(component)
             self._request_auto_render()
 
-    def get_component(self, component_id: str) -> Component:
+    def get_component(self, component_id: str) -> tui_base.Component:
         if component_id not in self._id_index:
             raise KeyError(component_id)
         return self._id_index[component_id]
 
     # Focus
-    def push_focus(self, component: Component) -> None:
+    def push_focus(self, component: tui_base.Component) -> None:
         if component not in self._components:
             return
         if component in self._focus_stack:
             self._focus_stack.remove(component)
         self._focus_stack.append(component)
 
-    def pop_focus(self) -> Component | None:
+    def pop_focus(self) -> tui_base.Component | None:
         if not self._focus_stack:
             return None
         return self._focus_stack.pop()
 
-    def remove_focus(self, component: Component) -> None:
+    def remove_focus(self, component: tui_base.Component) -> None:
         if not self._focus_stack:
             return
         self._focus_stack = [c for c in self._focus_stack if c is not component]
 
     # Rendering
-    def _print_lines(self, lines: Lines) -> None:
+    def _print_lines(self, lines: tui_base.Lines) -> None:
         if not lines:
             return
 
@@ -333,8 +191,10 @@ class Terminal:
         if isinstance(event, input_base.ResizeEvent):
             self._handle_resize_event(event)
             return
+
         if not self._focus_stack:
             return
+
         component = self._focus_stack[-1]
         if isinstance(event, input_base.KeyEvent):
             component.on_key_event(event)
@@ -463,13 +323,13 @@ class Terminal:
         asyncio.run(_main())
 
     def _full_render(self) -> None:
-        new_cache: typing.Dict[Component, Lines] = {}
+        new_cache: typing.Dict[tui_base.Component, tui_base.Lines] = {}
         options = self._console.options
         for component in self._components:
             lines = component.render(options)
             new_cache[component] = lines
 
-        all_lines: Lines = []
+        all_lines: tui_base.Lines = []
         for component in self._components:
             lines = new_cache.get(component, [])
             all_lines.extend(lines)
@@ -485,7 +345,9 @@ class Terminal:
 
         self._cache = new_cache
 
-    def _incremental_render(self, changed_components: typing.Set[Component]) -> bool:
+    def _incremental_render(
+        self, changed_components: typing.Set[tui_base.Component]
+    ) -> bool:
         if not changed_components:
             return True
 
@@ -529,7 +391,7 @@ class Terminal:
         if not tail_components:
             return True
 
-        lines_to_output: Lines = []
+        lines_to_output: tui_base.Lines = []
 
         # Special optimization for top-most component - we only need to render its changed lines
         top_component = tail_components[0]
@@ -577,7 +439,7 @@ class Terminal:
             self._print_lines(lines_to_output)
             new_cursor_line = row + len(lines_to_output)
         else:
-            padded_lines: Lines = []
+            padded_lines: tui_base.Lines = []
             for line in lines_to_output:
                 current_len = sum(len(segment.text) for segment in line)
                 if current_len < width:

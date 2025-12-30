@@ -7,12 +7,12 @@ from rich import console as rich_console
 from rich import style as rich_style
 from rich import text as rich_text
 
-from vocode.tui.lib import terminal as tui_terminal
-from vocode.tui.lib.components import text_editor as components_text_editor
+from vocode.tui.lib import base as tui_base
 from vocode.tui.lib.input import base as input_base
 
+from . import text_editor as components_text_editor
 
-Lines = tui_terminal.Lines
+
 CURSOR_STYLE: typing.Final[rich_style.Style] = rich_style.Style(reverse=True)
 
 
@@ -24,13 +24,13 @@ class KeyBinding:
     shift: bool = False
 
 
-class InputComponent(tui_terminal.Component):
+class InputComponent(tui_base.Component):
     def __init__(
         self,
         text: str = "",
         id: str | None = None,
         single_line: bool = False,
-        component_style: tui_terminal.ComponentStyle | None = None,
+        component_style: tui_base.ComponentStyle | None = None,
     ) -> None:
         super().__init__(
             id=id,
@@ -113,7 +113,7 @@ class InputComponent(tui_terminal.Component):
         for subscriber in list(self._submit_subscribers):
             subscriber(value)
 
-    def render(self, options: rich_console.ConsoleOptions) -> Lines:
+    def render(self, options: rich_console.ConsoleOptions) -> tui_base.Lines:
         terminal = self.terminal
         if terminal is None:
             return []
@@ -126,7 +126,7 @@ class InputComponent(tui_terminal.Component):
             pad=False,
             new_lines=False,
         )
-        return typing.cast(Lines, rendered)
+        return typing.cast(tui_base.Lines, rendered)
 
     def _build_text_with_cursor(self) -> rich_text.Text:
         full = rich_text.Text()
@@ -145,6 +145,7 @@ class InputComponent(tui_terminal.Component):
                 line_text.stylize(CURSOR_STYLE, start, start + 1)
             full.append_text(line_text)
         return full
+
     def move_cursor_left(self) -> None:
         self._editor.move_cursor_left()
         self._mark_dirty()
