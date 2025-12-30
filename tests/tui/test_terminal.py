@@ -49,14 +49,16 @@ class InputComponent(tui_terminal.Component):
         self.mouse_events.append(event)
 
 
-def test_terminal_renders_on_append() -> None:
+@pytest.mark.asyncio
+async def test_terminal_renders_on_append() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
     component = DummyComponent("hello")
 
     terminal.append_component(component)
-    terminal.render()
+    await terminal.render()
 
     output = buffer.getvalue()
     assert tui_terminal.SYNC_UPDATE_START in output
@@ -144,45 +146,50 @@ def test_input_component_submit_notifies_subscribers() -> None:
     assert component.text == "hi\n"
 
 
-def test_terminal_no_render_without_changes() -> None:
+@pytest.mark.asyncio
+async def test_terminal_no_render_without_changes() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
     component = DummyComponent("hello")
 
     terminal.append_component(component)
-    terminal.render()
+    await terminal.render()
 
     buffer.truncate(0)
     buffer.seek(0)
 
-    terminal.render()
+    await terminal.render()
     output = buffer.getvalue()
     assert output == ""
 
 
-def test_terminal_incremental_render_updates_component() -> None:
+@pytest.mark.asyncio
+async def test_terminal_incremental_render_updates_component() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
     component = DummyComponent("first")
 
     terminal.append_component(component)
-    terminal.render()
+    await terminal.render()
 
     buffer.truncate(0)
     buffer.seek(0)
 
     component.text = "second"
     terminal.notify_component(component)
-    terminal.render()
+    await terminal.render()
 
     output = buffer.getvalue()
     assert "second" in output
     assert tui_terminal.ERASE_SCROLLBACK not in output
 
 
-def test_incremental_render_updates_bottom_line_only_for_multiline_component() -> None:
+@pytest.mark.asyncio
+async def test_incremental_render_updates_bottom_line_only_for_multiline_component() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(
         file=buffer,
@@ -190,18 +197,19 @@ def test_incremental_render_updates_bottom_line_only_for_multiline_component() -
         color_system=None,
         height=5,
     )
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
     component = DummyComponent("line1\nline2\nbottom1")
 
     terminal.append_component(component)
-    terminal.render()
+    await terminal.render()
 
     buffer.truncate(0)
     buffer.seek(0)
 
     component.text = "line1\nline2\nbottom2"
     terminal.notify_component(component)
-    terminal.render()
+    await terminal.render()
 
     output = buffer.getvalue()
     cursor_up_once = tui_terminal.CURSOR_PREVIOUS_LINE_FMT.format(1)
@@ -214,7 +222,8 @@ def test_incremental_render_updates_bottom_line_only_for_multiline_component() -
     assert output.count(cursor_up_once) == 1
 
 
-def test_incremental_render_appends_line_with_offscreen_top() -> None:
+@pytest.mark.asyncio
+async def test_incremental_render_appends_line_with_offscreen_top() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(
         file=buffer,
@@ -222,18 +231,19 @@ def test_incremental_render_appends_line_with_offscreen_top() -> None:
         color_system=None,
         height=2,
     )
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
     component = MultiLineComponent(["one", "two", "three"])
 
     terminal.append_component(component)
-    terminal.render()
+    await terminal.render()
 
     buffer.truncate(0)
     buffer.seek(0)
 
     component.lines.append("four")
     terminal.notify_component(component)
-    terminal.render()
+    await terminal.render()
 
     output = buffer.getvalue()
     assert "four" in output
@@ -243,23 +253,25 @@ def test_incremental_render_appends_line_with_offscreen_top() -> None:
     assert tui_terminal.ERASE_SCROLLBACK not in output
 
 
-def test_insert_component_at_beginning() -> None:
+@pytest.mark.asyncio
+async def test_insert_component_at_beginning() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
 
     first = DummyComponent("first")
     second = DummyComponent("second")
     terminal.append_component(first)
     terminal.append_component(second)
-    terminal.render()
+    await terminal.render()
 
     buffer.truncate(0)
     buffer.seek(0)
 
     zero = DummyComponent("zero")
     terminal.insert_component(0, zero)
-    terminal.render()
+    await terminal.render()
 
     output = buffer.getvalue()
     assert "zero" in output
@@ -269,10 +281,12 @@ def test_insert_component_at_beginning() -> None:
     assert tui_terminal.ERASE_SCROLLBACK in output
 
 
-def test_insert_component_negative_index_before_last() -> None:
+@pytest.mark.asyncio
+async def test_insert_component_negative_index_before_last() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
 
     a = DummyComponent("a")
     b = DummyComponent("b")
@@ -280,14 +294,14 @@ def test_insert_component_negative_index_before_last() -> None:
     terminal.append_component(a)
     terminal.append_component(b)
     terminal.append_component(c)
-    terminal.render()
+    await terminal.render()
 
     buffer.truncate(0)
     buffer.seek(0)
 
     x = DummyComponent("x")
     terminal.insert_component(-1, x)
-    terminal.render()
+    await terminal.render()
 
     output = buffer.getvalue()
     assert "a" in output
@@ -300,7 +314,8 @@ def test_insert_component_negative_index_before_last() -> None:
 def test_insert_component_id_conflict_raises() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
 
     first = DummyComponent("one", id="same")
     second = DummyComponent("two", id="same")
@@ -328,7 +343,8 @@ async def test_terminal_initializes_clearing_screen() -> None:
 def test_focus_stack_routes_key_and_mouse_events_to_top_component() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
-    terminal = tui_terminal.Terminal(console=console)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
 
     first = InputComponent("first", id="first")
     second = InputComponent("second", id="second")

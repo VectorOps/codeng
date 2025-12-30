@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 
 from vocode.tui.lib import terminal as tui_terminal
 from vocode.tui.lib import controls as tui_controls
@@ -8,6 +9,7 @@ class TextComponent(tui_terminal.Component):
     def __init__(self, text: str, id: str | None = None) -> None:
         super().__init__(id=id)
         self.text = text
+
     def render(self) -> tui_terminal.Lines:
         terminal = self.terminal
         if terminal is None:
@@ -15,7 +17,7 @@ class TextComponent(tui_terminal.Component):
         return terminal.console.render_lines(self.text)
 
 
-def main() -> None:
+async def _main() -> None:
     terminal = tui_terminal.Terminal()
     header = TextComponent("Vocode TUI playground", id="header")
     help_text = TextComponent(
@@ -32,7 +34,7 @@ def main() -> None:
 
     terminal.append_component(header)
     terminal.append_component(help_text)
-    terminal.render()
+    await terminal.render()
 
     counter = 1
 
@@ -40,13 +42,13 @@ def main() -> None:
         components.append(component)
         terminal.append_component(component)
 
-    def print_message(message: str) -> None:
+    async def print_message(message: str) -> None:
         nonlocal counter
         component_id = f"msg-{counter}"
         counter += 1
         component = TextComponent(message, id=component_id)
         append_component(component)
-        terminal.render()
+        await terminal.render()
 
     while True:
         user_input = input("> ")
@@ -74,39 +76,39 @@ def main() -> None:
                     message = "\n".join(lines_text)
                 else:
                     message = "(no components)"
-                print_message(message)
+                await print_message(message)
                 continue
 
             if user_input.startswith("/update "):
                 parts = user_input.split(" ", 2)
                 if len(parts) < 3:
-                    print_message("error: usage: /update <id> <text>")
+                    await print_message("error: usage: /update <id> <text>")
                     continue
                 _, target_id, new_text = parts
                 try:
                     component = terminal.get_component(target_id)
                 except KeyError:
-                    print_message(f"error: component not found: {target_id}")
+                    await print_message(f"error: component not found: {target_id}")
                     continue
                 if not isinstance(component, TextComponent):
-                    print_message(
+                    await print_message(
                         f"error: unsupported component type for id {target_id}"
                     )
                     continue
                 component.text = new_text
                 terminal.notify_component(component)
-                terminal.render()
+                await terminal.render()
                 continue
 
-            print_message(f"error: unknown command: {user_input}")
+            await print_message(f"error: unknown command: {user_input}")
             continue
 
         component_id = f"msg-{counter}"
         counter += 1
         component = TextComponent(user_input, id=component_id)
         append_component(component)
-        terminal.render()
+        await terminal.render()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(_main())
