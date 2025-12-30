@@ -378,9 +378,9 @@ class Runner:
                     tool_responses: list[state.ToolCallResp] = []
 
                     for req in msg.tool_call_requests:
-                        if self._is_tool_call_auto_approved(req):
-                            approved.append(req)
-                            continue
+                        is_auto_approved = self._is_tool_call_auto_approved(req)
+                        if is_auto_approved:
+                            req.auto_approved = True
 
                         while True:
                             persisted_prompt = self._create_tool_prompt_step(
@@ -392,6 +392,11 @@ class Runner:
                                 step=persisted_prompt,
                             )
                             resp_event = yield req_event
+
+                            if is_auto_approved:
+                                approved.append(req)
+                                break
+
                             response_step = self._handle_run_event_response(
                                 req_event, resp_event
                             )
