@@ -5,17 +5,20 @@ from itertools import zip_longest
 import typing
 
 from rich import console as rich_console
+from rich import control as rich_control
 from rich import segment as rich_segment
 
+from vocode.tui.lib import controls as tui_controls
 
-SYNC_UPDATE_START: typing.Final[str] = "\x1b[?2026h"
-SYNC_UPDATE_END: typing.Final[str] = "\x1b[?2026l"
-ERASE_SCROLLBACK: typing.Final[str] = "\x1b[3J"
-ERASE_SCREEN: typing.Final[str] = "\x1b[2J"
-CURSOR_HOME: typing.Final[str] = "\x1b[H"
-CURSOR_COLUMN_1: typing.Final[str] = "\x1b[1G"
-ERASE_DOWN: typing.Final[str] = "\x1b[J"
-CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = "\x1b[{}F"
+
+SYNC_UPDATE_START: typing.Final[str] = tui_controls.SYNC_UPDATE_START
+SYNC_UPDATE_END: typing.Final[str] = tui_controls.SYNC_UPDATE_END
+ERASE_SCROLLBACK: typing.Final[str] = tui_controls.ERASE_SCROLLBACK
+ERASE_SCREEN: typing.Final[str] = tui_controls.ERASE_SCREEN
+CURSOR_HOME: typing.Final[str] = tui_controls.CURSOR_HOME
+CURSOR_COLUMN_1: typing.Final[str] = tui_controls.CURSOR_COLUMN_1
+ERASE_DOWN: typing.Final[str] = tui_controls.ERASE_DOWN
+CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = tui_controls.CURSOR_PREVIOUS_LINE_FMT
 
 
 Lines = typing.List[typing.List[rich_segment.Segment]]
@@ -42,17 +45,14 @@ class Terminal:
         self._width: int | None = None
         self._force_full_render: bool = False
         self._cursor_line: int = 0
-
-        self._write_control(ERASE_SCREEN + CURSOR_HOME)
+        self._console.control(
+            rich_control.Control.clear(),
+            rich_control.Control.home(),
+        )
 
     @property
     def console(self) -> rich_console.Console:
         return self._console
-
-    def _write_control(self, text: str) -> None:
-        file = self._console.file
-        file.write(text)
-        file.flush()
 
     def append_component(self, component: Component) -> None:
         if component in self._components:
@@ -169,11 +169,15 @@ class Terminal:
         for component in self._components:
             lines = new_cache.get(component, [])
             all_lines.extend(lines)
-        self._write_control(SYNC_UPDATE_START)
-        self._write_control(ERASE_SCROLLBACK + ERASE_SCREEN + CURSOR_HOME)
+        self._console.control(tui_controls.CustomControl.sync_update_start())
+        self._console.control(
+            tui_controls.CustomControl.erase_scrollback(),
+            rich_control.Control.clear(),
+            rich_control.Control.home(),
+        )
         self._print_lines(all_lines)
         self._set_cursor_line(len(all_lines))
-        self._write_control(SYNC_UPDATE_END)
+        self._console.control(tui_controls.CustomControl.sync_update_end())
 
         self._cache = new_cache
 
@@ -248,15 +252,20 @@ class Terminal:
             lines = self._cache.get(component, [])
             lines_to_output.extend(lines)
 
-        self._write_control(SYNC_UPDATE_START + CURSOR_COLUMN_1)
+        self._console.control(
+            tui_controls.CustomControl.sync_update_start(),
+            tui_controls.CustomControl.cursor_column_1(),
+        )
 
         if row != self._cursor_line:
-            self._write_control(
-                CURSOR_PREVIOUS_LINE_FMT.format(self._cursor_line - row),
+            self._console.control(
+                tui_controls.CustomControl.cursor_previous_line(
+                    self._cursor_line - row
+                ),
+                tui_controls.CustomControl.erase_down(),
             )
-            self._write_control(ERASE_DOWN)
         self._print_lines(lines_to_output)
         self._set_cursor_line(row + len(lines_to_output))
-        self._write_control(SYNC_UPDATE_END)
+        self._console.control(tui_controls.CustomControl.sync_update_end())
 
         return True
