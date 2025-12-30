@@ -4,8 +4,10 @@ import asyncio
 
 from vocode.tui.lib import terminal as tui_terminal
 from vocode.tui.lib.components import input_component as tui_input_component
+from vocode.tui.lib.components import select_list as tui_select_list
 from rich import box as rich_box
 from vocode.tui.lib.input import posix as input_posix
+from rich import console as rich_console
 
 
 class TextComponent(tui_terminal.Component):
@@ -18,15 +20,17 @@ class TextComponent(tui_terminal.Component):
         super().__init__(id=id)
         self.text = text
         self.show_id_prefix = show_id_prefix
-
-    def render(self) -> tui_terminal.Lines:
+    def render(
+        self,
+        options: rich_console.ConsoleOptions,
+    ) -> tui_terminal.Lines:
         terminal = self.terminal
         if terminal is None:
             return []
         text = self.text
         if self.show_id_prefix and self.id is not None:
             text = f"{self.id}: {text}"
-        return terminal.console.render_lines(text)
+        return terminal.console.render_lines(text, options=options)
 
 
 async def _main() -> None:
@@ -36,7 +40,11 @@ async def _main() -> None:
     help_text = TextComponent(
         "Type in the input box below.\n"
         "Commands:\n"
-        "  /update <id> <text>",
+        "  /update <id> <text>\n"
+        "  /select\n"
+        "    <option 1>\n"
+        "    <option 2>\n"
+        "    ...",
         id="help",
     )
     input_component = tui_input_component.InputComponent(
@@ -56,6 +64,7 @@ async def _main() -> None:
     terminal.push_focus(input_component)
 
     counter = 1
+    select_counter = 1
 
     def append_message_component(message: str) -> None:
         nonlocal counter
@@ -67,8 +76,8 @@ async def _main() -> None:
             show_id_prefix=True,
         )
         terminal.insert_component(-1, component)
-
     def handle_submit(value: str) -> None:
+        nonlocal select_counter
         stripped = value.strip()
         if not stripped:
             input_component.text = ""
@@ -96,6 +105,43 @@ async def _main() -> None:
                     return
                 component.text = new_text
                 terminal.notify_component(component)
+                input_component.text = ""
+                return
+
+            if stripped.startswith("/select"):
+                lines = value.split("\n")
+                if not lines:
+                    append_message_component("error: usage: /select\n<option>...")
+                    input_component.text = ""
+                    return
+                option_lines = [line for line in lines[1:] if line.strip()]
+                if not option_lines:
+                    append_message_component("error: /select requires option lines")
+                    input_component.text = ""
+                    return
+                select_id = f"select-{select_counter}"
+                select_counter += 1
+                items = [
+                    tui_select_list.SelectItem(
+                        id=f"{select_id}-item-{index}",
+                        text=line,
+                    )
+                    for index, line in enumerate(option_lines, start=1)
+                ]
+                select_component = tui_select_list.SelectListComponent(
+                    items=items,
+                    id=select_id,
+                )
+
+                def handle_select(item: tui_select_list.SelectItem) -> None:
+                    terminal.remove_component(select_component)
+                    terminal.remove_focus(select_component)
+                    append_message_component(item.text)
+                    input_component.text = ""
+
+                select_component.subscribe_select(handle_select)
+                terminal.insert_component(-1, select_component)
+                terminal.push_focus(select_component)
                 input_component.text = ""
                 return
 

@@ -102,16 +102,25 @@ class InputComponent(tui_terminal.Component):
         for subscriber in list(self._submit_subscribers):
             subscriber(value)
 
-    def render(self) -> Lines:
+    def render(self, options: rich_console.ConsoleOptions) -> Lines:
         terminal = self.terminal
         if terminal is None:
             return []
         console = terminal.console
         if self._box_style is None:
-            return self._render_lines_with_cursor(self._editor.lines, console)
+            return self._render_lines_with_cursor(
+                self._editor.lines,
+                console,
+                options,
+            )
         text = self._build_text_with_cursor()
         panel = rich_panel.Panel(text, box=self._box_style, padding=(0, 1))
-        rendered = console.render_lines(panel, pad=False, new_lines=False)
+        rendered = console.render_lines(
+            panel,
+            options=options,
+            pad=False,
+            new_lines=False,
+        )
         return typing.cast(Lines, rendered)
 
     def _build_text_with_cursor(self) -> rich_text.Text:
@@ -136,6 +145,7 @@ class InputComponent(tui_terminal.Component):
         self,
         lines: typing.Iterable[str],
         console: rich_console.Console,
+        options: rich_console.ConsoleOptions,
     ) -> Lines:
         rendered: Lines = []
         cursor_row = self._editor.cursor_row
@@ -152,6 +162,7 @@ class InputComponent(tui_terminal.Component):
             rendered.extend(
                 console.render_lines(
                     text,
+                    options=options,
                     pad=False,
                     new_lines=False,
                 )
