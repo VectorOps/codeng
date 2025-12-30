@@ -8,8 +8,10 @@ class TextComponent(tui_terminal.Component):
     def __init__(self, text: str, id: str | None = None) -> None:
         super().__init__(id=id)
         self.text = text
-
-    def render(self, terminal: tui_terminal.Terminal) -> tui_terminal.Lines:
+    def render(self) -> tui_terminal.Lines:
+        terminal = self.terminal
+        if terminal is None:
+            return []
         return terminal.console.render_lines(self.text)
 
 
@@ -65,7 +67,7 @@ def main() -> None:
                     component_id = component.id
                     if component_id is None:
                         continue
-                    rendered = component.render(terminal)
+                    rendered = component.render()
                     line_count = len(rendered)
                     lines_text.append(f"id:{component_id} lines:{line_count}")
                 if lines_text:
