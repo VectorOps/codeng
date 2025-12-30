@@ -17,7 +17,6 @@ class DummyComponent(tui_terminal.Component):
         return terminal.console.render_lines(self.text)
 
 
-
 class MultiLineComponent(tui_terminal.Component):
     def __init__(self, lines: list[str], id: str | None = None) -> None:
         super().__init__(id=id)
@@ -25,6 +24,7 @@ class MultiLineComponent(tui_terminal.Component):
 
     def render(self, terminal: tui_terminal.Terminal) -> tui_terminal.Lines:
         return [[rich_segment.Segment(line)] for line in self.lines]
+
 
 def test_terminal_renders_on_append() -> None:
     buffer = io.StringIO()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui.lib import controls as tui_controls
 
 
 class TextComponent(tui_terminal.Component):
@@ -47,8 +48,9 @@ def main() -> None:
 
     while True:
         user_input = input("> ")
-        terminal._write_control(
-            tui_terminal.CURSOR_PREVIOUS_LINE_FMT.format(1) + tui_terminal.ERASE_DOWN
+        terminal.console.control(
+            tui_controls.CustomControl.cursor_previous_line(1),
+            tui_controls.CustomControl.erase_down(),
         )
         if user_input.strip().lower() == "q":
             break
