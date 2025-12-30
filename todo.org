@@ -15,5 +15,6 @@
 * [ ] UI
 ** [ ] Create an in-memory bidirectional communication channel
 ** [ ] TUI library
+*** [ ] Refactor apply_style
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided

@@ -4,11 +4,8 @@ import typing
 from dataclasses import dataclass
 
 from rich import console as rich_console
-from rich import segment as rich_segment
 from rich import style as rich_style
 from rich import text as rich_text
-from rich import box as rich_box
-from rich import panel as rich_panel
 
 from vocode.tui.lib import terminal as tui_terminal
 from vocode.tui.lib.components import text_editor as components_text_editor
@@ -32,15 +29,18 @@ class InputComponent(tui_terminal.Component):
         self,
         text: str = "",
         id: str | None = None,
-        box_style: rich_box.Box | None = None,
         single_line: bool = False,
+        component_style: tui_terminal.ComponentStyle | None = None,
     ) -> None:
-        super().__init__(id=id)
+        super().__init__(
+            id=id,
+            component_style=component_style,
+        )
         self._editor = components_text_editor.TextEditor(text)
         self._single_line = single_line
         self._keymap = self._create_keymap()
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
-        self._box_style = box_style
+        # box_style removed; styling should be applied via Component.apply_style
 
     @property
     def text(self) -> str:
@@ -118,16 +118,10 @@ class InputComponent(tui_terminal.Component):
         if terminal is None:
             return []
         console = terminal.console
-        if self._box_style is None:
-            return self._render_lines_with_cursor(
-                self._editor.lines,
-                console,
-                options,
-            )
         text = self._build_text_with_cursor()
-        panel = rich_panel.Panel(text, box=self._box_style, padding=(0, 1))
+        styled = self.apply_style(text)
         rendered = console.render_lines(
-            panel,
+            styled,
             options=options,
             pad=False,
             new_lines=False,
@@ -151,35 +145,6 @@ class InputComponent(tui_terminal.Component):
                 line_text.stylize(CURSOR_STYLE, start, start + 1)
             full.append_text(line_text)
         return full
-
-    def _render_lines_with_cursor(
-        self,
-        lines: typing.Iterable[str],
-        console: rich_console.Console,
-        options: rich_console.ConsoleOptions,
-    ) -> Lines:
-        rendered: Lines = []
-        cursor_row = self._editor.cursor_row
-        cursor_col = self._editor.cursor_col
-        for row, raw in enumerate(lines):
-            text = rich_text.Text(raw, overflow="fold", no_wrap=False)
-            if row == cursor_row:
-                if cursor_col >= len(raw):
-                    text.append(" ")
-                    start = len(raw)
-                else:
-                    start = cursor_col
-                text.stylize(CURSOR_STYLE, start, start + 1)
-            rendered.extend(
-                console.render_lines(
-                    text,
-                    options=options,
-                    pad=False,
-                    new_lines=False,
-                )
-            )
-        return rendered
-
     def move_cursor_left(self) -> None:
         self._editor.move_cursor_left()
         self._mark_dirty()
