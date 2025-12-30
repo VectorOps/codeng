@@ -5,8 +5,10 @@ import io
 
 from rich import console as rich_console
 from rich import segment as rich_segment
+from rich import style as rich_style
 
 from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui.lib import input_component as tui_input_component
 from vocode.tui.lib.input import base as input_base
 import pytest
 
@@ -60,6 +62,86 @@ def test_terminal_renders_on_append() -> None:
     assert tui_terminal.SYNC_UPDATE_START in output
     assert tui_terminal.ERASE_SCROLLBACK in output
     assert "hello" in output
+
+def test_input_component_handles_keys_and_renders_cursor() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=20,
+    )
+    terminal = tui_terminal.Terminal(console=console)
+    component = tui_input_component.InputComponent("", id="input")
+    terminal.append_component(component)
+
+    key_event_a = input_base.KeyEvent(action="down", key="char", text="a")
+    component.on_key_event(key_event_a)
+
+    key_event_left = input_base.KeyEvent(action="down", key="left")
+    component.on_key_event(key_event_left)
+
+    key_event_b = input_base.KeyEvent(action="down", key="char", text="b")
+    component.on_key_event(key_event_b)
+
+    assert component.text == "ba"
+
+    lines = component.render()
+    assert lines
+
+    first_line = lines[0]
+    combined_text = "".join(segment.text for segment in first_line)
+    assert "ba" in combined_text
+
+    highlighted_index = component.cursor_col
+    assert 0 <= highlighted_index < len(combined_text)
+
+    current_index = 0
+    cursor_style: rich_style.Style | None = None
+    for segment in first_line:
+        text = segment.text
+        length = len(text)
+        next_index = current_index + length
+        if current_index <= highlighted_index < next_index:
+            style = segment.style
+            if isinstance(style, rich_style.Style):
+                cursor_style = style
+            break
+        current_index = next_index
+
+    assert cursor_style is not None
+    assert cursor_style.reverse
+
+
+def test_input_component_submit_notifies_subscribers() -> None:
+    component = tui_input_component.InputComponent("")
+    submitted: list[str] = []
+
+    def subscriber(value: str) -> None:
+        submitted.append(value)
+
+    component.subscribe_submit(subscriber)
+
+    key_event_h = input_base.KeyEvent(action="down", key="char", text="h")
+    key_event_i = input_base.KeyEvent(action="down", key="char", text="i")
+    component.on_key_event(key_event_h)
+    component.on_key_event(key_event_i)
+
+    assert component.text == "hi"
+    assert submitted == []
+
+    submit_event = input_base.KeyEvent(
+        action="down",
+        key="enter",
+        alt=True,
+    )
+    component.on_key_event(submit_event)
+
+    assert submitted == ["hi"]
+
+    plain_enter = input_base.KeyEvent(action="down", key="enter")
+    component.on_key_event(plain_enter)
+    assert component.text == "hi\n"
 
 
 def test_terminal_no_render_without_changes() -> None:
