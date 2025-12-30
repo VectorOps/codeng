@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from itertools import zip_longest
+import asyncio
 import typing
 
 from rich import console as rich_console
@@ -9,6 +10,7 @@ from rich import control as rich_control
 from rich import segment as rich_segment
 
 from vocode.tui.lib import controls as tui_controls
+from vocode.tui.lib.input import base as input_base
 
 
 SYNC_UPDATE_START: typing.Final[str] = tui_controls.SYNC_UPDATE_START
@@ -27,14 +29,25 @@ Lines = typing.List[typing.List[rich_segment.Segment]]
 class Component(ABC):
     def __init__(self, id: str | None = None) -> None:
         self.id = id
+        self.terminal: Terminal | None = None
 
     @abstractmethod
-    def render(self, terminal: "Terminal") -> Lines:
+    def render(self) -> Lines:
         raise NotImplementedError
+
+    def on_key_event(self, event: input_base.KeyEvent) -> None:
+        pass
+
+    def on_mouse_event(self, event: input_base.MouseEvent) -> None:
+        pass
 
 
 class Terminal:
-    def __init__(self, console: rich_console.Console | None = None) -> None:
+    def __init__(
+        self,
+        console: rich_console.Console | None = None,
+        input_handler: input_base.InputHandler | None = None,
+    ) -> None:
         self._console: rich_console.Console = (
             console if console is not None else rich_console.Console()
         )
@@ -45,10 +58,11 @@ class Terminal:
         self._width: int | None = None
         self._force_full_render: bool = False
         self._cursor_line: int = 0
-        self._console.control(
-            rich_control.Control.clear(),
-            rich_control.Control.home(),
-        )
+        self._input_handler: input_base.InputHandler | None = input_handler
+        self._input_task: asyncio.Task[None] | None = None
+        self._focus_stack: list[Component] = []
+        if self._input_handler is not None:
+            self._input_handler.subscribe(self._handle_input_event)
 
     @property
     def console(self) -> rich_console.Console:
@@ -61,6 +75,7 @@ class Terminal:
             if component.id in self._id_index:
                 raise ValueError(f"Component id already exists: {component.id}")
             self._id_index[component.id] = component
+        component.terminal = self
         self._components.append(component)
         self.notify_component(component)
 
@@ -80,6 +95,7 @@ class Terminal:
             position = length + index
             if position < 0:
                 position = 0
+        component.terminal = self
         self._components.insert(position, component)
         self.notify_component(component)
         self._force_full_render = True
@@ -95,6 +111,9 @@ class Terminal:
         for key, value in list(self._id_index.items()):
             if value is component:
                 del self._id_index[key]
+        if component in self._focus_stack:
+            self.remove_focus(component)
+        component.terminal = None
         self._force_full_render = True
 
     def notify_component(self, component: Component) -> None:
@@ -105,6 +124,23 @@ class Terminal:
         if component_id not in self._id_index:
             raise KeyError(component_id)
         return self._id_index[component_id]
+
+    def push_focus(self, component: Component) -> None:
+        if component not in self._components:
+            return
+        if component in self._focus_stack:
+            self._focus_stack.remove(component)
+        self._focus_stack.append(component)
+
+    def pop_focus(self) -> Component | None:
+        if not self._focus_stack:
+            return None
+        return self._focus_stack.pop()
+
+    def remove_focus(self, component: Component) -> None:
+        if not self._focus_stack:
+            return
+        self._focus_stack = [c for c in self._focus_stack if c is not component]
 
     def _print_lines(self, lines: Lines) -> None:
         if not lines:
@@ -122,6 +158,15 @@ class Terminal:
 
         if batched:
             self._console.print(rich_segment.Segments(batched), end="")
+
+    def _handle_input_event(self, event: input_base.InputEvent) -> None:
+        if not self._focus_stack:
+            return
+        component = self._focus_stack[-1]
+        if isinstance(event, input_base.KeyEvent):
+            component.on_key_event(event)
+        elif isinstance(event, input_base.MouseEvent):
+            component.on_mouse_event(event)
 
     def _set_cursor_line(self, line):
         height = self._console.size.height
@@ -158,11 +203,51 @@ class Terminal:
         self._force_full_render = False
         self._dirty_components.clear()
 
+    async def start(self) -> None:
+        self._console.control(
+            rich_control.Control.clear(),
+            rich_control.Control.home(),
+        )
+        if self._input_handler is None:
+            return
+        if self._input_task is not None and not self._input_task.done():
+            return
+        loop = asyncio.get_running_loop()
+        self._input_task = loop.create_task(self._input_handler.run())
+        await asyncio.sleep(0)
+
+    async def stop(self) -> None:
+        task = self._input_task
+        if task is None:
+            return
+        self._input_task = None
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    def run(self) -> None:
+        if self._input_handler is None:
+            raise RuntimeError("Terminal has no input handler")
+
+        async def _main() -> None:
+            await self.start()
+            task = self._input_task
+            if task is None:
+                return
+            try:
+                await task
+            finally:
+                self._input_task = None
+
+        asyncio.run(_main())
+
     def _full_render(self) -> None:
         new_cache: typing.Dict[Component, Lines] = {}
-
         for component in self._components:
-            lines = component.render(self)
+            lines = component.render()
             new_cache[component] = lines
 
         all_lines: Lines = []
@@ -227,7 +312,7 @@ class Terminal:
         # Special optimization for top-most component - we only need to render its changed lines
         top_component = tail_components[0]
         top_old_lines = self._cache.get(top_component, [])
-        top_new_lines = component.render(self)
+        top_new_lines = top_component.render()
         self._cache[top_component] = top_new_lines
 
         top_mismatch = 0
@@ -246,7 +331,7 @@ class Terminal:
         # Render remaining components
         for component in tail_components[1:]:
             if component in changed_components or component not in self._cache:
-                new_lines = component.render(self)
+                new_lines = component.render()
                 self._cache[component] = new_lines
 
             lines = self._cache.get(component, [])

@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import io
 
 from rich import console as rich_console
 from rich import segment as rich_segment
 
 from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui.lib.input import base as input_base
+import pytest
 
 
 class DummyComponent(tui_terminal.Component):
     def __init__(self, text: str, id: str | None = None) -> None:
         super().__init__(id=id)
         self.text = text
-
-    def render(self, terminal: tui_terminal.Terminal) -> tui_terminal.Lines:
+    def render(self) -> tui_terminal.Lines:
+        terminal = self.terminal
+        if terminal is None:
+            return []
         return terminal.console.render_lines(self.text)
 
 
@@ -21,9 +26,25 @@ class MultiLineComponent(tui_terminal.Component):
     def __init__(self, lines: list[str], id: str | None = None) -> None:
         super().__init__(id=id)
         self.lines = lines
-
-    def render(self, terminal: tui_terminal.Terminal) -> tui_terminal.Lines:
+    def render(self) -> tui_terminal.Lines:
         return [[rich_segment.Segment(line)] for line in self.lines]
+
+
+class InputComponent(tui_terminal.Component):
+    def __init__(self, text: str, id: str | None = None) -> None:
+        super().__init__(id=id)
+        self.text = text
+        self.key_events: list[input_base.KeyEvent] = []
+        self.mouse_events: list[input_base.MouseEvent] = []
+
+    def render(self) -> tui_terminal.Lines:
+        return []
+
+    def on_key_event(self, event: input_base.KeyEvent) -> None:
+        self.key_events.append(event)
+
+    def on_mouse_event(self, event: input_base.MouseEvent) -> None:
+        self.mouse_events.append(event)
 
 
 def test_terminal_renders_on_append() -> None:
@@ -209,13 +230,81 @@ def test_insert_component_id_conflict_raises() -> None:
         pass
 
 
-def test_terminal_initializes_clearing_screen() -> None:
+@pytest.mark.asyncio
+async def test_terminal_initializes_clearing_screen() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
-
-    _ = tui_terminal.Terminal(console=console)
+    terminal = tui_terminal.Terminal(console=console)
+    await terminal.start()
 
     output = buffer.getvalue()
     assert tui_terminal.ERASE_SCREEN in output
     assert tui_terminal.CURSOR_HOME in output
     assert tui_terminal.ERASE_SCROLLBACK not in output
+
+
+def test_focus_stack_routes_key_and_mouse_events_to_top_component() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    terminal = tui_terminal.Terminal(console=console)
+
+    first = InputComponent("first", id="first")
+    second = InputComponent("second", id="second")
+    terminal.append_component(first)
+    terminal.append_component(second)
+
+    terminal.push_focus(first)
+    key_event_1 = input_base.KeyEvent(action="down", key="a", text="a")
+    mouse_event_1 = input_base.MouseEvent(action="move", x=1, y=1)
+    terminal._handle_input_event(key_event_1)
+    terminal._handle_input_event(mouse_event_1)
+
+    assert first.key_events == [key_event_1]
+    assert first.mouse_events == [mouse_event_1]
+    assert second.key_events == []
+    assert second.mouse_events == []
+
+    terminal.push_focus(second)
+    key_event_2 = input_base.KeyEvent(action="down", key="b", text="b")
+    mouse_event_2 = input_base.MouseEvent(action="down", x=2, y=2, button="left")
+    terminal._handle_input_event(key_event_2)
+    terminal._handle_input_event(mouse_event_2)
+
+    assert first.key_events == [key_event_1]
+    assert first.mouse_events == [mouse_event_1]
+    assert second.key_events == [key_event_2]
+    assert second.mouse_events == [mouse_event_2]
+
+    terminal.remove_focus(second)
+    key_event_3 = input_base.KeyEvent(action="down", key="c", text="c")
+    terminal._handle_input_event(key_event_3)
+    assert first.key_events == [key_event_1, key_event_3]
+    assert second.key_events == [key_event_2]
+
+
+@pytest.mark.asyncio
+async def test_terminal_start_and_stop_input_handler() -> None:
+    class DummyInputHandler(input_base.InputHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = False
+            self.cancelled = False
+
+        async def run(self) -> None:
+            self.started = True
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+    handler = DummyInputHandler()
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    terminal = tui_terminal.Terminal(console=console, input_handler=handler)
+
+    await terminal.start()
+    assert handler.started
+
+    await terminal.stop()
+    assert handler.cancelled
