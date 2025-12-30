@@ -16,5 +16,6 @@
 ** [ ] Create an in-memory bidirectional communication channel
 ** [ ] TUI library
 *** [ ] Refactor apply_style
+*** [ ] Add on_cancel (esc) to SelectList event
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided

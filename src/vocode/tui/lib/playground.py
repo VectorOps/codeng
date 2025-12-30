@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui import lib as tui_terminal
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import select_list as tui_select_list
 from vocode.tui.lib.input import posix as input_posix

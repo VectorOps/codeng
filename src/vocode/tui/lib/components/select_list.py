@@ -9,11 +9,10 @@ from rich import segment as rich_segment
 from rich import style as rich_style
 from rich import text as rich_text
 
-from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui.lib import base as tui_base
 from vocode.tui.lib.input import base as input_base
 
 
-Lines = tui_terminal.Lines
 MAX_VISIBLE_ITEMS: typing.Final[int] = 5
 SELECTED_STYLE: typing.Final[rich_style.Style] = rich_style.Style(reverse=True)
 
@@ -23,13 +22,14 @@ class SelectItem(BaseModel):
     text: str
 
 
-class SelectListComponent(tui_terminal.Component):
+class SelectListComponent(tui_base.Component):
     def __init__(
         self,
-        items: typing.Iterable[SelectItem | typing.Mapping[str, typing.Any]]
-        | None = None,
+        items: (
+            typing.Iterable[SelectItem | typing.Mapping[str, typing.Any]] | None
+        ) = None,
         id: str | None = None,
-        component_style: tui_terminal.ComponentStyle | None = None,
+        component_style: tui_base.ComponentStyle | None = None,
     ) -> None:
         super().__init__(
             id=id,
@@ -151,7 +151,7 @@ class SelectListComponent(tui_terminal.Component):
         self._sync_view_offset()
         self._mark_dirty()
 
-    def render(self, options: rich_console.ConsoleOptions) -> Lines:
+    def render(self, options: rich_console.ConsoleOptions) -> tui_base.Lines:
         terminal = self.terminal
         if terminal is None:
             return []
@@ -161,7 +161,7 @@ class SelectListComponent(tui_terminal.Component):
         end = start + MAX_VISIBLE_ITEMS
         visible_items = self._items[start:end]
         width = options.max_width or console.width
-        lines: Lines = []
+        lines: tui_base.Lines = []
         for index, item in enumerate(visible_items):
             markdown = rich_markdown.Markdown(item.text)
             item_lines = console.render_lines(
@@ -172,7 +172,7 @@ class SelectListComponent(tui_terminal.Component):
             )
             is_selected = total > 0 and (start + index) == self._selected_index
             if is_selected:
-                highlighted_lines: Lines = []
+                highlighted_lines: tui_base.Lines = []
                 for line in item_lines:
                     current_len = 0
                     new_line: list[rich_segment.Segment] = []
@@ -194,7 +194,7 @@ class SelectListComponent(tui_terminal.Component):
                     highlighted_lines.append(new_line)
                 lines.extend(highlighted_lines)
             else:
-                padded_lines: Lines = []
+                padded_lines: tui_base.Lines = []
                 for line in item_lines:
                     current_len = sum(len(segment.text) for segment in line)
                     if width > 0 and current_len < width:
@@ -224,7 +224,7 @@ class SelectListComponent(tui_terminal.Component):
             pad=False,
             new_lines=False,
         )
-        lines.extend(typing.cast(Lines, hint_lines))
+        lines.extend(typing.cast(tui_base.Lines, hint_lines))
         segments: list[rich_segment.Segment] = []
         for line in lines:
             segments.extend(line)
@@ -241,7 +241,7 @@ class SelectListComponent(tui_terminal.Component):
             pad=False,
             new_lines=False,
         )
-        return typing.cast(Lines, styled_lines)
+        return typing.cast(tui_base.Lines, styled_lines)
 
     def on_key_event(self, event: input_base.KeyEvent) -> None:
         if event.action != "down":
