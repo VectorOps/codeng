@@ -81,6 +81,10 @@ class ToolCallReq(BaseModel):
         default=None,
         description="Effective ToolSpec used for this call, if any.",
     )
+    auto_approved: Optional[None] = Field(
+        default=None,
+        description="Set to a truthy value at runtime when this tool call is auto-approved.",
+    )
     created_at: datetime = Field(default_factory=utcnow)
 
 
