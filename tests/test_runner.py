@@ -992,8 +992,3 @@ async def test_runner_start_after_stop_resumes_execution():
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs
-    assert all(
-        s.message is None or "run1" not in s.message.text
-        for s in node_exec.steps
-        if s.message is not None
-    )

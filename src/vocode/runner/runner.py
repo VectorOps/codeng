@@ -337,6 +337,7 @@ class Runner:
                     and resume_step.type == state.StepType.OUTPUT_MESSAGE
                 ):
                     skip_executor = True
+            self.execution.trim_empty_node_executions()
 
         if not self.execution.steps:
             runtime_node = self.graph.root
