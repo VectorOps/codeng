@@ -204,7 +204,12 @@ class PosixInputDecoder:
 
 
 class PosixInputHandler(input_base.InputHandler):
-    def __init__(self, fd: int | None = None) -> None:
+    def __init__(
+        self,
+        fd: int | None = None,
+        esc_sequence_timeout: float = ESC_SEQUENCE_TIMEOUT,
+        select_idle_timeout: float = SELECT_IDLE_TIMEOUT,
+    ) -> None:
         super().__init__()
         if fd is None:
             fd = sys.stdin.fileno()
@@ -219,6 +224,8 @@ class PosixInputHandler(input_base.InputHandler):
         self._prev_winch_handler: typing.Any | None = None
         self._esc_pending = False
         self._esc_time: float | None = None
+        self._esc_sequence_timeout = esc_sequence_timeout
+        self._select_idle_timeout = select_idle_timeout
 
     async def run(self) -> None:
         self.start()
@@ -313,9 +320,9 @@ class PosixInputHandler(input_base.InputHandler):
     def _reader_loop(self) -> None:
         try:
             while self._running:
-                timeout = SELECT_IDLE_TIMEOUT
+                timeout = self._select_idle_timeout
                 if self._esc_pending and self._esc_time is not None:
-                    remaining = ESC_SEQUENCE_TIMEOUT - (
+                    remaining = self._esc_sequence_timeout - (
                         time.monotonic() - self._esc_time
                     )
                     if remaining <= 0:
