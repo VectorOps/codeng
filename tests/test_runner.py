@@ -42,15 +42,11 @@ class FakeExecutor(BaseExecutor):
                     "message": state.Message(
                         role=models.Role.ASSISTANT,
                         text=f"{text_prefix}-final",
-                    )
+                    ),
+                    "is_complete": True,
                 }
             )
             yield step2
-            completion = state.Step(
-                execution=execution,
-                type=state.StepType.COMPLETION,
-            )
-            yield completion
         elif node_name == "node2":
             msg = state.Message(
                 role=models.Role.ASSISTANT,
@@ -60,14 +56,10 @@ class FakeExecutor(BaseExecutor):
                 execution=execution,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message=msg,
+                outcome_name="go",
+                is_complete=True,
             )
             yield step
-            completion = state.Step(
-                execution=execution,
-                type=state.StepType.COMPLETION,
-                outcome_name="go",
-            )
-            yield completion
         else:
             msg = state.Message(
                 role=models.Role.ASSISTANT,
@@ -77,13 +69,9 @@ class FakeExecutor(BaseExecutor):
                 execution=execution,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message=msg,
+                is_complete=True,
             )
             yield step
-            completion = state.Step(
-                execution=execution,
-                type=state.StepType.COMPLETION,
-            )
-            yield completion
 
 
 BaseExecutor.register("fake", FakeExecutor)
@@ -106,20 +94,23 @@ class LoopExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=f"loop-{count}",
         )
-        step = state.Step(
+        interim_step = state.Step(
             execution=execution,
             type=state.StepType.OUTPUT_MESSAGE,
             message=msg,
+            is_complete=False,
         )
-        yield step
+        yield interim_step
 
         outcome = "again" if count == 1 else "done"
-        completion = state.Step(
+        final_step = state.Step(
             execution=execution,
-            type=state.StepType.COMPLETION,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message=msg,
             outcome_name=outcome,
+            is_complete=True,
         )
-        yield completion
+        yield final_step
 
 
 BaseExecutor.register("loop", LoopExecutor)
@@ -129,6 +120,60 @@ class DummyWorkflow:
     def __init__(self, name: str, graph: models.Graph):
         self.name = name
         self.graph = graph
+
+
+class NoCompleteExecutor(BaseExecutor):
+    type = "no-complete"
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        execution = inp.execution
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text="no-complete",
+        )
+        step = state.Step(
+            execution=execution,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message=msg,
+            is_complete=False,
+        )
+        yield step
+
+
+BaseExecutor.register("no-complete", NoCompleteExecutor)
+
+
+class MultiCompleteExecutor(BaseExecutor):
+    type = "multi-complete"
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        execution = inp.execution
+        msg1 = state.Message(
+            role=models.Role.ASSISTANT,
+            text="first",
+        )
+        step1 = state.Step(
+            execution=execution,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message=msg1,
+            is_complete=True,
+        )
+        yield step1
+
+        msg2 = state.Message(
+            role=models.Role.ASSISTANT,
+            text="second",
+        )
+        step2 = state.Step(
+            execution=execution,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message=msg2,
+            is_complete=True,
+        )
+        yield step2
+
+
+BaseExecutor.register("multi-complete", MultiCompleteExecutor)
 
 
 @pytest.mark.asyncio
@@ -262,11 +307,13 @@ async def test_runner_execution_flow():
     assert all(s.execution.node == "node1" for s in prompt_steps)
 
     node2_exec = node_execs_by_name["node2"]
-    node2_completion = [
-        s for s in node2_exec.steps if s.type == state.StepType.COMPLETION
+    node2_complete_steps = [
+        s
+        for s in node2_exec.steps
+        if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
-    assert node2_completion
-    assert node2_completion[-1].outcome_name == "go"
+    assert node2_complete_steps
+    assert node2_complete_steps[-1].outcome_name == "go"
 
     node3_exec = node_execs_by_name["node3"]
     assert node3_exec.status == state.RunStatus.FINISHED
@@ -283,6 +330,82 @@ async def test_runner_execution_flow():
         isinstance(e.step, state.Step) and e.step.execution.node == "node3"
         for e in events
     )
+
+
+@pytest.mark.asyncio
+async def test_runner_errors_when_executor_has_no_complete_step():
+    node = models.Node(
+        name="nocomp",
+        type="no-complete",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-nocomp", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="start",
+    )
+
+    runner = Runner(
+        workflow=workflow, project=object(), initial_message=initial_message
+    )
+
+    agen = runner.run()
+
+    event = await agen.__anext__()
+    assert event.step.execution.node == "nocomp"
+
+    with pytest.raises(RuntimeError):
+        await agen.asend(
+            RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_runner_errors_when_executor_has_multiple_complete_steps():
+    node = models.Node(
+        name="multicomp",
+        type="multi-complete",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-multicomp", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="start",
+    )
+
+    runner = Runner(
+        workflow=workflow, project=object(), initial_message=initial_message
+    )
+
+    agen = runner.run()
+
+    event1 = await agen.__anext__()
+    assert event1.step.execution.node == "multicomp"
+
+    event2 = await agen.asend(
+        RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+    )
+    assert event2.step.execution.node == "multicomp"
+
+    with pytest.raises(RuntimeError):
+        await agen.asend(
+            RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        )
 
 
 @pytest.mark.asyncio
@@ -473,3 +596,65 @@ async def test_result_mode_concatenate_final_builds_single_message():
     combined = node2_exec.input_messages[0]
     assert combined.text == "hello\n\nrun1-final"
     assert combined.role == models.Role.ASSISTANT
+
+
+@pytest.mark.asyncio
+async def test_runner_stop_stops_execution_loop():
+    node = models.Node(
+        name="loop1",
+        type="loop",
+        outcomes=[
+            models.OutcomeSlot(name="again"),
+            models.OutcomeSlot(name="done"),
+        ],
+        confirmation=models.Confirmation.AUTO,
+    )
+    edges = [
+        models.Edge(
+            source_node="loop1",
+            source_outcome="again",
+            target_node="loop1",
+        ),
+        models.Edge(
+            source_node="loop1",
+            source_outcome="done",
+            target_node="loop1",
+        ),
+    ]
+    graph = models.Graph(nodes=[node], edges=edges)
+    workflow = DummyWorkflow(name="wf-stop", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="start",
+    )
+
+    runner = Runner(
+        workflow=workflow, project=object(), initial_message=initial_message
+    )
+
+    agen = runner.run()
+
+    event = await agen.__anext__()
+    assert event.step.execution.node == "loop1"
+    assert runner.status == state.RunnerStatus.RUNNING
+
+    runner.stop()
+
+    with pytest.raises(StopAsyncIteration):
+        await agen.asend(
+            RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        )
+
+    assert runner.status == state.RunnerStatus.STOPPED
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    assert set(node_execs_by_name.keys()) == {"loop1"}
+    loop_exec = node_execs_by_name["loop1"]
+    assert loop_exec.status == state.RunStatus.STOPPED

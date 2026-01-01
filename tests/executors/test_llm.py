@@ -123,36 +123,27 @@ async def test_llm_executor_with_litellm_mock_response(
     async for step in executor.run(inp):
         steps.append(step)
 
-    assert len(steps) >= 2
+    assert steps
     for step in steps:
         assert step.execution is execution
 
-    completion_step = steps[-1]
-    final_message_step = steps[-2]
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    final_message_step = output_steps[-1]
 
-    assert completion_step.type == state.StepType.COMPLETION
-    assert completion_step.message is None
-
-    assert final_message_step.type == state.StepType.OUTPUT_MESSAGE
     assert final_message_step.message is not None
     assert final_message_step.message.role == models.Role.ASSISTANT
     assert (
-        final_message_step.message.text
-        == "It's simple to use and easy to get started"
+        final_message_step.message.text == "It's simple to use and easy to get started"
     )
 
     assert final_message_step.llm_usage is not None
     assert isinstance(final_message_step.llm_usage.prompt_tokens, int)
     assert isinstance(final_message_step.llm_usage.completion_tokens, int)
 
-    assert completion_step.llm_usage is final_message_step.llm_usage
-
-    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
-    assert output_steps
     for s in output_steps[:-1]:
         assert s.is_complete is False
-    assert output_steps[-1].is_complete is True
-    assert completion_step.is_complete is True
+    assert final_message_step.is_complete is True
 
 
 @pytest.mark.asyncio
@@ -221,7 +212,9 @@ async def test_llm_executor_populates_tool_spec_on_tool_call(
     async for step in executor.run(inp):
         steps.append(step)
 
-    final_message_step = steps[-2]
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    final_message_step = output_steps[-1]
     assert final_message_step.message is not None
     tool_reqs = final_message_step.message.tool_call_requests
     assert len(tool_reqs) == 1
@@ -352,23 +345,18 @@ async def test_llm_executor_outcome_tag_selection(
     async for step in executor.run(inp):
         steps.append(step)
 
-    assert len(steps) >= 2
-    completion_step = steps[-1]
-    final_message_step = steps[-2]
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    final_message_step = output_steps[-1]
 
-    assert completion_step.type == state.StepType.COMPLETION
-    assert completion_step.outcome_name == "success"
-
-    assert final_message_step.type == state.StepType.OUTPUT_MESSAGE
     assert final_message_step.message is not None
     assert "OUTCOME:" not in final_message_step.message.text
 
-    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
-    assert output_steps
+    assert final_message_step.outcome_name == "success"
+
     for s in output_steps[:-1]:
         assert s.is_complete is False
-    assert output_steps[-1].is_complete is True
-    assert completion_step.is_complete is True
+    assert final_message_step.is_complete is True
 
 
 @pytest.mark.asyncio
@@ -430,27 +418,25 @@ async def test_llm_executor_outcome_function_selection(
     async for step in executor.run(inp):
         steps.append(step)
 
-    assert len(steps) >= 2
     assert RECORDED_TOOL_CALLS == [llm_helpers.CHOOSE_OUTCOME_TOOL_NAME]
 
-    completion_step = steps[-1]
-    final_message_step = steps[-2]
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    final_message_step = output_steps[-1]
 
-    assert completion_step.type == state.StepType.COMPLETION
-    assert completion_step.outcome_name == "success"
-
-    assert final_message_step.type == state.StepType.OUTPUT_MESSAGE
     assert final_message_step.message is not None
     assert final_message_step.message.text == "Functional answer"
     assert all(
-        all(req.name != llm_helpers.CHOOSE_OUTCOME_TOOL_NAME for req in (step.message.tool_call_requests or []))
+        all(
+            req.name != llm_helpers.CHOOSE_OUTCOME_TOOL_NAME
+            for req in (step.message.tool_call_requests or [])
+        )
         for step in steps
         if step.message is not None
     )
 
-    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
-    assert output_steps
+    assert final_message_step.outcome_name == "success"
+
     for s in output_steps[:-1]:
         assert s.is_complete is False
-    assert output_steps[-1].is_complete is True
-    assert completion_step.is_complete is True
+    assert final_message_step.is_complete is True

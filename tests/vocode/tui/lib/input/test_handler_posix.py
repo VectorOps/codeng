@@ -79,19 +79,21 @@ def test_handler_single_escape_emits_key_event(monkeypatch) -> None:
     events: list[base.InputEvent] = []
 
     async def main() -> None:
-        handler = posix.PosixInputHandler(fd=read_fd)
+        handler = posix.PosixInputHandler(
+            fd=read_fd,
+            esc_sequence_timeout=0.1,
+            select_idle_timeout=0.1,
+        )
         handler.subscribe(events.append)
         task = asyncio.create_task(handler.run())
         os.write(write_fd, b"\x1b")
-        await asyncio.sleep(posix.ESC_SEQUENCE_TIMEOUT + 0.5)
+        await asyncio.sleep(0.3)
         handler.stop()
         await task
 
     asyncio.run(main())
 
-    esc_events = [
-        e for e in events if isinstance(e, base.KeyEvent) and e.key == "esc"
-    ]
+    esc_events = [e for e in events if isinstance(e, base.KeyEvent) and e.key == "esc"]
     assert esc_events
 
 

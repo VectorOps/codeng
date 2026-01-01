@@ -15,6 +15,7 @@ INCLUDED_STEP_TYPES: Final = (
     state.StepType.INPUT_MESSAGE,
 )
 
+
 class LLMExecutor(BaseExecutor):
     def build_messages(self, inp: ExecutorInput) -> List[Dict]:
         """
@@ -31,7 +32,10 @@ class LLMExecutor(BaseExecutor):
         if cfg.system_append:
             system_parts.append(cfg.system_append)
         outcome_names = llm_helpers.get_outcome_names(cfg)
-        if len(outcome_names) > 1 and cfg.outcome_strategy == models.OutcomeStrategy.TAG:
+        if (
+            len(outcome_names) > 1
+            and cfg.outcome_strategy == models.OutcomeStrategy.TAG
+        ):
             outcome_desc_bullets = llm_helpers.get_outcome_desc_bullets(cfg)
             tag_instruction = llm_helpers.build_tag_system_instruction(
                 outcome_names,
@@ -100,6 +104,7 @@ class LLMExecutor(BaseExecutor):
         tool_call_requests: Optional[List[state.ToolCallReq]] = None,
         tool_call_responses: Optional[List[state.ToolCallResp]] = None,
         is_complete: bool = False,
+        outcome_name: Optional[str] = None,
     ) -> state.Step:
         message = state.Message(
             role=role,
@@ -115,6 +120,8 @@ class LLMExecutor(BaseExecutor):
         }
         if usage is not None:
             update["llm_usage"] = usage
+        if outcome_name is not None:
+            update["outcome_name"] = outcome_name
 
         return base_step.model_copy(update=update)
 
@@ -146,7 +153,10 @@ class LLMExecutor(BaseExecutor):
         conv = self.build_messages(inp)
         tools = self._build_tools()
         outcome_names = llm_helpers.get_outcome_names(cfg)
-        if len(outcome_names) > 1 and cfg.outcome_strategy == models.OutcomeStrategy.FUNCTION:
+        if (
+            len(outcome_names) > 1
+            and cfg.outcome_strategy == models.OutcomeStrategy.FUNCTION
+        ):
             outcome_desc_bullets = llm_helpers.get_outcome_desc_bullets(cfg)
             outcome_choice_desc = llm_helpers.get_outcome_choice_desc(
                 cfg,
@@ -347,6 +357,8 @@ class LLMExecutor(BaseExecutor):
             completion_tokens=completion_tokens,
         )
 
+        final_outcome_name = outcome_name if len(outcome_names) > 1 else None
+
         message_step = self._build_step_from_message(
             step,
             role=models.Role.ASSISTANT,
@@ -355,18 +367,6 @@ class LLMExecutor(BaseExecutor):
             usage=usage_stats,
             tool_call_requests=tool_call_reqs or None,
             is_complete=True,
+            outcome_name=final_outcome_name,
         )
         yield message_step
-
-        final_outcome_name = outcome_name if len(outcome_names) > 1 else None
-
-        completion_step = state.Step(
-            execution=inp.execution,
-            type=state.StepType.COMPLETION,
-            message=None,
-            outcome_name=final_outcome_name,
-            state=None,
-            llm_usage=usage_stats,
-            is_complete=True,
-        )
-        yield completion_step

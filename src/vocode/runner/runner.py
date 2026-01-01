@@ -27,6 +27,8 @@ class Runner:
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
 
+        self._stop_requested = False
+
         self._executors: Dict[str, BaseExecutor] = {
             n.name: BaseExecutor.create_for_node(n, project=self.project)
             for n in self.workflow.graph.nodes
@@ -299,13 +301,35 @@ class Runner:
         )
         return self._persist_step(step)
 
+    def _maybe_handle_stop(
+        self, current_execution: Optional[state.NodeExecution]
+    ) -> bool:
+        if not self._stop_requested:
+            return False
+        if (
+            current_execution is not None
+            and current_execution.status == state.RunStatus.RUNNING
+        ):
+            current_execution.status = state.RunStatus.STOPPED
+        self.status = state.RunnerStatus.STOPPED
+        return True
+
+    def stop(self) -> None:
+        if self.status in (
+            state.RunnerStatus.FINISHED,
+            state.RunnerStatus.STOPPED,
+        ):
+            return
+        self._stop_requested = True
+        self.status = state.RunnerStatus.STOPPED
+
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
         if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
             raise RuntimeError(
                 f"run() not allowed when runner status is '{self.status}'. Allowed: 'idle', 'stopped'"
             )
-
+        self._stop_requested = False
         self.status = state.RunnerStatus.RUNNING
 
         current_runtime_node = None
@@ -339,88 +363,88 @@ class Runner:
             return
 
         while True:
-            # current_execution should already refer to the execution for the current node
-
             executor = self._executors[current_runtime_node.name]
             executor_input = ExecutorInput(
                 execution=current_execution, run=self.execution
             )
 
-            completion_step: Optional[state.Step] = None
-            tool_message_step: Optional[state.Step] = None
+            last_complete_step: Optional[state.Step] = None
+            complete_step_count = 0
 
             async for step in executor.run(executor_input):
                 persisted_step = self._persist_step(step)
                 req = RunEventReq(execution=self.execution, step=persisted_step)
                 resp = yield req
+                if self._maybe_handle_stop(current_execution):
+                    return
                 self._handle_run_event_response(req, resp)
 
-                if (
-                    persisted_step.message is not None
-                    and persisted_step.is_complete
-                    and persisted_step.message.tool_call_requests
-                ):
-                    tool_message_step = persisted_step
+                if persisted_step.is_complete:
+                    complete_step_count += 1
+                    last_complete_step = persisted_step
 
-                if step.type == state.StepType.COMPLETION:
-                    completion_step = step
-                    break
+            if complete_step_count == 0:
+                raise RuntimeError(
+                    "Executor finished without yielding a complete step for the node run."
+                )
+            if complete_step_count > 1:
+                raise RuntimeError(
+                    "Executor yielded more than one complete step for a single run."
+                )
 
-            if completion_step is None:
-                current_execution.status = state.RunStatus.FINISHED
-                self.status = state.RunnerStatus.FINISHED
-                return
+            # Tool call handling
+            msg = last_complete_step.message
+            if msg is not None and msg.tool_call_requests:
+                approved: list[state.ToolCallReq] = []
+                tool_responses: list[state.ToolCallResp] = []
 
-            if tool_message_step is not None:
-                msg = tool_message_step.message
-                if msg is not None and msg.tool_call_requests:
-                    approved: list[state.ToolCallReq] = []
-                    tool_responses: list[state.ToolCallResp] = []
+                for req in msg.tool_call_requests:
+                    is_auto_approved = self._is_tool_call_auto_approved(req)
+                    if is_auto_approved:
+                        req.auto_approved = True
 
-                    for req in msg.tool_call_requests:
-                        is_auto_approved = self._is_tool_call_auto_approved(req)
-                        if is_auto_approved:
-                            req.auto_approved = True
-
-                        while True:
-                            persisted_prompt = self._create_tool_prompt_step(
-                                current_execution,
-                                req,
-                            )
-                            req_event = RunEventReq(
-                                execution=self.execution,
-                                step=persisted_prompt,
-                            )
-                            resp_event = yield req_event
-
-                            if is_auto_approved:
-                                approved.append(req)
-                                break
-
-                            response_step = self._handle_run_event_response(
-                                req_event, resp_event
-                            )
-
-                            if self._process_tool_approval_response(
-                                req,
-                                response_step,
-                                approved,
-                                tool_responses,
-                            ):
-                                break
-
-                    if approved:
-                        responses = await self._execute_approved_tool_calls(approved)
-                        tool_responses.extend(responses)
-
-                    if tool_responses:
-                        self._create_tool_result_step(
+                    while True:
+                        persisted_prompt = self._create_tool_prompt_step(
                             current_execution,
-                            tool_responses,
+                            req,
                         )
+                        req_event = RunEventReq(
+                            execution=self.execution,
+                            step=persisted_prompt,
+                        )
+                        resp_event = yield req_event
+                        if self._maybe_handle_stop(current_execution):
+                            return
+
+                        if is_auto_approved:
+                            approved.append(req)
+                            break
+
+                        response_step = self._handle_run_event_response(
+                            req_event, resp_event
+                        )
+
+                        if self._process_tool_approval_response(
+                            req,
+                            response_step,
+                            approved,
+                            tool_responses,
+                        ):
+                            break
+
+                if approved:
+                    responses = await self._execute_approved_tool_calls(approved)
+                    tool_responses.extend(responses)
+
+                if tool_responses:
+                    self._create_tool_result_step(
+                        current_execution,
+                        tool_responses,
+                    )
 
                 continue
 
+            # Node transition
             confirmation_mode = current_runtime_node.model.confirmation
             loop_current_node = False
 
@@ -441,6 +465,8 @@ class Runner:
                         step=persisted_prompt,
                     )
                     resp_event = yield req_event
+                    if self._maybe_handle_stop(current_execution):
+                        return
                     response_step = self._handle_run_event_response(
                         req_event, resp_event
                     )
@@ -481,7 +507,7 @@ class Runner:
                 if children:
                     next_runtime_node = children[0]
             else:
-                outcome_name = completion_step.outcome_name if completion_step else None
+                outcome_name = last_complete_step.outcome_name
                 if not outcome_name:
                     error_message = state.Message(
                         role=models.Role.SYSTEM,
