@@ -13,6 +13,7 @@ from ...base import BaseExecutor, ExecutorInput, iter_execution_messages
 INCLUDED_STEP_TYPES: Final = (
     state.StepType.OUTPUT_MESSAGE,
     state.StepType.INPUT_MESSAGE,
+    state.StepType.TOOL_RESULT,
 )
 
 

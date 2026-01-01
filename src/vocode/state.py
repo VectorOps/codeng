@@ -32,18 +32,12 @@ class RunStatus(str, Enum):
 
 
 class StepType(str, Enum):
-    # Any message sent by the node of any type
     OUTPUT_MESSAGE = "output_message"
-    # Any input message sent by the user or the coding tool
     INPUT_MESSAGE = "input_message"
-    # Any sort of completion step, such as LLM finishing its output
-    COMPLETION = "completion"
-    # Any approval. For example, tool call that's explicitly approved will have an approval in the state.
     APPROVAL = "approval"
-    # Any rejection
     REJECTION = "rejection"
-    # Input request
     PROMPT = "prompt"
+    TOOL_RESULT = "tool_result"
 
 
 class LLMUsageStats(BaseModel):
@@ -185,6 +179,13 @@ class Step(BaseModel):
         description=(
             "True if this step represents a final, stable result "
             "rather than an intermediate update."
+        ),
+    )
+    is_final: bool = Field(
+        default=False,
+        description=(
+            "True if this is the step that triggered transition to the next node. "
+            "At most one step per node execution is final at any time, and usually the last."
         ),
     )
     created_at: datetime = Field(default_factory=utcnow)

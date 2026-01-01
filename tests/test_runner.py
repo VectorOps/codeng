@@ -331,6 +331,20 @@ async def test_runner_execution_flow():
         for e in events
     )
 
+    for ne in runner.execution.node_executions.values():
+        node_steps = ne.steps
+        if not node_steps:
+            continue
+        finals = [s for s in node_steps if s.is_final]
+        assert len(finals) == 1
+        last_complete_output = None
+        for s in reversed(node_steps):
+            if s.is_complete and s.type == state.StepType.OUTPUT_MESSAGE:
+                last_complete_output = s
+                break
+        assert last_complete_output is not None
+        assert finals[0] is last_complete_output
+
 
 @pytest.mark.asyncio
 async def test_runner_errors_when_executor_has_no_complete_step():

@@ -22,7 +22,7 @@ def test_delete_steps_removes_from_workflow_and_node_executions() -> None:
 
     step1 = state.Step(execution=exec1, type=state.StepType.OUTPUT_MESSAGE)
     step2 = state.Step(execution=exec1, type=state.StepType.INPUT_MESSAGE)
-    step3 = state.Step(execution=exec2, type=state.StepType.COMPLETION)
+    step3 = state.Step(execution=exec2, type=state.StepType.OUTPUT_MESSAGE)
 
     exec1.steps = [step1, step2]
     exec2.steps = [step3]
@@ -82,6 +82,12 @@ def test_delete_step_delegates_to_delete_steps() -> None:
 
     assert run.steps == []
     assert exec1.steps == []
+
+
+def test_step_is_final_defaults_false() -> None:
+    exec1 = _make_node_execution("node-1")
+    step = state.Step(execution=exec1, type=state.StepType.OUTPUT_MESSAGE)
+    assert step.is_final is False
 
 
 def test_iter_execution_messages_traverses_previous_chain_in_order() -> None:

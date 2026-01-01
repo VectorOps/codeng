@@ -47,7 +47,7 @@ TBD:
   - Graph validation and traversal.
 
 ## Python best practices for this repo
-- You must never add any comments unless explicitly requested
+- You must never add any comments unless explicitly requested. If comment already exists - do not remove it.
 - Do not use getattr or hasattr on strongly typed objects, such as pydantic BaseModel
 - Validation:
   - Normalize with `@model_validator(mode="before")`.
