@@ -33,7 +33,8 @@ class FakeExecutor(BaseExecutor):
                     "message": state.Message(
                         role=models.Role.ASSISTANT,
                         text=f"{text_prefix}-partial",
-                    )
+                    ),
+                    "is_complete": False,
                 }
             )
             yield step1
@@ -672,3 +673,327 @@ async def test_runner_stop_stops_execution_loop():
     assert set(node_execs_by_name.keys()) == {"loop1"}
     loop_exec = node_execs_by_name["loop1"]
     assert loop_exec.status == state.RunStatus.STOPPED
+
+
+class ResumeSkipExecutor(BaseExecutor):
+    type = "resume-skip"
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        raise AssertionError("ResumeSkipExecutor.run should not be called")
+
+
+BaseExecutor.register("resume-skip", ResumeSkipExecutor)
+
+
+class ResumeRunExecutor(BaseExecutor):
+    type = "resume-run"
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        execution = inp.execution
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text="resumed-output",
+        )
+        step = state.Step(
+            execution=execution,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message=msg,
+            is_complete=True,
+        )
+        yield step
+
+
+BaseExecutor.register("resume-run", ResumeRunExecutor)
+
+
+@pytest.mark.asyncio
+async def test_runner_resume_from_output_message_skips_executor_run():
+    node = models.Node(
+        name="node-output",
+        type="resume-skip",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-resume-output", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node-output",
+        input_messages=[],
+        steps=[],
+        status=state.RunStatus.RUNNING,
+    )
+    runner.execution.node_executions[execution.id] = execution
+
+    msg = state.Message(
+        role=models.Role.ASSISTANT,
+        text="existing-output",
+    )
+    output_step = state.Step(
+        execution=execution,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message=msg,
+        is_complete=True,
+    )
+    execution.steps.append(output_step)
+    runner.execution.steps.append(output_step)
+
+    extra_step = state.Step(
+        execution=execution,
+        type=state.StepType.PROMPT,
+        message=None,
+        is_complete=True,
+    )
+    execution.steps.append(extra_step)
+    runner.execution.steps.append(extra_step)
+
+    agen = runner.run()
+
+    with pytest.raises(StopAsyncIteration):
+        await agen.__anext__()
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert all(s.id != extra_step.id for s in runner.execution.steps)
+    assert all(s.id != extra_step.id for s in execution.steps)
+
+
+@pytest.mark.asyncio
+async def test_runner_resume_from_input_message_re_runs_executor():
+    node = models.Node(
+        name="node-input",
+        type="resume-run",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-resume-input", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node-input",
+        input_messages=[],
+        steps=[],
+        status=state.RunStatus.RUNNING,
+    )
+    runner.execution.node_executions[execution.id] = execution
+
+    msg = state.Message(
+        role=models.Role.USER,
+        text="user input",
+    )
+    input_step = state.Step(
+        execution=execution,
+        type=state.StepType.INPUT_MESSAGE,
+        message=msg,
+        is_complete=True,
+    )
+    execution.steps.append(input_step)
+    runner.execution.steps.append(input_step)
+
+    agen = runner.run()
+    ack: RunEventResp | None = None
+    events: list[RunEvent] = []
+
+    while True:
+        try:
+            if ack is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(ack)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        ack = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    node_exec = node_execs_by_name["node-input"]
+    complete_outputs = [
+        s
+        for s in node_exec.steps
+        if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
+    ]
+    assert complete_outputs
+    assert any(
+        s.message is not None and s.message.text == "resumed-output"
+        for s in complete_outputs
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_resume_from_tool_result_re_runs_executor():
+    node = models.Node(
+        name="node-tool",
+        type="resume-run",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-resume-tool", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node-tool",
+        input_messages=[],
+        steps=[],
+        status=state.RunStatus.RUNNING,
+    )
+    runner.execution.node_executions[execution.id] = execution
+
+    tool_resp = state.ToolCallResp(
+        name="fn",
+        status=state.ToolCallStatus.COMPLETED,
+        result={"ok": True},
+    )
+    msg = state.Message(
+        role=models.Role.USER,
+        text="",
+        tool_call_responses=[tool_resp],
+    )
+    tool_step = state.Step(
+        execution=execution,
+        type=state.StepType.TOOL_RESULT,
+        message=msg,
+        is_complete=True,
+    )
+    execution.steps.append(tool_step)
+    runner.execution.steps.append(tool_step)
+
+    agen = runner.run()
+    ack: RunEventResp | None = None
+    events: list[RunEvent] = []
+
+    while True:
+        try:
+            if ack is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(ack)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        ack = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    node_exec = node_execs_by_name["node-tool"]
+    complete_outputs = [
+        s
+        for s in node_exec.steps
+        if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
+    ]
+    assert complete_outputs
+    assert any(
+        s.message is not None and s.message.text == "resumed-output"
+        for s in complete_outputs
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_start_after_stop_resumes_execution():
+    node = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-start-after-stop", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="start",
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=initial_message,
+    )
+
+    agen1 = runner.run()
+
+    event1 = await agen1.__anext__()
+    assert event1.step.execution.node == "node1"
+    assert runner.status == state.RunnerStatus.RUNNING
+
+    runner.stop()
+
+    with pytest.raises(StopAsyncIteration):
+        await agen1.asend(
+            RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        )
+
+    assert runner.status == state.RunnerStatus.STOPPED
+
+    agen2 = runner.run()
+    ack: RunEventResp | None = None
+    events: list[RunEvent] = []
+
+    while True:
+        try:
+            if ack is None:
+                event = await agen2.__anext__()
+            else:
+                event = await agen2.asend(ack)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        ack = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    assert set(node_execs_by_name.keys()) == {"node1"}
+    node_exec = node_execs_by_name["node1"]
+    assert node_exec.status == state.RunStatus.FINISHED
+    complete_outputs = [
+        s
+        for s in node_exec.steps
+        if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
+    ]
+    assert complete_outputs
+    assert all(
+        s.message is None or "run1" not in s.message.text
+        for s in node_exec.steps
+        if s.message is not None
+    )

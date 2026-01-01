@@ -167,6 +167,26 @@ class Runner:
         )
         return self._persist_step(tool_step)
 
+    def _create_transition_error_event(
+        self,
+        execution: state.NodeExecution,
+        text: str,
+    ) -> RunEventReq:
+        error_message = state.Message(
+            role=models.Role.SYSTEM,
+            text=text,
+        )
+        error_step = state.Step(
+            execution=execution,
+            type=state.StepType.REJECTION,
+            message=error_message,
+        )
+        persisted_error = self._persist_step(error_step)
+        return RunEventReq(
+            execution=self.execution,
+            step=persisted_error,
+        )
+
     # History management
     def _persist_step(self, step: state.Step) -> state.Step:
         execution = step.execution
@@ -277,6 +297,73 @@ class Runner:
         self.execution.node_executions[execution.id] = execution
         return execution
 
+    def _compute_resume_state(
+        self,
+    ) -> tuple[
+        Optional[object],
+        Optional[state.NodeExecution],
+        Optional[state.Step],
+        bool,
+    ]:
+        resume_step: Optional[state.Step] = None
+        skip_executor = False
+
+        if self.execution.steps:
+            anchor_index: Optional[int] = None
+            for i in range(len(self.execution.steps) - 1, -1, -1):
+                step = self.execution.steps[i]
+                if not step.is_complete:
+                    continue
+                if step.type not in (
+                    state.StepType.OUTPUT_MESSAGE,
+                    state.StepType.INPUT_MESSAGE,
+                    state.StepType.TOOL_RESULT,
+                ):
+                    continue
+                anchor_index = i
+                resume_step = step
+                break
+            if anchor_index is None:
+                ids = [s.id for s in self.execution.steps]
+                if ids:
+                    self.execution.delete_steps(ids)
+                resume_step = None
+            else:
+                tail_ids = [s.id for s in self.execution.steps[anchor_index + 1 :]]
+                if tail_ids:
+                    self.execution.delete_steps(tail_ids)
+                if (
+                    resume_step is not None
+                    and resume_step.type == state.StepType.OUTPUT_MESSAGE
+                ):
+                    skip_executor = True
+
+        if not self.execution.steps:
+            runtime_node = self.graph.root
+            current_execution: Optional[state.NodeExecution] = None
+            if runtime_node is not None:
+                existing_execution = self._find_node_execution(runtime_node.name)
+                if existing_execution is not None:
+                    existing_execution.status = state.RunStatus.RUNNING
+                    current_execution = existing_execution
+                else:
+                    initial_messages: list[state.Message] = []
+                    if self.initial_message is not None:
+                        initial_messages.append(self.initial_message)
+                    current_execution = self._create_node_execution(
+                        runtime_node.name,
+                        input_messages=initial_messages,
+                    )
+            return runtime_node, current_execution, None, False
+
+        last_step = self.execution.steps[-1]
+        execution_id = last_step.execution.id
+        execution = self.execution.node_executions.get(execution_id, last_step.execution)
+        runtime_node = self.graph.get_runtime_node_by_name(execution.node)
+        if execution.status != state.RunStatus.RUNNING:
+            execution.status = state.RunStatus.RUNNING
+        return runtime_node, execution, resume_step, skip_executor
+
     def _handle_run_event_response(
         self, req: RunEventReq, resp: Optional[RunEventResp]
     ) -> Optional[state.Step]:
@@ -332,35 +419,19 @@ class Runner:
         self._stop_requested = False
         self.status = state.RunnerStatus.RUNNING
 
-        current_runtime_node = None
-        current_execution: Optional[state.NodeExecution] = None
+        (
+            runtime_node,
+            current_execution,
+            resume_step,
+            skip_executor,
+        ) = self._compute_resume_state()
 
-        if self.execution.steps:
-            last_step = self.execution.steps[-1]
-            current_execution = last_step.execution
-            current_runtime_node = self.graph.get_runtime_node_by_name(
-                current_execution.node
-            )
-        else:
-            current_runtime_node = self.graph.root
-            if current_runtime_node is not None:
-                existing_execution = self._find_node_execution(
-                    current_runtime_node.name
-                )
-                if existing_execution is not None:
-                    current_execution = existing_execution
-                else:
-                    initial_messages: list[state.Message] = []
-                    if self.initial_message is not None:
-                        initial_messages.append(self.initial_message)
-                    current_execution = self._create_node_execution(
-                        current_runtime_node.name,
-                        input_messages=initial_messages,
-                    )
-
-        if current_runtime_node is None:
+        if runtime_node is None:
             self.status = state.RunnerStatus.FINISHED
             return
+        current_runtime_node = runtime_node
+        use_resume_step = resume_step
+        skip_executor_for_current = skip_executor
 
         while True:
             executor = self._executors[current_runtime_node.name]
@@ -370,18 +441,23 @@ class Runner:
 
             last_complete_step: Optional[state.Step] = None
             complete_step_count = 0
+            if skip_executor_for_current and use_resume_step is not None:
+                last_complete_step = use_resume_step
+                complete_step_count = 1
+                skip_executor_for_current = False
+                use_resume_step = None
+            else:
+                async for step in executor.run(executor_input):
+                    persisted_step = self._persist_step(step)
+                    req = RunEventReq(execution=self.execution, step=persisted_step)
+                    resp = yield req
+                    if self._maybe_handle_stop(current_execution):
+                        return
+                    self._handle_run_event_response(req, resp)
 
-            async for step in executor.run(executor_input):
-                persisted_step = self._persist_step(step)
-                req = RunEventReq(execution=self.execution, step=persisted_step)
-                resp = yield req
-                if self._maybe_handle_stop(current_execution):
-                    return
-                self._handle_run_event_response(req, resp)
-
-                if persisted_step.is_complete:
-                    complete_step_count += 1
-                    last_complete_step = persisted_step
+                    if persisted_step.is_complete:
+                        complete_step_count += 1
+                        last_complete_step = persisted_step
 
             if complete_step_count == 0:
                 raise RuntimeError(
@@ -512,19 +588,9 @@ class Runner:
             else:
                 outcome_name = last_complete_step.outcome_name
                 if not outcome_name:
-                    error_message = state.Message(
-                        role=models.Role.SYSTEM,
-                        text="Missing outcome_name for completion step on node with multiple outcomes",
-                    )
-                    error_step = state.Step(
-                        execution=current_execution,
-                        type=state.StepType.REJECTION,
-                        message=error_message,
-                    )
-                    persisted_error = self._persist_step(error_step)
-                    req_event = RunEventReq(
-                        execution=self.execution,
-                        step=persisted_error,
+                    req_event = self._create_transition_error_event(
+                        current_execution,
+                        "Missing outcome_name for completion step on node with multiple outcomes",
                     )
                     resp_event = yield req_event
                     self._handle_run_event_response(req_event, resp_event)
@@ -536,19 +602,9 @@ class Runner:
                     outcome_name
                 )
                 if next_runtime_node is None:
-                    error_message = state.Message(
-                        role=models.Role.SYSTEM,
-                        text=f"Unknown outcome '{outcome_name}' for node '{current_runtime_node.name}'",
-                    )
-                    error_step = state.Step(
-                        execution=current_execution,
-                        type=state.StepType.REJECTION,
-                        message=error_message,
-                    )
-                    persisted_error = self._persist_step(error_step)
-                    req_event = RunEventReq(
-                        execution=self.execution,
-                        step=persisted_error,
+                    req_event = self._create_transition_error_event(
+                        current_execution,
+                        f"Unknown outcome '{outcome_name}' for node '{current_runtime_node.name}'",
                     )
                     resp_event = yield req_event
                     self._handle_run_event_response(req_event, resp_event)
