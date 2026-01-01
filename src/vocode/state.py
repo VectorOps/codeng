@@ -175,7 +175,7 @@ class Step(BaseModel):
         default=None, description="LLM usage stats for this step, if any."
     )
     is_complete: bool = Field(
-        default=False,
+        default=True,
         description=(
             "True if this step represents a final, stable result "
             "rather than an intermediate update."
@@ -237,3 +237,13 @@ class WorkflowExecution(BaseModel):
                 execution.steps = [
                     step for step in execution.steps if step.id not in removed_set
                 ]
+
+    def delete_node_execution(self, execution_id: UUID) -> None:
+        execution = self.node_executions.get(execution_id)
+        if execution is None:
+            return
+        step_ids = [step.id for step in execution.steps]
+        if step_ids:
+            self.delete_steps(step_ids)
+        if execution_id in self.node_executions:
+            del self.node_executions[execution_id]

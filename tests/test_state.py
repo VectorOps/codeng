@@ -129,6 +129,34 @@ def test_iter_execution_messages_traverses_previous_chain_in_order() -> None:
     texts = [m.text for (m, _t) in iter_execution_messages(exec2)]
     assert texts == ["in-1-a", "in-1-b", "out-1-a", "in-1-c", "in-2-a", "out-2-a"]
 
+def test_delete_node_execution_removes_execution_and_child_steps() -> None:
+    exec1 = _make_node_execution("node-1")
+    exec2 = _make_node_execution("node-2")
+
+    step1 = state.Step(execution=exec1, type=state.StepType.OUTPUT_MESSAGE)
+    step2 = state.Step(execution=exec1, type=state.StepType.INPUT_MESSAGE)
+    step3 = state.Step(execution=exec2, type=state.StepType.OUTPUT_MESSAGE)
+
+    exec1.steps = [step1, step2]
+    exec2.steps = [step3]
+
+    run = state.WorkflowExecution(
+        workflow_name="test",
+        node_executions={exec1.id: exec1, exec2.id: exec2},
+        steps=[step1, step2, step3],
+    )
+
+    run.delete_node_execution(exec1.id)
+
+    assert exec1.id not in run.node_executions
+    assert exec2.id in run.node_executions
+
+    remaining_step_ids = {s.id for s in run.steps}
+    assert remaining_step_ids == {step3.id}
+
+    assert exec1.steps == []
+    assert exec2.steps == [step3]
+
 
 def test_iter_execution_messages_traverses_previous_chain_in_order() -> None:
     exec1 = state.NodeExecution(
