@@ -247,3 +247,11 @@ class WorkflowExecution(BaseModel):
             self.delete_steps(step_ids)
         if execution_id in self.node_executions:
             del self.node_executions[execution_id]
+
+    def trim_empty_node_executions(self) -> None:
+        empty_execution_ids: List[UUID] = []
+        for execution_id, execution in self.node_executions.items():
+            if not execution.steps:
+                empty_execution_ids.append(execution_id)
+        for execution_id in empty_execution_ids:
+            self.delete_node_execution(execution_id)
