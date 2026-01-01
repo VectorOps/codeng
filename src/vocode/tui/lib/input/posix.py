@@ -5,6 +5,7 @@ import os
 import select
 import sys
 import threading
+import time
 import typing
 from dataclasses import dataclass
 import signal
@@ -88,6 +89,10 @@ for _seq in _KEY_SEQUENCE_MAP:
         continue
     for _i in range(1, len(_seq)):
         _KEY_PREFIXES.add(_seq[:_i])
+
+
+ESC_SEQUENCE_TIMEOUT: typing.Final[float] = 1.0
+SELECT_IDLE_TIMEOUT: typing.Final[float] = 10.0
 
 
 class PosixInputDecoder:
@@ -178,6 +183,8 @@ class PosixInputDecoder:
                             )
                         )
                         continue
+            if not self._buffer:
+                break
             byte = self._buffer[0]
             self._buffer = self._buffer[1:]
             if 32 <= byte <= 126:
@@ -210,6 +217,8 @@ class PosixInputHandler(input_base.InputHandler):
         self._stop_event: asyncio.Event | None = None
         self._resize_installed = False
         self._prev_winch_handler: typing.Any | None = None
+        self._esc_pending = False
+        self._esc_time: float | None = None
 
     async def run(self) -> None:
         self.start()
@@ -220,6 +229,7 @@ class PosixInputHandler(input_base.InputHandler):
             await stop_event.wait()
         finally:
             self.stop()
+
     def start(self) -> None:
         if sys.platform == "win32":
             raise RuntimeError("PosixInputHandler is not supported on Windows")
@@ -303,22 +313,56 @@ class PosixInputHandler(input_base.InputHandler):
     def _reader_loop(self) -> None:
         try:
             while self._running:
-                rlist, _, _ = select.select([self._fd], [], [], 0.1)
+                timeout = SELECT_IDLE_TIMEOUT
+                if self._esc_pending and self._esc_time is not None:
+                    remaining = ESC_SEQUENCE_TIMEOUT - (
+                        time.monotonic() - self._esc_time
+                    )
+                    if remaining <= 0:
+                        loop = self._loop
+                        if loop is not None:
+                            event = input_base.KeyEvent(
+                                action="down",
+                                key="esc",
+                            )
+                            loop.call_soon_threadsafe(self.publish, event)
+                        self._esc_pending = False
+                        self._esc_time = None
+                        continue
+
+                    if remaining < timeout:
+                        timeout = max(0.0, remaining)
+
+                rlist, _, _ = select.select([self._fd], [], [], timeout)
                 if not rlist:
                     continue
+
                 try:
                     data = os.read(self._fd, 1024)
                 except OSError:
                     break
+
                 if not data:
                     self._running = False
                     break
+
+                if self._esc_pending and self._esc_time is not None:
+                    data = b"\x1b" + data
+                    self._esc_pending = False
+                    self._esc_time = None
+                elif data == b"\x1b":
+                    self._esc_pending = True
+                    self._esc_time = time.monotonic()
+                    continue
+
                 events = self._decoder.feed(data)
                 if not events:
                     continue
+
                 loop = self._loop
                 if loop is None:
                     continue
+
                 loop.call_soon_threadsafe(self._dispatch_events, events)
         finally:
             self._signal_stop()

@@ -111,6 +111,28 @@ def test_select_list_enter_on_empty_does_not_notify_subscribers() -> None:
     assert selected == []
 
 
+def test_select_list_escape_notifies_subscribers_with_none() -> None:
+    items = [
+        tui_select_list.SelectItem(id="id-0", text="Item 0"),
+        tui_select_list.SelectItem(id="id-1", text="Item 1"),
+    ]
+    component = tui_select_list.SelectListComponent(items=items)
+    selected: list[tui_select_list.SelectItem | None] = []
+
+    def subscriber(item: tui_select_list.SelectItem | None) -> None:
+        selected.append(item)
+
+    component.subscribe_select(subscriber)
+    escape_event = input_base.KeyEvent(action="down", key="esc")
+    component.on_key_event(escape_event)
+    assert selected == [None]
+
+    empty_component = tui_select_list.SelectListComponent()
+    empty_component.subscribe_select(subscriber)
+    empty_component.on_key_event(escape_event)
+    assert selected[-1] is None
+
+
 def test_select_list_item_management_and_selection_bounds() -> None:
     component = tui_select_list.SelectListComponent()
     assert component.items == []
