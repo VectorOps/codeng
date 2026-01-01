@@ -142,11 +142,14 @@ async def _main() -> None:
                     ),
                 )
 
-                def handle_select(item: tui_select_list.SelectItem) -> None:
+                def handle_select(
+                    item: tui_select_list.SelectItem | None,
+                ) -> None:
                     terminal.remove_component(select_component)
                     terminal.remove_focus(select_component)
-                    append_message_component(item.text)
-                    input_component.text = ""
+                    if item is not None:
+                        append_message_component(item.text)
+                        input_component.text = ""
 
                 select_component.subscribe_select(handle_select)
                 terminal.insert_component(-1, select_component)

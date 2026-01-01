@@ -38,7 +38,7 @@ class SelectListComponent(tui_base.Component):
         self._items: list[SelectItem] = []
         self._selected_index: int = 0
         self._view_offset: int = 0
-        self._select_subscribers: list[typing.Callable[[SelectItem], None]] = []
+        self._select_subscribers: list[typing.Callable[[SelectItem | None], None]] = []
         if items is not None:
             self.set_items(items)
 
@@ -123,7 +123,9 @@ class SelectListComponent(tui_base.Component):
         self._sync_view_offset()
         self._mark_dirty()
 
-    def subscribe_select(self, subscriber: typing.Callable[[SelectItem], None]) -> None:
+    def subscribe_select(
+        self, subscriber: typing.Callable[[SelectItem | None], None]
+    ) -> None:
         self._select_subscribers.append(subscriber)
 
     def select_current(self) -> None:
@@ -132,6 +134,10 @@ class SelectListComponent(tui_base.Component):
             return
         for subscriber in list(self._select_subscribers):
             subscriber(item)
+
+    def cancel(self) -> None:
+        for subscriber in list(self._select_subscribers):
+            subscriber(None)
 
     def move_selection_up(self) -> None:
         if not self._items:
@@ -160,7 +166,6 @@ class SelectListComponent(tui_base.Component):
         start = self._view_offset
         end = start + MAX_VISIBLE_ITEMS
         visible_items = self._items[start:end]
-        width = options.max_width or console.width
         lines: tui_base.Lines = []
         for index, item in enumerate(visible_items):
             markdown = rich_markdown.Markdown(item.text)
@@ -174,38 +179,19 @@ class SelectListComponent(tui_base.Component):
             if is_selected:
                 highlighted_lines: tui_base.Lines = []
                 for line in item_lines:
-                    current_len = 0
                     new_line: list[rich_segment.Segment] = []
                     for segment in line:
-                        text = segment.text
-                        current_len += len(text)
                         base_style = segment.style
                         if isinstance(base_style, rich_style.Style):
                             style = base_style + SELECTED_STYLE
                         else:
                             style = SELECTED_STYLE
-                        new_line.append(rich_segment.Segment(text, style=style))
-                    if width > 0 and current_len < width:
-                        pad = width - current_len
-                        if pad > 0:
-                            new_line.append(
-                                rich_segment.Segment(" " * pad, style=SELECTED_STYLE)
-                            )
+                        new_line.append(rich_segment.Segment(segment.text, style=style))
                     highlighted_lines.append(new_line)
                 lines.extend(highlighted_lines)
             else:
-                padded_lines: tui_base.Lines = []
                 for line in item_lines:
-                    current_len = sum(len(segment.text) for segment in line)
-                    if width > 0 and current_len < width:
-                        pad = width - current_len
-                        if pad > 0:
-                            new_line = list(line)
-                            new_line.append(rich_segment.Segment(" " * pad))
-                            padded_lines.append(new_line)
-                            continue
-                    padded_lines.append(list(line))
-                lines.extend(padded_lines)
+                    lines.append(list(line))
         hint: str
         if total == 0:
             hint = "No items (0)"
@@ -252,6 +238,8 @@ class SelectListComponent(tui_base.Component):
             self.move_selection_down()
         elif event.key == "enter":
             self.select_current()
+        elif event.key in ("esc", "escape"):
+            self.cancel()
 
     def on_mouse_event(self, event: input_base.MouseEvent) -> None:
         return

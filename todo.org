@@ -16,6 +16,7 @@
 ** [ ] Create an in-memory bidirectional communication channel
 ** [ ] TUI library
 *** [ ] Refactor apply_style
-*** [ ] Add on_cancel (esc) to SelectList event
+*** [ ] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences
+*** [X] Remove padding from SelectList
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided
