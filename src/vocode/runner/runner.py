@@ -155,13 +155,13 @@ class Runner:
         tool_responses: list[state.ToolCallResp],
     ) -> state.Step:
         tool_message = state.Message(
-            role=models.Role.ASSISTANT,
+            role=models.Role.USER,
             text="",
             tool_call_responses=tool_responses,
         )
         tool_step = state.Step(
             execution=execution,
-            type=state.StepType.INPUT_MESSAGE,
+            type=state.StepType.TOOL_RESULT,
             message=tool_message,
             is_complete=True,
         )
@@ -493,6 +493,9 @@ class Runner:
             if loop_current_node:
                 continue
 
+            last_complete_step.is_final = True
+
+            # Next node selection logic
             outcomes = current_runtime_node.model.outcomes
 
             if not outcomes:
@@ -557,6 +560,7 @@ class Runner:
                 current_execution.status = state.RunStatus.FINISHED
                 self.status = state.RunnerStatus.FINISHED
                 return
+
             next_input_messages = self._build_next_input_messages(
                 current_execution,
                 current_runtime_node.model,
