@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import List, Optional, Awaitable, Callable
+from typing import List, Optional
+from collections.abc import Awaitable, Callable
 
 from vocode import models, state
 from vocode.project import Project
@@ -24,11 +25,22 @@ class RunnerFrame:
     task: asyncio.Task[None]
 
 
+RunnerEventListener = Callable[
+    [RunnerFrame, RunEventReq],
+    Awaitable[Optional[RunEventResp]],
+]
+
+
 class BaseManager:
-    def __init__(self, project: Project) -> None:
+    def __init__(
+        self,
+        project: Project,
+        run_event_listener: RunnerEventListener,
+    ) -> None:
         self.project = project
         self._runner_stack: List[RunnerFrame] = []
         self._started = False
+        self._run_event_listener = run_event_listener
 
     @property
     def runner_stack(self) -> List[RunnerFrame]:
@@ -104,13 +116,12 @@ class BaseManager:
         await self.stop_current_runner()
         return await self.start_workflow(workflow_name, message)
 
-    async def on_run_event(
+    async def _emit_run_event(
         self,
         frame: RunnerFrame,
         event: RunEventReq,
     ) -> Optional[RunEventResp]:
-        # TODO: Fix me
-        return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
+        return await self._run_event_listener(frame, event)
 
     def _build_workflow(self, workflow_name: str) -> Workflow:
         settings = self.project.settings
@@ -141,12 +152,7 @@ class BaseManager:
                         event = await agen.asend(send)
                 except StopAsyncIteration:
                     break
-                try:
-                    send = await self.on_run_event(frame, event)
-                except Exception:
-                    send = RunEventResp(
-                        resp_type=RunEventResponseType.NOOP, message=None
-                    )
+                send = await self._emit_run_event(frame, event)
         finally:
             self._on_runner_finished(frame)
 
