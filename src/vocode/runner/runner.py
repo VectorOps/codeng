@@ -504,6 +504,8 @@ class Runner:
                 raise RuntimeError(
                     "Executor yielded more than one complete step for a single run."
                 )
+            if last_complete_step is not None and last_complete_step.type == state.StepType.PROMPT:
+                continue
 
             # Tool call handling
             msg = last_complete_step.message
