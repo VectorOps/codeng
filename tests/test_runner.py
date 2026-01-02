@@ -4,6 +4,7 @@ import pytest
 
 from vocode import state, models
 from vocode.runner.base import BaseExecutor, ExecutorInput
+from vocode.runner.executors.input import InputNode
 from vocode.runner.runner import Runner, RunEvent
 from vocode.runner.proto import RunEventResp, RunEventResponseType
 
@@ -855,9 +856,83 @@ async def test_runner_resume_from_input_message_re_runs_executor():
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs
+
+
+@pytest.mark.asyncio
+async def test_input_node_prompts_and_returns_user_message_as_output():
+    node = InputNode(
+        name="input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        message="Say something",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-input-node", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=None,
+    )
+
+    agen = runner.run()
+
+    def handler(event: RunEvent) -> RunEventResp:
+        if event.step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        step = event.step
+        if step.type == state.StepType.PROMPT and step.execution.node == "input-node":
+            user_message = state.Message(
+                role=models.Role.USER,
+                text="user-input-text",
+            )
+            return RunEventResp(
+                resp_type=RunEventResponseType.MESSAGE,
+                message=user_message,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=True)
+
+    assert runner.status == state.RunnerStatus.FINISHED
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    assert set(node_execs_by_name.keys()) == {"input-node"}
+    input_exec = node_execs_by_name["input-node"]
+
+    prompt_steps = [s for s in input_exec.steps if s.type == state.StepType.PROMPT]
+    input_steps = [s for s in input_exec.steps if s.type == state.StepType.INPUT_MESSAGE]
+    output_steps = [
+        s
+        for s in input_exec.steps
+        if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
+    ]
+
+    assert prompt_steps
+    assert prompt_steps[-1].message is not None
+    assert prompt_steps[-1].message.text == "Say something"
+
+    assert input_steps
+    assert output_steps
+
+    final_output = output_steps[-1]
+    assert final_output.message is not None
+    assert final_output.message.text == "user-input-text"
+
     assert any(
-        s.message is not None and s.message.text == "resumed-output"
-        for s in complete_outputs
+        e.step is not None
+        and e.step.type == state.StepType.PROMPT
+        and e.step.execution.node == "input-node"
+        for e in events
     )
 
 

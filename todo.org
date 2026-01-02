@@ -9,6 +9,8 @@
 ** [X] Add tool support by checking if complete step was received and it contains tool calls
 ** [X] Create a separate BaseModel for runner generator responses, do not use Step. Convert response to a step.
 ** [X] Tool rejection might include a message - pass that as a tool response
+** [ ] Correctly handle incorrect response to PROMPT
+** [ ] Extend PROMPT Step to have mode (message, approval, etc)
 * [ ] Migrate tools
 ** [ ] Patch
 ** [ ] Shell / Exec
