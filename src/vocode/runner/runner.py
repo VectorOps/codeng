@@ -7,6 +7,7 @@ from vocode.graph import RuntimeGraph
 from vocode.lib import message_helpers, validators
 from .base import BaseExecutor, ExecutorInput
 from .proto import RunEventReq, RunEventResp, RunEventResponseType
+from . import proto as runner_proto
 
 
 RunEvent = RunEventReq
@@ -183,6 +184,7 @@ class Runner:
         )
         persisted_error = self._persist_step(error_step)
         return RunEventReq(
+            kind=runner_proto.RunEventReqKind.STEP,
             execution=self.execution,
             step=persisted_error,
         )
@@ -399,8 +401,8 @@ class Runner:
             and current_execution.status == state.RunStatus.RUNNING
         ):
             current_execution.status = state.RunStatus.STOPPED
-        self.status = state.RunnerStatus.STOPPED
         return True
+        # NOTE: self.status handled by caller via _set_status and emitted event
 
     def stop(self) -> None:
         if self.status in (
@@ -411,6 +413,25 @@ class Runner:
         self._stop_requested = True
         self.status = state.RunnerStatus.STOPPED
 
+    def _set_status(
+        self,
+        status: state.RunnerStatus,
+        current_execution: Optional[state.NodeExecution],
+    ) -> RunEventReq:
+        self.status = status
+        current_node_name: Optional[str] = None
+        if current_execution is not None:
+            current_node_name = current_execution.node
+        stats = runner_proto.RunStats(
+            status=status,
+            current_node_name=current_node_name,
+        )
+        return RunEventReq(
+            kind=runner_proto.RunEventReqKind.STATUS,
+            execution=self.execution,
+            stats=stats,
+        )
+
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
         if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
@@ -418,8 +439,6 @@ class Runner:
                 f"run() not allowed when runner status is '{self.status}'. Allowed: 'idle', 'stopped'"
             )
         self._stop_requested = False
-        self.status = state.RunnerStatus.RUNNING
-
         (
             runtime_node,
             current_execution,
@@ -428,8 +447,17 @@ class Runner:
         ) = self._compute_resume_state()
 
         if runtime_node is None:
-            self.status = state.RunnerStatus.FINISHED
+            status_event = self._set_status(
+                state.RunnerStatus.FINISHED,
+                current_execution=None,
+            )
+            _ = yield status_event
             return
+        status_event = self._set_status(
+            state.RunnerStatus.RUNNING,
+            current_execution=current_execution,
+        )
+        _ = yield status_event
         current_runtime_node = runtime_node
         use_resume_step = resume_step
         skip_executor_for_current = skip_executor
@@ -450,9 +478,17 @@ class Runner:
             else:
                 async for step in executor.run(executor_input):
                     persisted_step = self._persist_step(step)
-                    req = RunEventReq(execution=self.execution, step=persisted_step)
+                    req = RunEventReq(
+                        kind=runner_proto.RunEventReqKind.STEP,
+                        execution=self.execution,
+                        step=persisted_step,
+                    )
                     resp = yield req
                     if self._maybe_handle_stop(current_execution):
+                        stop_event = self._set_status(
+                            state.RunnerStatus.STOPPED, current_execution
+                        )
+                        _ = yield stop_event
                         return
                     self._handle_run_event_response(req, resp)
 
@@ -486,11 +522,16 @@ class Runner:
                             req,
                         )
                         req_event = RunEventReq(
+                            kind=runner_proto.RunEventReqKind.STEP,
                             execution=self.execution,
                             step=persisted_prompt,
                         )
                         resp_event = yield req_event
                         if self._maybe_handle_stop(current_execution):
+                            stop_event = self._set_status(
+                                state.RunnerStatus.STOPPED, current_execution
+                            )
+                            _ = yield stop_event
                             return
 
                         if is_auto_approved:
@@ -538,11 +579,16 @@ class Runner:
                     )
                     persisted_prompt = self._persist_step(prompt_step)
                     req_event = RunEventReq(
+                        kind=runner_proto.RunEventReqKind.STEP,
                         execution=self.execution,
                         step=persisted_prompt,
                     )
                     resp_event = yield req_event
                     if self._maybe_handle_stop(current_execution):
+                        stop_event = self._set_status(
+                            state.RunnerStatus.STOPPED, current_execution
+                        )
+                        _ = yield stop_event
                         return
                     response_step = self._handle_run_event_response(
                         req_event, resp_event
@@ -577,7 +623,11 @@ class Runner:
 
             if not outcomes:
                 current_execution.status = state.RunStatus.FINISHED
-                self.status = state.RunnerStatus.FINISHED
+                status_event = self._set_status(
+                    state.RunnerStatus.FINISHED,
+                    current_execution=current_execution,
+                )
+                _ = yield status_event
                 return
 
             next_runtime_node = None
@@ -596,7 +646,11 @@ class Runner:
                     resp_event = yield req_event
                     self._handle_run_event_response(req_event, resp_event)
                     current_execution.status = state.RunStatus.FINISHED
-                    self.status = state.RunnerStatus.FINISHED
+                    status_event = self._set_status(
+                        state.RunnerStatus.FINISHED,
+                        current_execution=current_execution,
+                    )
+                    _ = yield status_event
                     return
 
                 next_runtime_node = current_runtime_node.get_child_by_outcome(
@@ -610,12 +664,20 @@ class Runner:
                     resp_event = yield req_event
                     self._handle_run_event_response(req_event, resp_event)
                     current_execution.status = state.RunStatus.FINISHED
-                    self.status = state.RunnerStatus.FINISHED
+                    status_event = self._set_status(
+                        state.RunnerStatus.FINISHED,
+                        current_execution=current_execution,
+                    )
+                    _ = yield status_event
                     return
 
             if next_runtime_node is None:
                 current_execution.status = state.RunStatus.FINISHED
-                self.status = state.RunnerStatus.FINISHED
+                status_event = self._set_status(
+                    state.RunnerStatus.FINISHED,
+                    current_execution=current_execution,
+                )
+                _ = yield status_event
                 return
 
             next_input_messages = self._build_next_input_messages(
@@ -635,3 +697,9 @@ class Runner:
                 input_messages=next_input_messages,
                 previous_execution=previous_for_next,
             )
+
+            status_event = self._set_status(
+                self.status,
+                current_execution=current_execution,
+            )
+            _ = yield status_event

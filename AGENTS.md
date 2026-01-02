@@ -9,7 +9,12 @@ This repository implements a configurable, graph-driven workflow runner with LLM
 - Config: YAML with includes and variable interpolation.
 
 ## Partial project structure
-TBD:
+- src/vocode/settings/ - settings models and settings loader
+- src/vocode/runner/ - workflow runner implementation, as well individual executors are residing here
+- srv/vocode/manager/ - orchestrator between runner and UI state. Exposes server-side protocol used by UI clients.
+- src/vocode/tui/ - client-side TUI application
+- src/vocode/know/ - VectorOps Know integration
+- srv/vocode/tools/ - Base tool definitions and tool implementations
 - tests/ — unit tests for core components and UI protocol.
 
 ## High-level style and patterns

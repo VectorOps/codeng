@@ -178,7 +178,7 @@ def _find_project_root_with_config(start: Path, rel_config: Path) -> Optional[Pa
 
 def init_project(
     base_path: Union[str, Path],
-    config_relpath: Union[str, Path] = ".vocode/config.yaml",
+    config_relpath: Union[str, Path] = ".vocode/config-ng.yaml",
     *,
     search_ancestors: bool = True,
     use_scm: bool = True,

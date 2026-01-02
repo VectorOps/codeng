@@ -9,7 +9,7 @@ from vocode import models, state
 from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.runner.base import BaseExecutor, ExecutorInput
 from vocode.runner.runner import Runner
-from vocode.runner.proto import RunEventResp, RunEventResponseType
+from vocode.runner.proto import RunEventReqKind, RunEventResp, RunEventResponseType
 
 
 class ManagerTestExecutor(BaseExecutor):
@@ -148,3 +148,75 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
     ]
     assert prompt_steps_exec
     assert approval_steps
+
+
+@pytest.mark.asyncio
+async def test_manager_status_events_are_stored_and_not_forwarded() -> None:
+    node = models.Node(
+        name="node-status",
+        type="manager-test",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-manager-status", graph=graph)
+
+    project = FakeProject()
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="hello",
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,  # type: ignore[arg-type]
+        initial_message=initial_message,
+    )
+
+    steps: list[state.Step] = []
+
+    async def run_event_listener(
+        frame: RunnerFrame,
+        event,
+    ) -> RunEventResp | None:
+        assert event.kind == RunEventReqKind.STEP
+        assert event.step is not None
+        steps.append(event.step)
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    manager = BaseManager(
+        project=project,  # type: ignore[arg-type]
+        run_event_listener=run_event_listener,
+    )
+
+    dummy_task = asyncio.create_task(asyncio.sleep(3600))
+    frame = RunnerFrame(
+        workflow_name="wf-manager-status",
+        runner=runner,
+        initial_message=initial_message,
+        task=dummy_task,
+    )
+    manager._runner_stack.append(frame)
+
+    runner_task = asyncio.create_task(
+        manager._run_runner_task(
+            workflow_name="wf-manager-status",
+            runner=runner,
+            initial_message=initial_message,
+        )
+    )
+
+    await runner_task
+    dummy_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dummy_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert steps
+    assert frame.last_stats is not None
+    assert frame.last_stats.status == state.RunnerStatus.FINISHED
+    assert frame.last_stats.current_node_name == "node-status"

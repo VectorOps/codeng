@@ -9,6 +9,7 @@ from vocode import models, state
 from vocode.project import Project
 from vocode.runner.runner import Runner
 from vocode.runner.proto import RunEventReq, RunEventResp, RunEventResponseType
+from vocode.runner import proto as runner_proto
 
 
 class Workflow:
@@ -23,6 +24,7 @@ class RunnerFrame:
     runner: Runner
     initial_message: Optional[state.Message]
     task: asyncio.Task[None]
+    last_stats: Optional[runner_proto.RunStats] = None
 
 
 RunnerEventListener = Callable[
@@ -121,6 +123,16 @@ class BaseManager:
         frame: RunnerFrame,
         event: RunEventReq,
     ) -> Optional[RunEventResp]:
+        if (
+            isinstance(event, runner_proto.RunEventReq)
+            and event.kind == runner_proto.RunEventReqKind.STATUS
+        ):
+            frame.last_stats = event.stats
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+
         return await self._run_event_listener(frame, event)
 
     def _build_workflow(self, workflow_name: str) -> Workflow:
