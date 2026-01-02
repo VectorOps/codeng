@@ -5,6 +5,7 @@ class StubProject:
     def __init__(self) -> None:
         self.llm_usage = state.LLMUsageStats()
         self.settings = vocode_settings.Settings()
+        self.current_workflow = None
 
     def add_llm_usage(
         self,
@@ -16,3 +17,9 @@ class StubProject:
         stats.prompt_tokens += int(prompt_delta or 0)
         stats.completion_tokens += int(completion_delta or 0)
         stats.cost_dollars += float(cost_delta or 0.0)
+
+    async def start(self) -> None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
