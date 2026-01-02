@@ -84,6 +84,12 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
         event,
     ) -> RunEventResp | None:
         assert frame.runner is runner
+        if event.kind == RunEventReqKind.STATUS:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        assert event.step is not None
         step = event.step
         events.append(step)
         if step.type == state.StepType.PROMPT:
@@ -180,6 +186,11 @@ async def test_manager_status_events_are_stored_and_not_forwarded() -> None:
         frame: RunnerFrame,
         event,
     ) -> RunEventResp | None:
+        if event.kind == RunEventReqKind.STATUS:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
         assert event.kind == RunEventReqKind.STEP
         assert event.step is not None
         steps.append(event.step)

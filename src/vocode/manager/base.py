@@ -123,15 +123,8 @@ class BaseManager:
         frame: RunnerFrame,
         event: RunEventReq,
     ) -> Optional[RunEventResp]:
-        if (
-            isinstance(event, runner_proto.RunEventReq)
-            and event.kind == runner_proto.RunEventReqKind.STATUS
-        ):
+        if event.kind == runner_proto.RunEventReqKind.STATUS:
             frame.last_stats = event.stats
-            return RunEventResp(
-                resp_type=RunEventResponseType.NOOP,
-                message=None,
-            )
 
         return await self._run_event_listener(frame, event)
 
