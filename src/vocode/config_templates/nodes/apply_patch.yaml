@@ -1,0 +1,11 @@
+variables:
+  LLM_DIFF_FORMAT: v4a
+name: apply
+type: apply_patch
+format: ${LLM_DIFF_FORMAT}
+confirmation: auto
+outcomes:
+  - name: success
+    description: All patches were applied successfully
+  - name: fail
+    description: Failed to apply one or more patches

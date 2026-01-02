@@ -1,4 +1,4 @@
-from typing import AsyncIterator, Dict
+from typing import AsyncIterator, Dict, Callable
 
 import pytest
 
@@ -6,6 +6,30 @@ from vocode import state, models
 from vocode.runner.base import BaseExecutor, ExecutorInput
 from vocode.runner.runner import Runner, RunEvent
 from vocode.runner.proto import RunEventResp, RunEventResponseType
+
+
+async def drive_runner(
+    agen: AsyncIterator[RunEvent],
+    handler: Callable[[RunEvent], RunEventResp],
+    *,
+    ignore_non_step: bool = False,
+) -> list[RunEvent]:
+    events: list[RunEvent] = []
+    send: RunEventResp | None = None
+    while True:
+        try:
+            if send is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(send)
+        except StopAsyncIteration:
+            break
+        if ignore_non_step and event.step is None:
+            send = RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
+            continue
+        events.append(event)
+        send = handler(event)
+    return events
 
 
 class FakeExecutor(BaseExecutor):
@@ -230,53 +254,44 @@ async def test_runner_execution_flow():
     )
 
     agen = runner.run()
-    events: list[RunEvent] = []
     prompt_count = 0
-    ack: RunEventResp | None = None
 
-    while True:
-        try:
-            if ack is None:
-                event = await agen.__anext__()
-            else:
-                event = await agen.asend(ack)
-        except StopAsyncIteration:
-            break
-
-        events.append(event)
+    def handler(event: RunEvent) -> RunEventResp:
+        nonlocal prompt_count
+        assert event.step is not None
         step = event.step
         execution = step.execution
 
         if step.type == state.StepType.PROMPT and execution.node == "node1":
             prompt_count += 1
             if prompt_count == 1:
-                ack = RunEventResp(
+                return RunEventResp(
                     resp_type=RunEventResponseType.DECLINE,
                     message=None,
                 )
-            elif prompt_count == 2:
+            if prompt_count == 2:
                 msg = state.Message(
                     role=models.Role.USER,
                     text="more please",
                 )
-                ack = RunEventResp(
+                return RunEventResp(
                     resp_type=RunEventResponseType.MESSAGE,
                     message=msg,
                 )
-            else:
-                msg = state.Message(
-                    role=models.Role.USER,
-                    text="",
-                )
-                ack = RunEventResp(
-                    resp_type=RunEventResponseType.MESSAGE,
-                    message=msg,
-                )
-        else:
-            ack = RunEventResp(
-                resp_type=RunEventResponseType.NOOP,
-                message=None,
+            msg = state.Message(
+                role=models.Role.USER,
+                text="",
             )
+            return RunEventResp(
+                resp_type=RunEventResponseType.MESSAGE,
+                message=msg,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=True)
 
     assert runner.status == state.RunnerStatus.FINISHED
 
@@ -320,15 +335,21 @@ async def test_runner_execution_flow():
     assert node3_exec.status == state.RunStatus.FINISHED
 
     assert any(
-        isinstance(e.step, state.Step) and e.step.execution.node == "node1"
+        e.step is not None
+        and isinstance(e.step, state.Step)
+        and e.step.execution.node == "node1"
         for e in events
     )
     assert any(
-        isinstance(e.step, state.Step) and e.step.execution.node == "node2"
+        e.step is not None
+        and isinstance(e.step, state.Step)
+        and e.step.execution.node == "node2"
         for e in events
     )
     assert any(
-        isinstance(e.step, state.Step) and e.step.execution.node == "node3"
+        e.step is not None
+        and isinstance(e.step, state.Step)
+        and e.step.execution.node == "node3"
         for e in events
     )
 
@@ -369,7 +390,12 @@ async def test_runner_errors_when_executor_has_no_complete_step():
 
     agen = runner.run()
 
-    event = await agen.__anext__()
+    while True:
+        event = await agen.__anext__()
+        if event.step is not None:
+            break
+
+    assert event.step is not None
     assert event.step.execution.node == "nocomp"
 
     with pytest.raises(RuntimeError):
@@ -403,7 +429,12 @@ async def test_runner_errors_when_executor_has_multiple_complete_steps():
 
     agen = runner.run()
 
-    event1 = await agen.__anext__()
+    while True:
+        event1 = await agen.__anext__()
+        if event1.step is not None:
+            break
+
+    assert event1.step is not None
     assert event1.step.execution.node == "multicomp"
 
     event2 = await agen.asend(
@@ -412,6 +443,15 @@ async def test_runner_errors_when_executor_has_multiple_complete_steps():
             message=None,
         )
     )
+    while True:
+        if event2.step is not None:
+            break
+        event2 = await agen.asend(
+            RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        )
     assert event2.step.execution.node == "multicomp"
 
     with pytest.raises(RuntimeError):
@@ -458,21 +498,11 @@ async def test_result_mode_final_response_forwards_final_message():
     )
 
     agen = runner.run()
-    ack: RunEventResp | None = None
 
-    while True:
-        try:
-            if ack is None:
-                event = await agen.__anext__()
-            else:
-                event = await agen.asend(ack)
-        except StopAsyncIteration:
-            break
+    def handler(event: RunEvent) -> RunEventResp:
+        return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
 
-        ack = RunEventResp(
-            resp_type=RunEventResponseType.NOOP,
-            message=None,
-        )
+    await drive_runner(agen, handler, ignore_non_step=True)
 
     node_execs_by_name: Dict[str, state.NodeExecution] = {}
     for ne in runner.execution.node_executions.values():
@@ -520,21 +550,11 @@ async def test_result_mode_all_messages_forwards_all_messages():
     )
 
     agen = runner.run()
-    ack: RunEventResp | None = None
 
-    while True:
-        try:
-            if ack is None:
-                event = await agen.__anext__()
-            else:
-                event = await agen.asend(ack)
-        except StopAsyncIteration:
-            break
+    def handler(event: RunEvent) -> RunEventResp:
+        return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
 
-        ack = RunEventResp(
-            resp_type=RunEventResponseType.NOOP,
-            message=None,
-        )
+    await drive_runner(agen, handler, ignore_non_step=True)
 
     node_execs_by_name: Dict[str, state.NodeExecution] = {}
     for ne in runner.execution.node_executions.values():
@@ -585,21 +605,11 @@ async def test_result_mode_concatenate_final_builds_single_message():
     )
 
     agen = runner.run()
-    ack: RunEventResp | None = None
 
-    while True:
-        try:
-            if ack is None:
-                event = await agen.__anext__()
-            else:
-                event = await agen.asend(ack)
-        except StopAsyncIteration:
-            break
+    def handler(event: RunEvent) -> RunEventResp:
+        return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
 
-        ack = RunEventResp(
-            resp_type=RunEventResponseType.NOOP,
-            message=None,
-        )
+    await drive_runner(agen, handler, ignore_non_step=True)
 
     node_execs_by_name: Dict[str, state.NodeExecution] = {}
     for ne in runner.execution.node_executions.values():
@@ -650,19 +660,32 @@ async def test_runner_stop_stops_execution_loop():
 
     agen = runner.run()
 
-    event = await agen.__anext__()
+    while True:
+        event = await agen.__anext__()
+        if event.step is not None:
+            break
+
+    assert event.step is not None
     assert event.step.execution.node == "loop1"
     assert runner.status == state.RunnerStatus.RUNNING
 
     runner.stop()
-
-    with pytest.raises(StopAsyncIteration):
-        await agen.asend(
-            RunEventResp(
-                resp_type=RunEventResponseType.NOOP,
-                message=None,
+    saw_step_after_stop = False
+    while True:
+        try:
+            event = await agen.asend(
+                RunEventResp(
+                    resp_type=RunEventResponseType.NOOP,
+                    message=None,
+                )
             )
-        )
+        except StopAsyncIteration:
+            break
+        if event.step is not None:
+            saw_step_after_stop = True
+            break
+
+    assert not saw_step_after_stop
 
     assert runner.status == state.RunnerStatus.STOPPED
 
@@ -756,7 +779,12 @@ async def test_runner_resume_from_output_message_skips_executor_run():
     agen = runner.run()
 
     with pytest.raises(StopAsyncIteration):
-        await agen.__anext__()
+        while True:
+            event = await agen.__anext__()
+            if event.step is not None:
+                raise AssertionError(
+                    "Expected no step events when resuming from output message"
+                )
 
     assert runner.status == state.RunnerStatus.FINISHED
     assert all(s.id != extra_step.id for s in runner.execution.steps)
@@ -802,22 +830,17 @@ async def test_runner_resume_from_input_message_re_runs_executor():
     runner.execution.steps.append(input_step)
 
     agen = runner.run()
-    ack: RunEventResp | None = None
     events: list[RunEvent] = []
 
-    while True:
-        try:
-            if ack is None:
-                event = await agen.__anext__()
-            else:
-                event = await agen.asend(ack)
-        except StopAsyncIteration:
-            break
-        events.append(event)
-        ack = RunEventResp(
+    def handler(event: RunEvent) -> RunEventResp:
+        if event.step is not None:
+            events.append(event)
+        return RunEventResp(
             resp_type=RunEventResponseType.NOOP,
             message=None,
         )
+
+    await drive_runner(agen, handler, ignore_non_step=True)
 
     assert runner.status == state.RunnerStatus.FINISHED
 
@@ -883,22 +906,17 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
     runner.execution.steps.append(tool_step)
 
     agen = runner.run()
-    ack: RunEventResp | None = None
     events: list[RunEvent] = []
 
-    while True:
-        try:
-            if ack is None:
-                event = await agen.__anext__()
-            else:
-                event = await agen.asend(ack)
-        except StopAsyncIteration:
-            break
-        events.append(event)
-        ack = RunEventResp(
+    def handler(event: RunEvent) -> RunEventResp:
+        if event.step is not None:
+            events.append(event)
+        return RunEventResp(
             resp_type=RunEventResponseType.NOOP,
             message=None,
         )
+
+    await drive_runner(agen, handler, ignore_non_step=True)
 
     assert runner.status == state.RunnerStatus.FINISHED
 
@@ -943,39 +961,47 @@ async def test_runner_start_after_stop_resumes_execution():
 
     agen1 = runner.run()
 
-    event1 = await agen1.__anext__()
+    while True:
+        event1 = await agen1.__anext__()
+        if event1.step is not None:
+            break
+
+    assert event1.step is not None
     assert event1.step.execution.node == "node1"
     assert runner.status == state.RunnerStatus.RUNNING
 
     runner.stop()
-
-    with pytest.raises(StopAsyncIteration):
-        await agen1.asend(
-            RunEventResp(
-                resp_type=RunEventResponseType.NOOP,
-                message=None,
+    saw_step_after_stop = False
+    while True:
+        try:
+            event = await agen1.asend(
+                RunEventResp(
+                    resp_type=RunEventResponseType.NOOP,
+                    message=None,
+                )
             )
-        )
+        except StopAsyncIteration:
+            break
+        if event.step is not None:
+            saw_step_after_stop = True
+            break
+
+    assert not saw_step_after_stop
 
     assert runner.status == state.RunnerStatus.STOPPED
 
     agen2 = runner.run()
-    ack: RunEventResp | None = None
     events: list[RunEvent] = []
 
-    while True:
-        try:
-            if ack is None:
-                event = await agen2.__anext__()
-            else:
-                event = await agen2.asend(ack)
-        except StopAsyncIteration:
-            break
-        events.append(event)
-        ack = RunEventResp(
+    def handler(event: RunEvent) -> RunEventResp:
+        if event.step is not None:
+            events.append(event)
+        return RunEventResp(
             resp_type=RunEventResponseType.NOOP,
             message=None,
         )
+
+    await drive_runner(agen2, handler, ignore_non_step=True)
 
     assert runner.status == state.RunnerStatus.FINISHED
 

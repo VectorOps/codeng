@@ -5,6 +5,7 @@ from pathlib import Path
 from os import PathLike
 import os
 import json
+from importlib import resources
 from pydantic import BaseModel, Field
 from pydantic import model_validator, field_validator
 import yaml
@@ -17,9 +18,7 @@ from knowlt.settings import ProjectSettings as KnowProjectSettings
 
 
 # Base path for packaged template configs, e.g. include: { vocode: "nodes/requirements.yaml" }
-VOCODE_TEMPLATE_BASE: Path = (
-    Path(__file__).resolve().parent / "config_templates"
-).resolve()
+VOCODE_TEMPLATE_BASE: Path = (resources.files("vocode") / "config_templates").resolve()
 
 # Include spec keys for bundled templates. Support GitLab 'template', legacy 'vocode', and 'templates'
 TEMPLATE_INCLUDE_KEYS: Final[Set[str]] = {"template", "templates", "vocode"}

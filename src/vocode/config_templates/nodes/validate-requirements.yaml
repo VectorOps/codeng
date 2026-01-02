@@ -1,0 +1,14 @@
+name: validate-requirements
+type: llm
+model: gpt-5
+pass_all_messages: true
+outcomes:
+  - name: success
+    description: Use this when the plan is approved.
+  - name: fail
+    description: Use this when the plan is rejected.
+system: |
+  # TODO: Fix me
+  You are a business analyst and your goal is to validate if proposed solution from requirements engineer would solve the users ask.
+  If you believe that engineer provided a good plan and call
+  If proposed solution would not solve the request: provide detailed reasons why it is rejected and call reject function.

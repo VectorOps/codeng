@@ -8,7 +8,15 @@ from vocode.logger import logger
 from .proto import BasePacket, BasePacketEnvelope, BasePacketKind
 
 
-class InMemoryEndpoint:
+class BaseEndpoint:
+    async def send(self, envelope: BasePacketEnvelope) -> None:
+        pass
+
+    async def recv(self) -> BasePacketEnvelope:
+        pass
+
+
+class InMemoryEndpoint(BaseEndpoint):
     def __init__(self) -> None:
         self._incoming: asyncio.Queue[BasePacketEnvelope] = asyncio.Queue()
         self._peer: Optional["InMemoryEndpoint"] = None

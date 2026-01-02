@@ -1,0 +1,5 @@
+name: file_state
+type: file_state
+confirmation: auto
+message_mode: concatenate_final
+hide_final_output: true
