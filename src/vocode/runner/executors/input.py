@@ -8,6 +8,7 @@ from vocode.runner.base import BaseExecutor, ExecutorInput, iter_execution_messa
 
 class InputNode(models.Node):
     type: str = "input"
+
     message: Optional[str] = Field(
         default=None,
         description="Optional prompt message shown to the user when requesting input.",

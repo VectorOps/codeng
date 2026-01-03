@@ -6,6 +6,7 @@ from typing import List, Optional
 from collections.abc import Awaitable, Callable
 
 from vocode import models, state
+from vocode.logger import logger
 from vocode.project import Project
 from vocode.runner.runner import Runner
 from vocode.runner.proto import RunEventReq, RunEventResp, RunEventResponseType
@@ -92,6 +93,9 @@ class BaseManager:
         )
         self._runner_stack.append(frame)
         self.project.current_workflow = workflow_name
+
+        logger.debug("manager.start_workflow", workflow_name=workflow_name)
+
         return runner
 
     async def stop_current_runner(self) -> None:
@@ -103,6 +107,8 @@ class BaseManager:
             await frame.task
         except Exception:
             pass
+
+        logger.debug("manager.stop_current_runner")
 
     async def restart_current_runner(
         self,
@@ -158,6 +164,9 @@ class BaseManager:
                 except StopAsyncIteration:
                     break
                 send = await self._emit_run_event(frame, event)
+        except Exception as ex:
+            logger.exception("BaseManager._run_runner_task exception", exc=ex)
+            raise
         finally:
             self._on_runner_finished(frame)
 

@@ -56,6 +56,13 @@ class WorkflowConfig(BaseModel):
     edges: List[models.Edge] = Field(default_factory=list)
     agent_workflows: Optional[List[str]] = None
 
+    @field_validator("nodes", mode="before")
+    @classmethod
+    def normalize_nodes(cls, v):
+        if not isinstance(v, list):
+            return v
+        return [models.Node.from_node(item) for item in v]
+
 
 class ToolAutoApproveRule(BaseModel):
     """Rule for automatically approving a tool call based on its JSON arguments.

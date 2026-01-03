@@ -14,6 +14,7 @@ mcp.json
 .tmp
 .env
 .*_history
+log.txt
 
 # Virtual environments
 .venv/

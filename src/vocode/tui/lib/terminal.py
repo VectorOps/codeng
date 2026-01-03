@@ -65,6 +65,7 @@ class Terminal:
         self._auto_render_suppressed: int = 0
         self._last_auto_render: float | None = None
         self._auto_render_task: asyncio.Task[None] | None = None
+        self._started: bool = False
         if self._input_handler is not None:
             self._input_handler.subscribe(self._handle_input_event)
 
@@ -231,6 +232,8 @@ class Terminal:
             self._auto_render_task = None
 
     def _request_auto_render(self, *, force: bool = False) -> None:
+        if not self._started:
+            return
         if not self._auto_render_enabled:
             return
         if not self._components:
@@ -248,42 +251,13 @@ class Terminal:
             return
         self._auto_render_task = loop.create_task(self._auto_render_worker(force=force))
 
-    async def render(self) -> None:
-        if not self._components:
-            return
-
-        size = self._console.size
-        width = size.width
-        height = size.height
-
-        if width <= 0 or height <= 0:
-            return
-
-        changed_components = set(self._dirty_components)
-
-        if (
-            not changed_components
-            and not self._force_full_render
-            and self._width == width
-        ):
-            return
-
-        if self._width is None or self._force_full_render or self._width != width:
-            self._full_render()
-        else:
-            handled = self._incremental_render(changed_components)
-            if not handled:
-                self._full_render()
-
-        self._width = width
-        self._force_full_render = False
-        self._dirty_components.clear()
-
     async def start(self) -> None:
         self._console.control(
             rich_control.Control.clear(),
             rich_control.Control.home(),
         )
+        self._started = True
+        self._request_auto_render(force=True)
         if self._input_handler is None:
             return
         self._console.control(rich_control.Control.show_cursor(False))
@@ -294,6 +268,8 @@ class Terminal:
         await asyncio.sleep(0)
 
     async def stop(self) -> None:
+        self._started = False
+        self._cancel_auto_render_task()
         task = self._input_task
         if task is None:
             return
@@ -457,3 +433,36 @@ class Terminal:
         self._console.control(tui_controls.CustomControl.sync_update_end())
 
         return True
+
+    async def render(self) -> None:
+        if not self._components:
+            return
+
+        size = self._console.size
+        width = size.width
+        height = size.height
+
+        if width <= 0 or height <= 0:
+            return
+
+        changed_components = set(self._dirty_components)
+
+        if (
+            not changed_components
+            and not self._force_full_render
+            and self._width == width
+        ):
+            return
+
+        # self._force_full_render = True
+
+        if self._width is None or self._force_full_render or self._width != width:
+            self._full_render()
+        else:
+            handled = self._incremental_render(changed_components)
+            if not handled:
+                self._full_render()
+
+        self._width = width
+        self._force_full_render = False
+        self._dirty_components.clear()

@@ -79,6 +79,33 @@ async def test_terminal_renders_on_append() -> None:
     assert tui_controls.ERASE_SCROLLBACK in output
     assert "hello" in output
 
+@pytest.mark.asyncio
+async def test_auto_render_not_scheduled_before_start() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=True, min_render_interval_ms=0)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    component = DummyComponent("hello")
+
+    terminal.append_component(component)
+
+    assert terminal._auto_render_task is None
+
+
+@pytest.mark.asyncio
+async def test_auto_render_scheduled_after_start() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=True, min_render_interval_ms=0)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    component = DummyComponent("hello")
+
+    terminal.append_component(component)
+    await terminal.start()
+    await asyncio.sleep(0)
+
+    output = buffer.getvalue()
+    assert "hello" in output
 
 def test_input_component_handles_keys_and_renders_cursor() -> None:
     buffer = io.StringIO()

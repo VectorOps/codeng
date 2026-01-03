@@ -1,5 +1,11 @@
 from typing import List, Tuple, Dict, Set, Optional, Type, ClassVar, Any
-from pydantic import BaseModel, Field, field_validator, model_validator, AliasChoices
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+    AliasChoices,
+)
 from enum import Enum
 import re
 
@@ -156,49 +162,9 @@ class Node(BaseModel):
         if isinstance(default_type, str) and default_type:
             Node._registry[default_type] = cls  # type: ignore[assignment]
             return
-        # Fallback: inspect Pydantic model_fields default
-        try:
-            cls.model_rebuild()
-            field = cls.model_fields.get("type")
-            default_type = getattr(field, "default", None)
-            if isinstance(default_type, str) and default_type:
-                Node._registry[default_type] = cls  # type: ignore[assignment]
-        except Exception:
-            pass
-
-    @classmethod
-    def register(cls, type_name: str, node_cls: Type["Node"]) -> None:
-        cls._registry[type_name] = node_cls
-
-    @classmethod
-    def _ensure_registry_populated(cls) -> None:
-        # Lazily scan subclasses defined at runtime and register those with a string 'type' default
-        for subcls in cls.__subclasses__():
-            # Prefer direct attribute for reliability
-            dt = getattr(subcls, "type", None)
-            if isinstance(dt, str) and dt:
-                cls._registry.setdefault(dt, subcls)
-                continue
-            # Fallback to Pydantic model_fields default
-            try:
-                subcls.model_rebuild()
-                field = subcls.model_fields.get("type")
-                dt2 = getattr(field, "default", None)
-            except Exception:
-                dt2 = None
-            if isinstance(dt2, str) and dt2:
-                cls._registry.setdefault(dt2, subcls)
-
-    @classmethod
-    def get_registered(cls, type_name: str) -> Optional[Type["Node"]]:
-        sub = cls._registry.get(type_name)
-        if sub is not None:
-            return sub
-        # Try to discover subclasses declared after import (e.g., in tests)
-        cls._ensure_registry_populated()
-        return cls._registry.get(type_name)
 
     @field_validator("outcomes", mode="after")
+    @classmethod
     def _unique_outcome_names(cls, v: List[OutcomeSlot]) -> List[OutcomeSlot]:
         names = [s.name for s in v]
         if len(names) != len(set(names)):
@@ -206,46 +172,16 @@ class Node(BaseModel):
         return v
 
     @classmethod
-    def __get_validators__(cls):
-        # Enables polymorphic parsing when Node is used as a field type
-        yield cls._dispatch_and_validate
+    def from_node(cls, data):
+        if not isinstance(data, dict):
+            raise ValueError(f"Invalid value type for from_node: {data}")
 
-    @classmethod
-    def _dispatch_and_validate(cls, v):
-        # Already a Node (or subclass) instance
-        if isinstance(v, Node):
-            return v
-        if not isinstance(v, dict):
-            raise TypeError("Node must be parsed from a mapping/dict")
-        node_type = v.get("type")
-        if isinstance(node_type, str):
-            subcls = cls.get_registered(node_type)
-            if subcls and subcls is not cls:
-                # Instantiate the registered subclass for this type
-                return subcls(**v)
-        # Fallback to the base Node model
-        return cls(**v)
+        type_key = data.get("type")
+        model_cls = cls._registry.get(type_key)
+        if model_cls is None:
+            raise ValueError(f"Unknown type: {type_key}")
 
-    @field_validator("type", mode="after")
-    @classmethod
-    def _validate_type(cls, v: str) -> str:
-        field = cls.model_fields.get("type")
-        expected = getattr(field, "default", None) if field is not None else None
-        if isinstance(expected, str) and v != expected:
-            raise ValueError(
-                f"Invalid type '{v}' for {cls.__name__}; expected '{expected}'"
-            )
-        return v
-
-    @classmethod
-    def from_obj(cls, obj: Any) -> "Node":
-        # Convenience factory for manual dispatch from raw dict/obj
-        return cls._dispatch_and_validate(obj)
-
-    @classmethod
-    def parse_obj(cls, obj: Any) -> "Node":  # type: ignore[override]
-        # Allow direct parse with dispatch (e.g., Node.parse_obj(data))
-        return cls._dispatch_and_validate(obj)
+        return model_cls.model_validate(data)
 
 
 class Edge(BaseModel):

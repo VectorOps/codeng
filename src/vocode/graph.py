@@ -58,10 +58,3 @@ class RuntimeGraph:
 
     def get_runtime_node_by_name(self, name: str) -> Optional["RuntimeNode"]:
         return self._runtime_nodes.get(name)
-
-
-def build(nodes: List["Node"], edges: List["Edge"]) -> RuntimeGraph:
-    # Coerce/dispatch any raw node mappings into Node instances
-    coerced_nodes = [Node.from_obj(n) for n in nodes]
-    graph = Graph(nodes=coerced_nodes, edges=edges)  # triggers Pydantic validation
-    return RuntimeGraph(graph)

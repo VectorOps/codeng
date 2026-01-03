@@ -251,7 +251,7 @@ def init_project(
     if not know_settings.repository_connection:
         know_data_path = base / ".vocode/data"
         know_data_path.mkdir(parents=True, exist_ok=True)
-        know_settings.repository_connection = str(know_data_path / "know.duckdb")
+        know_settings.repository_connection = str(know_data_path / "know-ng.duckdb")
 
     # Persist computed know settings for deferred async initialization in start()
     settings.know = know_settings

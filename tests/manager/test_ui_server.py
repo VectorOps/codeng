@@ -5,7 +5,10 @@ import asyncio
 import pytest
 
 from vocode import models, state
-from vocode.manager.base import RunnerFrame
+from typing import Optional
+
+from vocode import settings as vocode_settings
+from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.manager.helpers import InMemoryEndpoint
 from vocode.manager.server import UIServer
 from vocode.manager import proto as manager_proto
@@ -27,7 +30,7 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
     execution.node_executions[node_execution.id] = node_execution
     step = state.Step(
         execution=node_execution,
-        type=state.StepType.PROMPT,
+        type=state.StepType.OUTPUT_MESSAGE,
     )
     execution.steps.append(step)
     event = runner_proto.RunEventReq(
@@ -62,19 +65,6 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
     assert req_payload.workflow_name == execution.workflow_name
     assert req_payload.workflow_execution_id == str(execution.id)
     assert req_payload.step == step
-
-    ack_packet = manager_proto.AckPacket()
-    response_envelope = manager_proto.BasePacketEnvelope(
-        msg_id=request_envelope.msg_id + 1,
-        payload=ack_packet,
-        source_msg_id=request_envelope.msg_id,
-    )
-    await client_endpoint.send(response_envelope)
-
-    server_incoming = await server_endpoint.recv()
-    handled = await server.on_ui_packet(server_incoming)
-    assert handled is True
-
     resp = await response_task
     assert resp is not None
     assert resp.resp_type == runner_proto.RunEventResponseType.NOOP
@@ -84,12 +74,121 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
     with pytest.raises(asyncio.CancelledError):
         await dummy_task
 
+@pytest.mark.asyncio
+async def test_uiserver_on_runner_event_user_input_message() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    node_execution = state.NodeExecution(
+        node="node1",
+        status=state.RunStatus.RUNNING,
+    )
+    execution = state.WorkflowExecution(workflow_name="wf-ui-server-user-input")
+    execution.node_executions[node_execution.id] = node_execution
+    step = state.Step(
+        execution=node_execution,
+        type=state.StepType.PROMPT,
+    )
+    execution.steps.append(step)
+    event = runner_proto.RunEventReq(
+        kind=runner_proto.RunEventReqKind.STEP,
+        execution=execution,
+        step=step,
+    )
+
+    class DummyRunner:
+        pass
+
+    async def dummy_coro() -> None:
+        await asyncio.Event().wait()
+
+    dummy_task = asyncio.create_task(dummy_coro())
+    frame = RunnerFrame(
+        workflow_name="wf-ui-server-user-input",
+        runner=DummyRunner(),
+        initial_message=None,
+        task=dummy_task,
+    )
+
+    assert server.manager.project is project
+
+    response_task = asyncio.create_task(server.on_runner_event(frame, event))
+
+    request_envelope = await client_endpoint.recv()
+    assert request_envelope.payload.kind == manager_proto.BasePacketKind.RUNNER_REQ
+    req_payload = request_envelope.payload
+    assert isinstance(req_payload, manager_proto.RunnerReqPacket)
+    assert req_payload.workflow_id == frame.workflow_name
+    assert req_payload.workflow_name == execution.workflow_name
+    assert req_payload.workflow_execution_id == str(execution.id)
+    assert req_payload.step == step
+
+    user_message = state.Message(
+        role=models.Role.USER,
+        text="user input message",
+    )
+    user_input_packet = manager_proto.UserInputPacket(
+        message=user_message,
+    )
+    response_envelope = manager_proto.BasePacketEnvelope(
+        msg_id=request_envelope.msg_id + 1,
+        payload=user_input_packet,
+    )
+    await client_endpoint.send(response_envelope)
+
+    server_incoming = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_incoming)
+    assert handled is True
+
+    resp = await response_task
+    assert resp is not None
+    assert resp.resp_type == runner_proto.RunEventResponseType.MESSAGE
+    assert resp.message == user_message
+
+    dummy_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dummy_task
+
+
+@pytest.mark.asyncio
+async def test_uiserver_autostarts_default_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    workflow_name = "wf-auto-start"
+    project.settings.workflows[workflow_name] = vocode_settings.WorkflowConfig()
+    project.settings.default_workflow = workflow_name
+
+    start_calls: list[tuple[str, Optional[state.Message]]] = []
+    started = asyncio.Event()
+
+    async def fake_start_workflow(
+        self: BaseManager,
+        wf_name: str,
+        initial_message: Optional[state.Message] = None,
+    ) -> object:
+        start_calls.append((wf_name, initial_message))
+        started.set()
+        return object()
+
+    monkeypatch.setattr(BaseManager, "start_workflow", fake_start_workflow)
+
+    server_endpoint, _ = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await server.start()
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+
+    assert start_calls == [(workflow_name, None)]
+
 
 @pytest.mark.asyncio
 async def test_uiserver_status_event_emits_ui_state_packet() -> None:
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
+    await server.start()
     execution = state.WorkflowExecution(workflow_name="wf-ui-status")
 
     stats = runner_proto.RunStats(
