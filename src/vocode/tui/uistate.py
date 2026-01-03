@@ -31,7 +31,7 @@ class TUIState:
             panel_box=rich_box.ROUNDED,
         )
         input_component = tui_input_component.InputComponent(
-            "", id="input", single_line=True, component_style=input_style
+            "", id="input", component_style=input_style
         )
 
         self._input_component = input_component

@@ -10,6 +10,7 @@ from vocode.logger import logger
 from . import helpers as llm_helpers
 from ...base import BaseExecutor, ExecutorInput, iter_execution_messages
 
+
 INCLUDED_STEP_TYPES: Final = (
     state.StepType.OUTPUT_MESSAGE,
     state.StepType.INPUT_MESSAGE,
@@ -18,6 +19,8 @@ INCLUDED_STEP_TYPES: Final = (
 
 
 class LLMExecutor(BaseExecutor):
+    type = "llm"
+
     def build_messages(self, inp: ExecutorInput) -> List[Dict]:
         """
         Generate an OpenAI-compatible conversation from execution state.

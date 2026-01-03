@@ -12,8 +12,8 @@ from vocode.runner import proto as runner_proto
 class BasePacketKind(str, Enum):
     ACK = "ack"
     RUNNER_REQ = "runner_req"
-    RUNNER_RESP = "runner_resp"
     UI_STATE = "ui_state"
+    USER_INPUT = "user_input"
 
 
 class AckPacket(BaseModel):
@@ -30,12 +30,11 @@ class RunnerReqPacket(BaseModel):
     step: state.Step
 
 
-class RunnerRespPacket(BaseModel):
-    kind: typing.Literal[BasePacketKind.RUNNER_RESP] = Field(
-        default=BasePacketKind.RUNNER_RESP
+class UserInputPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.USER_INPUT] = Field(
+        default=BasePacketKind.USER_INPUT
     )
-    resp_type: runner_proto.RunEventResponseType
-    message: Optional[state.Message] = Field(default=None)
+    message: state.Message = Field(...)
 
 
 class UIServerStatus(str, Enum):
@@ -59,7 +58,7 @@ class UIServerStatePacket(BaseModel):
 
 
 BasePacket = Annotated[
-    typing.Union[AckPacket, RunnerReqPacket, RunnerRespPacket, UIServerStatePacket],
+    typing.Union[AckPacket, RunnerReqPacket, UserInputPacket, UIServerStatePacket],
     Field(discriminator="kind"),
 ]
 

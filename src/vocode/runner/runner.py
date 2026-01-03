@@ -2,6 +2,7 @@ from typing import Optional, Dict, AsyncIterator
 
 from vocode import models, state
 from vocode import settings as vocode_settings
+from vocode.logger import logger
 from vocode.project import Project
 from vocode.graph import RuntimeGraph
 from vocode.lib import message_helpers, validators
@@ -27,7 +28,6 @@ class Runner:
         self.status = state.RunnerStatus.IDLE
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
-
         self._stop_requested = False
 
         self._executors: Dict[str, BaseExecutor] = {
@@ -361,7 +361,9 @@ class Runner:
 
         last_step = self.execution.steps[-1]
         execution_id = last_step.execution.id
-        execution = self.execution.node_executions.get(execution_id, last_step.execution)
+        execution = self.execution.node_executions.get(
+            execution_id, last_step.execution
+        )
         runtime_node = self.graph.get_runtime_node_by_name(execution.node)
         if execution.status != state.RunStatus.RUNNING:
             execution.status = state.RunStatus.RUNNING
@@ -504,7 +506,10 @@ class Runner:
                 raise RuntimeError(
                     "Executor yielded more than one complete step for a single run."
                 )
-            if last_complete_step is not None and last_complete_step.type == state.StepType.PROMPT:
+            if (
+                last_complete_step is not None
+                and last_complete_step.type == state.StepType.PROMPT
+            ):
                 continue
 
             # Tool call handling

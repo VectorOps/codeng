@@ -12,6 +12,7 @@ from vocode import settings
 
 class LLMNode(models.Node):
     type: str = "llm"
+
     model: str
     system: Optional[str] = None
     system_append: Optional[str] = Field(
