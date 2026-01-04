@@ -49,6 +49,7 @@ class TUIState:
             vocode_state.StepType.OUTPUT_MESSAGE: self._handle_output_message_step,
             vocode_state.StepType.INPUT_MESSAGE: self._handle_input_message_step,
             vocode_state.StepType.PROMPT: self._handle_prompt_step,
+            vocode_state.StepType.TOOL_REQUEST: self._handle_prompt_step,
         }
 
         self._terminal.append_component(header)

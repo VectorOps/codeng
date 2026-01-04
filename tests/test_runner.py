@@ -1094,7 +1094,7 @@ async def test_runner_emits_steps_for_tool_call_confirmation():
                 message=None,
             )
         if (
-            step.type == state.StepType.PROMPT
+            step.type == state.StepType.TOOL_REQUEST
             and step.message is not None
             and step.message.tool_call_requests
         ):
@@ -1116,7 +1116,7 @@ async def test_runner_emits_steps_for_tool_call_confirmation():
         e
         for e in events
         if e.step is not None
-        and e.step.type == state.StepType.PROMPT
+        and e.step.type == state.StepType.TOOL_REQUEST
         and e.step.message is not None
         and e.step.message.tool_call_requests
     ]

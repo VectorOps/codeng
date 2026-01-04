@@ -105,8 +105,10 @@ class Runner:
         )
         prompt_step = state.Step(
             execution=execution,
-            type=state.StepType.PROMPT,
+            type=state.StepType.TOOL_REQUEST,
             message=prompt_message,
+            is_complete=True,
+            is_final=False,
         )
         return self._persist_step(prompt_step)
 
@@ -120,6 +122,7 @@ class Runner:
         if response_step is None:
             return False
         if response_step.type == state.StepType.APPROVAL:
+            req.status = state.ToolCallReqStatus.PENDING_EXECUTION
             approved.append(req)
             return True
         if response_step.type == state.StepType.REJECTION:
@@ -137,6 +140,7 @@ class Runner:
                     result={"message": rejection_text},
                 )
             )
+            req.status = state.ToolCallReqStatus.COMPLETE
             return True
         return False
 
@@ -476,6 +480,8 @@ class Runner:
         use_resume_step = resume_step
         skip_executor_for_current = skip_executor
 
+        tool_request_steps: dict[int, state.Step] = {}
+
         while True:
             executor = self._executors[current_runtime_node.name]
             executor_input = ExecutorInput(
@@ -546,12 +552,17 @@ class Runner:
                     is_auto_approved = self._is_tool_call_auto_approved(req)
                     if is_auto_approved:
                         req.auto_approved = True
+                        req.status = state.ToolCallReqStatus.PENDING_EXECUTION
+                    else:
+                        req.status = state.ToolCallReqStatus.REQUIRES_CONFIRMATION
 
                     while True:
                         persisted_prompt = self._create_tool_prompt_step(
                             current_execution,
                             req,
                         )
+                        tool_request_steps[id(req)] = persisted_prompt
+
                         req_event = RunEventReq(
                             kind=runner_proto.RunEventReqKind.STEP,
                             execution=self.execution,
@@ -582,17 +593,59 @@ class Runner:
                                 _ = yield stop_event
                                 return
 
-                        if self._process_tool_approval_response(
+                        before_len = len(approved)
+                        handled = self._process_tool_approval_response(
                             req,
                             response_step,
                             approved,
                             tool_responses,
-                        ):
+                        )
+                        if handled:
+                            if len(approved) > before_len:
+                                break
+                            persisted_prompt.is_final = True
                             break
 
                 if approved:
+                    for req in approved:
+                        tool_step = tool_request_steps.get(id(req))
+                        if tool_step is None:
+                            continue
+                        req.status = state.ToolCallReqStatus.EXECUTING
+                        status_event = RunEventReq(
+                            kind=runner_proto.RunEventReqKind.STEP,
+                            execution=self.execution,
+                            step=tool_step,
+                        )
+                        _ = yield status_event
+                        if self._maybe_handle_stop(current_execution):
+                            stop_event = self._set_status(
+                                state.RunnerStatus.STOPPED, current_execution
+                            )
+                            _ = yield stop_event
+                            return
+
                     responses = await self._execute_approved_tool_calls(approved)
                     tool_responses.extend(responses)
+
+                    for req in approved:
+                        tool_step = tool_request_steps.get(id(req))
+                        if tool_step is None:
+                            continue
+                        req.status = state.ToolCallReqStatus.COMPLETE
+                        tool_step.is_final = True
+                        status_event = RunEventReq(
+                            kind=runner_proto.RunEventReqKind.STEP,
+                            execution=self.execution,
+                            step=tool_step,
+                        )
+                        _ = yield status_event
+                        if self._maybe_handle_stop(current_execution):
+                            stop_event = self._set_status(
+                                state.RunnerStatus.STOPPED, current_execution
+                            )
+                            _ = yield stop_event
+                            return
 
                 if tool_responses:
                     self._create_tool_result_step(

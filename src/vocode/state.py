@@ -24,6 +24,13 @@ class ToolCallStatus(str, Enum):
     FAILED = "failed"
 
 
+class ToolCallReqStatus(str, Enum):
+    REQUIRES_CONFIRMATION = "requires_confirmation"
+    PENDING_EXECUTION = "pending_execution"
+    EXECUTING = "executing"
+    COMPLETE = "complete"
+
+
 class RunStatus(str, Enum):
     RUNNING = "running"
     FINISHED = "finished"
@@ -36,6 +43,7 @@ class StepType(str, Enum):
     APPROVAL = "approval"
     REJECTION = "rejection"
     PROMPT = "prompt"
+    TOOL_REQUEST = "tool_request"
     TOOL_RESULT = "tool_result"
 
 
@@ -74,11 +82,19 @@ class ToolCallReq(BaseModel):
         default=None,
         description="Effective ToolSpec used for this call, if any.",
     )
+    status: Optional[ToolCallReqStatus] = Field(
+        default=None,
+        description="Execution status for this tool call request.",
+    )
     auto_approved: Optional[None] = Field(
         default=None,
         description="Set to a truthy value at runtime when this tool call is auto-approved.",
     )
     created_at: datetime = Field(default_factory=utcnow)
+    handled_at: Optional[datetime] = Field(
+        default=None,
+        description="Timestamp when this tool call was handled, if applicable.",
+    )
 
 
 class ToolCallResp(BaseModel):
