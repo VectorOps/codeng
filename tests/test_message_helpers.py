@@ -41,10 +41,18 @@ def test_concatenate_messages_returns_none_when_no_messages() -> None:
 
 def test_concatenate_messages_copies_tool_calls_from_final_only() -> None:
     input_msg = state.Message(role=models.Role.USER, text="input")
-    tool_req = state.ToolCallReq(name="t", arguments={})
-    tool_resp = state.ToolCallResp(name="t", result={"ok": True})
+    tool_req = state.ToolCallReq(
+        id="call-t-req",
+        name="t",
+        arguments={},
+    )
+    tool_resp = state.ToolCallResp(
+        id="call-t",
+        name="t",
+        result={"ok": True},
+    )
     final_msg = state.Message(
-        role=models.Role.ASSISTANT,
+        role=models.Role.TOOL,
         text="final",
         tool_call_requests=[tool_req],
         tool_call_responses=[tool_resp],

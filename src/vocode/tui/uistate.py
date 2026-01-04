@@ -233,6 +233,7 @@ class TUIState:
     def _handle_submit(self, value: str) -> None:
         stripped = value.strip()
         self._input_component.text = ""
-        if not stripped:
-            return
+        # TODO: Configurable
+        # if not stripped:
+        #    return
         asyncio.create_task(self._on_input(stripped))

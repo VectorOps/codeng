@@ -66,8 +66,8 @@ class ToolCallReq(BaseModel):
     A single tool call request.
     """
 
-    id: Optional[str] = Field(
-        default=None,
+    id: str = Field(
+        ...,
         description="Provider-issued id for this tool call (e.g., 'call_...')",
     )
     type: str = Field(
@@ -102,8 +102,8 @@ class ToolCallResp(BaseModel):
     A single tool call response.
     """
 
-    id: Optional[str] = Field(
-        default=None,
+    id: str = Field(
+        ...,
         description="Provider-issued id for this tool call (e.g., 'call_...')",
     )
     status: ToolCallStatus = Field(

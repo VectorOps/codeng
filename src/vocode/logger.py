@@ -6,7 +6,7 @@ LOG_FILE_NAME = "log.txt"
 # logging.disable(logging.CRITICAL)
 
 logging.basicConfig(
-    level=logging.WARN,
+    level=logging.INFO,
     format="%(message)s",
     handlers=[
         logging.FileHandler(

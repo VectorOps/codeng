@@ -172,7 +172,8 @@ class UIServer:
 
             resp_type = runner_proto.RunEventResponseType.APPROVE
             if resp_packet.message is not None:
-                resp_type = runner_proto.RunEventResponseType.MESSAGE
+                if resp_packet.message.text:
+                    resp_type = runner_proto.RunEventResponseType.DECLINE
 
             return runner_proto.RunEventResp(
                 resp_type=resp_type,

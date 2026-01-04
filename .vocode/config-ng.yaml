@@ -19,7 +19,7 @@ variables:
 #  LLM_CODER_MODEL: gemini/gemini-2.5-flash
 #  LLM_DIFF_FORMAT: patch
 default_workflow: "chat"
-tools:
+_tools:
   - name: read_files
     auto_approve: true
   - name: summarize_files
@@ -49,6 +49,7 @@ workflows:
           - summarize_files
           - read_files
           - search_project
+          - list_files
         outcomes:
           - name: done
     edges:

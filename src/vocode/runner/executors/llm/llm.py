@@ -52,7 +52,28 @@ class LLMExecutor(BaseExecutor):
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
 
-        def _append_message(msg: state.Message) -> None:
+        def _append_tool_response(resp: state.ToolCallResp) -> None:
+            tool_msg: Dict[str, Any] = {
+                "role": "tool",
+                "type": "function_call",
+                "tool_call_id": resp.id,
+                "name": resp.name,
+                "content": "",
+            }
+            if resp.result is not None:
+                tool_msg["content"] = json.dumps(resp.result)
+            messages.append(tool_msg)
+
+        def _append_message(
+            msg: state.Message,
+            step_type: Optional[state.StepType],
+        ) -> None:
+            if step_type == state.StepType.TOOL_RESULT:
+                if msg.tool_call_responses:
+                    for resp in msg.tool_call_responses:
+                        _append_tool_response(resp)
+                return
+
             role_value = msg.role.value
             base: Dict[str, Any] = {
                 "role": role_value,
@@ -79,21 +100,12 @@ class LLMExecutor(BaseExecutor):
 
             if msg.tool_call_responses:
                 for resp in msg.tool_call_responses:
-                    tool_msg: Dict[str, Any] = {
-                        "role": "tool",
-                        "name": resp.name,
-                        "content": "",
-                    }
-                    if resp.id is not None:
-                        tool_msg["tool_call_id"] = resp.id
-                    if resp.result is not None:
-                        tool_msg["content"] = json.dumps(resp.result)
-                    messages.append(tool_msg)
+                    _append_tool_response(resp)
 
         for msg, step_type in iter_execution_messages(execution):
             if step_type is not None and step_type not in INCLUDED_STEP_TYPES:
                 continue
-            _append_message(msg)
+            _append_message(msg, step_type)
 
         return messages
 
@@ -129,33 +141,38 @@ class LLMExecutor(BaseExecutor):
 
         return base_step.model_copy(update=update)
 
-    def _build_tools(self) -> Optional[List[Dict[str, Any]]]:
+    async def _build_tools(self) -> Optional[List[Dict[str, Any]]]:
         cfg = self.config
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
         if not effective_specs:
             return None
 
         tools: List[Dict[str, Any]] = []
-        for spec in effective_specs.values():
-            if not spec.enabled:
-                continue
-            if not spec.config:
-                continue
-            tool_def = dict(spec.config)
-            if tool_def:
-                tools.append(tool_def)
+        project_tools = getattr(self.project, "tools", {}) or {}
 
-        if not tools:
-            return None
-        return tools
+        for spec in cfg.tools or []:
+            tool_name = spec.name
+            eff_spec = effective_specs.get(tool_name)
+            if eff_spec is None or not eff_spec.enabled:
+                continue
+            tool = project_tools.get(tool_name)
+            if tool is None:
+                continue
+            function_schema = await tool.openapi_spec(eff_spec)
+            tools.append(
+                {
+                    "type": "function",
+                    "function": function_schema,
+                }
+            )
+
+        return tools or None
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
-
-        effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
-
         conv = self.build_messages(inp)
-        tools = self._build_tools()
+        effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
+        tools = await self._build_tools()
         outcome_names = llm_helpers.get_outcome_names(cfg)
         if (
             len(outcome_names) > 1
