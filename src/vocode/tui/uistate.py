@@ -49,7 +49,7 @@ class TUIState:
             vocode_state.StepType.OUTPUT_MESSAGE: self._handle_output_message_step,
             vocode_state.StepType.INPUT_MESSAGE: self._handle_input_message_step,
             vocode_state.StepType.PROMPT: self._handle_prompt_step,
-            vocode_state.StepType.TOOL_REQUEST: self._handle_prompt_step,
+            vocode_state.StepType.TOOL_REQUEST: self._handle_tool_request_step,
         }
 
         self._terminal.append_component(header)
@@ -98,6 +98,14 @@ class TUIState:
         return message.text
 
     def _format_prompt_markdown(self, step: vocode_state.Step) -> str | None:
+        message = step.message
+        if message is None:
+            return None
+        if message.text is None:
+            return None
+        return message.text
+
+    def _format_tool_request_markdown(self, step: vocode_state.Step) -> str | None:
         message = step.message
         if message is None:
             return None
@@ -184,6 +192,16 @@ class TUIState:
 
     def _handle_prompt_step(self, step: vocode_state.Step) -> None:
         markdown = self._format_prompt_markdown(step)
+        if markdown is None:
+            return
+        self._upsert_markdown_component(
+            step,
+            markdown,
+            component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
+        )
+
+    def _handle_tool_request_step(self, step: vocode_state.Step) -> None:
+        markdown = self._format_tool_request_markdown(step)
         if markdown is None:
             return
         self._upsert_markdown_component(
