@@ -6,8 +6,7 @@ from datetime import datetime
 from .lib.date import utcnow
 from uuid import UUID, uuid4
 from .settings import ToolSpec  # type: ignore
-
-from .models import Role
+from .models import OutputMode, Role
 
 
 class RunnerStatus(str, Enum):
@@ -163,6 +162,10 @@ class Step(BaseModel):
     type: StepType = Field(..., description="Step Type")
     message: Optional[Message] = Field(
         default=None, description="Message carried by this step, if any."
+    )
+    output_mode: OutputMode = Field(
+        default=OutputMode.SHOW,
+        description="How this step's output is presented in the UI.",
     )
     outcome_name: Optional[str] = Field(
         default=None, description="Outcome name, if any."

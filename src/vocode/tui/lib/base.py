@@ -18,11 +18,49 @@ Lines = typing.List[typing.List[rich_segment.Segment]]
 Renderable = str | rich_console.RenderableType
 
 
+_PANEL_KWARG_MAP: typing.Final[dict[str, str]] = {
+    "panel_title": "title",
+    "panel_subtitle": "subtitle",
+    "panel_style": "style",
+    "panel_border_style": "border_style",
+    "panel_box": "box",
+    "panel_title_align": "title_align",
+    "panel_subtitle_align": "subtitle_align",
+    "panel_padding": "padding",
+    "panel_title_highlight": "highlight",
+}
+
+
+def _apply_base_style(
+    renderable: Renderable,
+    style: rich_style.Style | str | None,
+) -> Renderable:
+    if style is None:
+        if isinstance(renderable, str):
+            return rich_text.Text(renderable)
+        return renderable
+    if isinstance(renderable, str):
+        return rich_text.Text(renderable, style=style)
+    if isinstance(renderable, rich_text.Text):
+        return rich_text.Text(str(renderable), style=style)
+    return renderable
+
+
+def _build_panel_kwargs(component_style: "ComponentStyle") -> dict[str, typing.Any]:
+    kwargs: dict[str, typing.Any] = {}
+    for field_name, kwarg_name in _PANEL_KWARG_MAP.items():
+        if not hasattr(component_style, field_name):
+            continue
+        value = getattr(component_style, field_name)
+        if value is not None:
+            kwargs[kwarg_name] = value
+    return kwargs
+
+
 class TerminalLike(typing.Protocol):
     console: rich_console.Console
 
-    def notify_component(self, component: Component) -> None:
-        ...
+    def notify_component(self, component: Component) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -39,6 +77,7 @@ class ComponentStyle:
     panel_padding: int | tuple[int, int] | tuple[int, int, int, int] | None = None
     padding_pad: int | tuple[int, int] | tuple[int, int, int, int] | None = None
     padding_style: rich_style.Style | str | None = None
+    margin_bottom: int | None = None
 
 
 class Component(ABC):
@@ -62,83 +101,26 @@ class Component(ABC):
         return
 
     def apply_style(self, renderable: Renderable) -> Renderable:
-        component_style = self.component_style
-        if component_style is None:
+        style = self.component_style
+        if style is None:
             return renderable
-        current: Renderable
-        style = component_style.style
-        if isinstance(renderable, str):
-            if style is not None:
-                current = rich_text.Text(renderable, style=style)
-            else:
-                current = rich_text.Text(renderable)
-        else:
-            current = renderable
-            if style is not None and isinstance(current, rich_text.Text):
-                current = rich_text.Text(str(current), style=style)
-        panel_style = component_style.panel_style
-        panel_border_style = component_style.panel_border_style
-        panel_box = component_style.panel_box
-        panel_title = component_style.panel_title
-        panel_title_align = component_style.panel_title_align
-        panel_title_highlight = component_style.panel_title_highlight
-        panel_subtitle = component_style.panel_subtitle
-        panel_subtitle_align = component_style.panel_subtitle_align
-        panel_padding = component_style.panel_padding
 
-        use_panel = False
-        if (
-            panel_style is not None
-            or panel_border_style is not None
-            or panel_box is not None
-            or panel_title is not None
-            or panel_title_align is not None
-            or panel_subtitle is not None
-            or panel_subtitle_align is not None
-            or panel_padding is not None
-            or (panel_title_highlight is not None and panel_title_highlight)
-        ):
-            use_panel = True
+        current = _apply_base_style(renderable, style.style)
 
-        if use_panel:
-            panel_kwargs: dict[str, typing.Any] = {}
-            if panel_title is not None:
-                panel_kwargs["title"] = panel_title
-            if panel_subtitle is not None:
-                panel_kwargs["subtitle"] = panel_subtitle
-            if panel_style is not None:
-                panel_kwargs["style"] = panel_style
-            if panel_border_style is not None:
-                panel_kwargs["border_style"] = panel_border_style
-            if panel_box is not None:
-                panel_kwargs["box"] = panel_box
-            if panel_title_align is not None:
-                panel_kwargs["title_align"] = panel_title_align
-            if panel_subtitle_align is not None:
-                panel_kwargs["subtitle_align"] = panel_subtitle_align
-            if panel_padding is not None:
-                panel_kwargs["padding"] = panel_padding
-            if panel_title_highlight is not None:
-                panel_kwargs["highlight"] = panel_title_highlight
+        panel_kwargs = _build_panel_kwargs(style)
+        if panel_kwargs:
+            current = rich_panel.Panel(current, **panel_kwargs)
 
-            current = rich_panel.Panel(
-                current,
-                **panel_kwargs,
-            )
+        if style.padding_pad is not None:
+            padding_kwargs: dict[str, typing.Any] = {"pad": style.padding_pad}
+            if style.padding_style is not None:
+                padding_kwargs["style"] = style.padding_style
+            current = rich_padding.Padding(current, **padding_kwargs)
 
-        padding_pad = component_style.padding_pad
-        padding_style = component_style.padding_style
-
-        if padding_pad is not None:
-            padding_kwargs: dict[str, typing.Any] = {
-                "pad": padding_pad,
-            }
-            if padding_style is not None:
-                padding_kwargs["style"] = padding_style
-
+        if style.margin_bottom is not None and style.margin_bottom > 0:
             current = rich_padding.Padding(
                 current,
-                **padding_kwargs,
+                pad=(0, 0, style.margin_bottom, 0),
             )
 
         return current

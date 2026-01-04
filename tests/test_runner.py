@@ -3,6 +3,7 @@ from typing import AsyncIterator, Dict, Callable
 import pytest
 
 from vocode import state, models
+from tests.stub_project import StubProject
 from vocode.runner.base import BaseExecutor, ExecutorInput
 from vocode.runner.executors.input import InputNode
 from vocode.runner.runner import Runner, RunEvent
@@ -140,6 +141,46 @@ class LoopExecutor(BaseExecutor):
 
 
 BaseExecutor.register("loop", LoopExecutor)
+
+
+class ToolPromptExecutor(BaseExecutor):
+    type = "tool-prompt"
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        execution = inp.execution
+        has_tool_result = False
+        for existing_step in execution.steps:
+            if (
+                existing_step.type == state.StepType.TOOL_RESULT
+                and existing_step.is_complete
+            ):
+                has_tool_result = True
+                break
+        if not has_tool_result:
+            tool_req = state.ToolCallReq(
+                name="test-tool",
+                arguments={"x": 1},
+            )
+            msg = state.Message(
+                role=models.Role.ASSISTANT,
+                text="with tool",
+                tool_call_requests=[tool_req],
+            )
+        else:
+            msg = state.Message(
+                role=models.Role.ASSISTANT,
+                text="after tool",
+            )
+        step = state.Step(
+            execution=execution,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message=msg,
+            is_complete=True,
+        )
+        yield step
+
+
+BaseExecutor.register("tool-prompt", ToolPromptExecutor)
 
 
 class DummyWorkflow:
@@ -935,6 +976,15 @@ async def test_input_node_prompts_and_returns_user_message_as_output():
         for e in events
     )
 
+    assert any(
+        e.step is not None
+        and e.step.type == state.StepType.INPUT_MESSAGE
+        and e.step.execution.node == "input-node"
+        and e.step.message is not None
+        and e.step.message.text == "user-input-text"
+        for e in events
+    )
+
 
 @pytest.mark.asyncio
 async def test_runner_resume_from_tool_result_re_runs_executor():
@@ -1010,6 +1060,79 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         s.message is not None and s.message.text == "resumed-output"
         for s in complete_outputs
     )
+
+
+@pytest.mark.asyncio
+async def test_runner_emits_steps_for_tool_call_confirmation():
+    node = models.Node(
+        name="tool-node",
+        type="tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-tool-confirmation", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="start",
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=initial_message,
+    )
+
+    agen = runner.run()
+
+    def handler(event: RunEvent) -> RunEventResp:
+        step = event.step
+        if step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        if (
+            step.type == state.StepType.PROMPT
+            and step.message is not None
+            and step.message.tool_call_requests
+        ):
+            return RunEventResp(
+                resp_type=RunEventResponseType.DECLINE,
+                message=state.Message(
+                    role=models.Role.USER,
+                    text="no thanks",
+                ),
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=True)
+
+    prompt_events = [
+        e
+        for e in events
+        if e.step is not None
+        and e.step.type == state.StepType.PROMPT
+        and e.step.message is not None
+        and e.step.message.tool_call_requests
+    ]
+    assert prompt_events
+
+    response_events = [
+        e
+        for e in events
+        if e.step is not None
+        and e.step.type == state.StepType.REJECTION
+        and e.step.message is not None
+        and e.step.message.text.strip()
+    ]
+    assert response_events
+
+    assert runner.status == state.RunnerStatus.FINISHED
 
 
 @pytest.mark.asyncio

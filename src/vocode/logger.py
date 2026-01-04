@@ -3,7 +3,7 @@ import structlog
 
 LOG_FILE_NAME = "log.txt"
 
-logging.disable(logging.CRITICAL)
+# logging.disable(logging.CRITICAL)
 
 logging.basicConfig(
     level=logging.WARN,

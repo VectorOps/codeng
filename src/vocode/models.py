@@ -42,6 +42,12 @@ class ResultMode(str, Enum):
     CONCATENATE_FINAL = "concatenate_final"
 
 
+class OutputMode(str, Enum):
+    SHOW = "show"
+    HIDE_ALL = "hide_all"
+    HIDE_FINAL = "hide_final"
+
+
 class Role(str, Enum):
     DEVELOPER = "developer"
     USER = "user"
@@ -142,11 +148,18 @@ class Node(BaseModel):
             "- 'concatenate_final': concatenate input message(s) with the final output into a single message."
         ),
     )
+    output_mode: OutputMode = Field(
+        default=OutputMode.SHOW,
+        description=(
+            "How this node's output messages are shown in the UI. "
+            "'show' displays all messages; 'hide_all' hides all messages; "
+            "'hide_final' hides only the final message."
+        ),
+    )
     confirmation: Confirmation = Field(
         default=Confirmation.MANUAL,
         description="How to handle node final confirmation ",
     )
-    # TODO: hide_output
     reset_policy: StateResetPolicy = Field(
         default=StateResetPolicy.RESET,
         description="Defines how executor state is handled.",

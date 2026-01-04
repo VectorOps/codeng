@@ -54,5 +54,6 @@ class InputExecutor(BaseExecutor):
             type=state.StepType.OUTPUT_MESSAGE,
             message=input_message,
             is_complete=True,
+            is_final=True,
         )
         yield output_step
