@@ -134,22 +134,54 @@ class UIServer:
         )
         await self._endpoint.send(envelope)
 
-        if step.type != state.StepType.PROMPT:
+        if step.type == state.StepType.PROMPT:
+            waiter = self._push_input_waiter()
+            resp_packet = await waiter
+
+            resp_type = runner_proto.RunEventResponseType.APPROVE
+            if resp_packet.message is not None:
+                resp_type = runner_proto.RunEventResponseType.MESSAGE
+
             return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.NOOP,
-                message=None,
+                resp_type=resp_type,
+                message=resp_packet.message,
             )
 
-        waiter = self._push_input_waiter()
-        resp_packet = await waiter
+        if step.type == state.StepType.TOOL_REQUEST:
+            message = step.message
+            if message is None:
+                return runner_proto.RunEventResp(
+                    resp_type=runner_proto.RunEventResponseType.APPROVE,
+                    message=None,
+                )
 
-        resp_type = runner_proto.RunEventResponseType.APPROVE
-        if resp_packet.message is not None:
-            resp_type = runner_proto.RunEventResponseType.MESSAGE
+            needs_confirmation = False
+            for tool_req in message.tool_call_requests:
+                if tool_req.status == state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
+                    needs_confirmation = True
+                    break
+
+            if not needs_confirmation:
+                return runner_proto.RunEventResp(
+                    resp_type=runner_proto.RunEventResponseType.APPROVE,
+                    message=None,
+                )
+
+            waiter = self._push_input_waiter()
+            resp_packet = await waiter
+
+            resp_type = runner_proto.RunEventResponseType.APPROVE
+            if resp_packet.message is not None:
+                resp_type = runner_proto.RunEventResponseType.MESSAGE
+
+            return runner_proto.RunEventResp(
+                resp_type=resp_type,
+                message=resp_packet.message,
+            )
 
         return runner_proto.RunEventResp(
-            resp_type=resp_type,
-            message=resp_packet.message,
+            resp_type=runner_proto.RunEventResponseType.NOOP,
+            message=None,
         )
 
     async def _handle_runner_status_event(
