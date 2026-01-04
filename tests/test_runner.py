@@ -158,6 +158,7 @@ class ToolPromptExecutor(BaseExecutor):
                 break
         if not has_tool_result:
             tool_req = state.ToolCallReq(
+                id="call-test-tool",
                 name="test-tool",
                 arguments={"x": 1},
             )
@@ -1012,12 +1013,13 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
     runner.execution.node_executions[execution.id] = execution
 
     tool_resp = state.ToolCallResp(
+        id="call-fn",
         name="fn",
         status=state.ToolCallStatus.COMPLETED,
         result={"ok": True},
     )
     msg = state.Message(
-        role=models.Role.USER,
+        role=models.Role.TOOL,
         text="",
         tool_call_responses=[tool_resp],
     )

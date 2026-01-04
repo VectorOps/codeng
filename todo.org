@@ -28,6 +28,7 @@
 *** [X] Remove padding from SelectList
 *** [ ] Add toolbar
 *** [ ] Add animation support, potentially via Rich Live
+*** [ ] Add optimization to not re-render unchanged lines after top-level component if height did not change. Figure out generic algorithm.
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided
 * [ ] Fix up TUI tests - need to run Rich in non-terminal mode

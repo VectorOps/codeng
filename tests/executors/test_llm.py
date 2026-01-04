@@ -225,8 +225,8 @@ async def test_llm_executor_populates_tool_spec_on_tool_call(
     assert isinstance(req.tool_spec, vocode_settings.ToolSpec)
     assert req.tool_spec.config.get("x") == 2
 
-
-def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> None:
+@pytest.mark.asyncio
+async def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> None:
     project = StubProject()
 
     global_tool = vocode_settings.ToolSpec(
@@ -235,6 +235,28 @@ def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> None:
         config={"x": 2, "global": True},
     )
     project.settings.tools = [global_tool]
+
+    class EchoTool:
+        async def openapi_spec(
+            self,
+            spec: vocode_settings.ToolSpec,
+        ) -> dict[str, Any]:
+            return {
+                "name": spec.name,
+                "parameters": {
+                    "type": "object",
+                    "properties": dict(spec.config),
+                },
+            }
+
+        async def run(
+            self,
+            spec: vocode_settings.ToolSpec,
+            args: Any,
+        ) -> None:
+            return None
+
+    project.tools["echo"] = EchoTool()
 
     node_tool = vocode_settings.ToolSpec(
         name="echo",
@@ -252,17 +274,20 @@ def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> None:
 
     executor = LLMExecutor(config=node, project=project)
 
-    tools = executor._build_tools()
+    tools = await executor._build_tools()
     assert tools is not None
     assert len(tools) == 1
 
     tool = tools[0]
-    assert tool["x"] == 2
-    assert tool["local"] is True
-    assert tool["global"] is True
+    assert tool["type"] == "function"
+    fn = tool["function"]
+    params = fn["parameters"]["properties"]
+    assert params["x"] == 2
+    assert params["local"] is True
+    assert params["global"] is True
 
-
-def test_llm_executor_build_tools_respects_global_enabled_override() -> None:
+@pytest.mark.asyncio
+async def test_llm_executor_build_tools_respects_global_enabled_override() -> None:
     project = StubProject()
 
     global_tool = vocode_settings.ToolSpec(
@@ -288,7 +313,29 @@ def test_llm_executor_build_tools_respects_global_enabled_override() -> None:
 
     executor = LLMExecutor(config=node, project=project)
 
-    tools = executor._build_tools()
+    class EchoTool:
+        async def openapi_spec(
+            self,
+            spec: vocode_settings.ToolSpec,
+        ) -> dict[str, Any]:
+            return {
+                "name": spec.name,
+                "parameters": {
+                    "type": "object",
+                    "properties": dict(spec.config),
+                },
+            }
+
+        async def run(
+            self,
+            spec: vocode_settings.ToolSpec,
+            args: Any,
+        ) -> None:
+            return None
+
+    project.tools["echo"] = EchoTool()
+
+    tools = await executor._build_tools()
     assert tools is None
 
 

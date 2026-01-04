@@ -160,7 +160,7 @@ class Runner:
         tool_responses: list[state.ToolCallResp],
     ) -> state.Step:
         tool_message = state.Message(
-            role=models.Role.USER,
+            role=models.Role.TOOL,
             text="",
             tool_call_responses=tool_responses,
         )

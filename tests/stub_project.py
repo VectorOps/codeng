@@ -6,6 +6,7 @@ class StubProject:
         self.llm_usage = state.LLMUsageStats()
         self.settings = vocode_settings.Settings()
         self.current_workflow = None
+        self.tools = {}
 
     def add_llm_usage(
         self,

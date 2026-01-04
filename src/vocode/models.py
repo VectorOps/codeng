@@ -53,6 +53,7 @@ class Role(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+    TOOL = "tool"
 
 
 class OutcomeStrategy(str, Enum):
