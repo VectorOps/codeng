@@ -1,11 +1,12 @@
 #+title: Todo
 
 * [ ] General
-** [ ] Add TUI message plumbing to UIServer
-- Figure out a way to send back responses
-** [ ] Add state to UIServer - first message sent to idle state should start the workflow
+** [X] Add TUI message plumbing to UIServer
+** [X] Add state to UIServer - first message sent to idle state should start the workflow
 ** [ ] Stream log messages/errors to client. Figure out general startup sequencing and error handling.
 ** [ ] Fix logging - have a special buffer and a way to see logs at will
+** [ ] Create Step renderer in TUI client
+** [ ] Add input request stack to TUI
 * [ ] Runner
 ** [X] Add is_complete to Step to differentiate between intermediate and final results
 ** [X] Add tool support by checking if complete step was received and it contains tool calls
@@ -21,7 +22,7 @@
 ** [ ] Patch
 ** [ ] Exec (rename to Shell)
 * [ ] UI
-** [ ] Create an in-memory bidirectional communication channel
+** [X] Create an in-memory bidirectional communication channel
 ** [ ] TUI library
 *** [ ] Refactor apply_style
 *** [X] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences
@@ -29,3 +30,4 @@
 *** [ ] Add toolbar
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided
+* [ ] Fix up TUI tests - need to run Rich in non-terminal mode
