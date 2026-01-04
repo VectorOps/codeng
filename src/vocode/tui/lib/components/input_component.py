@@ -31,6 +31,7 @@ class InputComponent(tui_base.Component):
         id: str | None = None,
         single_line: bool = False,
         component_style: tui_base.ComponentStyle | None = None,
+        prefix: str | None = None,
     ) -> None:
         super().__init__(
             id=id,
@@ -40,6 +41,7 @@ class InputComponent(tui_base.Component):
         self._single_line = single_line
         self._keymap = self._create_keymap()
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
+        self._prefix = prefix
         # box_style removed; styling should be applied via Component.apply_style
 
     @property
@@ -49,6 +51,17 @@ class InputComponent(tui_base.Component):
     @text.setter
     def text(self, value: str) -> None:
         self._editor.text = value
+        self._mark_dirty()
+
+    @property
+    def prefix(self) -> str | None:
+        return self._prefix
+
+    @prefix.setter
+    def prefix(self, value: str | None) -> None:
+        if self._prefix == value:
+            return
+        self._prefix = value
         self._mark_dirty()
 
     @property
@@ -130,19 +143,41 @@ class InputComponent(tui_base.Component):
 
     def _build_text_with_cursor(self) -> rich_text.Text:
         full = rich_text.Text()
+        prefix = self._prefix
+        prefix_len = len(prefix) if prefix is not None else 0
         cursor_row = self._editor.cursor_row
         cursor_col = self._editor.cursor_col
         for row, raw in enumerate(self._editor.lines):
             if row > 0:
                 full.append("\n")
-            line_text = rich_text.Text(raw, overflow="fold", no_wrap=False)
+            if prefix is not None:
+                if row == 0:
+                    prefix_part = prefix
+                else:
+                    prefix_part = " " * prefix_len
+            else:
+                prefix_part = ""
+
+            display_line = raw
+            cursor_index_in_raw = None
             if row == cursor_row:
                 if cursor_col >= len(raw):
-                    line_text.append(" ")
-                    start = len(raw)
+                    display_line = raw + " "
+                    cursor_index_in_raw = len(raw)
                 else:
-                    start = cursor_col
-                line_text.stylize(CURSOR_STYLE, start, start + 1)
+                    cursor_index_in_raw = cursor_col
+            line_text = rich_text.Text(
+                prefix_part + display_line,
+                overflow="fold",
+                no_wrap=False,
+            )
+            if row == cursor_row and cursor_index_in_raw is not None:
+                start = prefix_len + cursor_index_in_raw
+                line_text.stylize(
+                    CURSOR_STYLE,
+                    start,
+                    start + 1,
+                )
             full.append_text(line_text)
         return full
 

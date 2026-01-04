@@ -38,6 +38,7 @@ workflows:
       - name: input
         type: input
         message: "How can I help you?"
+        output_mode: hide_final
         outcomes:
           - name: done
       - name: llm

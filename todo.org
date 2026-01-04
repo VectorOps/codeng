@@ -5,8 +5,12 @@
 ** [X] Add state to UIServer - first message sent to idle state should start the workflow
 ** [ ] Stream log messages/errors to client. Figure out general startup sequencing and error handling.
 ** [ ] Fix logging - have a special buffer and a way to see logs at will
-** [ ] Create Step renderer in TUI client
-** [ ] Add input request stack to TUI
+** [ ] Rethink tool step handling. Make it easier for UI to understand the tool execution state
+- Create a new tool step type instead of PROMPT
+- Add a status to tool req (pending_approval, running, complete), emit statuses to update tool req in UI (spinner, etc)
+** [X] Create Step renderer in TUI client
+** [X] Add input request stack to TUI
+** [ ] Set input header depending on the top of the input stack
 * [ ] Runner
 ** [X] Add is_complete to Step to differentiate between intermediate and final results
 ** [X] Add tool support by checking if complete step was received and it contains tool calls
@@ -15,19 +19,15 @@
 ** [ ] Correctly handle incorrect response to PROMPT
 ** [ ] Extend PROMPT Step to have mode (message, approval, etc)
 * [ ] Migrate tools
-** [ ] Patch
-** [ ] Shell / Exec
-** [ ] TODO
 * [ ] Migrate nodes
-** [ ] Patch
-** [ ] Exec (rename to Shell)
 * [ ] UI
 ** [X] Create an in-memory bidirectional communication channel
 ** [ ] TUI library
-*** [ ] Refactor apply_style
+*** [X] Refactor apply_style
 *** [X] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences
 *** [X] Remove padding from SelectList
 *** [ ] Add toolbar
+*** [ ] Add animation support, potentially via Rich Live
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided
 * [ ] Fix up TUI tests - need to run Rich in non-terminal mode

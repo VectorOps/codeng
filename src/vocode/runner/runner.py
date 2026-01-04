@@ -391,7 +391,19 @@ class Runner:
             type=step_type,
             message=message,
         )
-        return self._persist_step(step)
+        persisted = self._persist_step(step)
+        return persisted
+
+    def _build_response_event(
+        self, response_step: Optional[state.Step]
+    ) -> Optional[RunEventReq]:
+        if response_step is None:
+            return None
+        return RunEventReq(
+            kind=runner_proto.RunEventReqKind.STEP,
+            execution=self.execution,
+            step=response_step,
+        )
 
     def _maybe_handle_stop(
         self, current_execution: Optional[state.NodeExecution]
@@ -479,6 +491,9 @@ class Runner:
                 use_resume_step = None
             else:
                 async for step in executor.run(executor_input):
+                    node_output_mode = current_runtime_node.model.output_mode
+                    if step.output_mode != node_output_mode:
+                        step.output_mode = node_output_mode
                     persisted_step = self._persist_step(step)
                     req = RunEventReq(
                         kind=runner_proto.RunEventReqKind.STEP,
@@ -492,7 +507,16 @@ class Runner:
                         )
                         _ = yield stop_event
                         return
-                    self._handle_run_event_response(req, resp)
+                    response_step = self._handle_run_event_response(req, resp)
+                    response_event = self._build_response_event(response_step)
+                    if response_event is not None:
+                        _ = yield response_event
+                        if self._maybe_handle_stop(current_execution):
+                            stop_event = self._set_status(
+                                state.RunnerStatus.STOPPED, current_execution
+                            )
+                            _ = yield stop_event
+                            return
 
                     if persisted_step.is_complete:
                         complete_step_count += 1
@@ -548,6 +572,15 @@ class Runner:
                         response_step = self._handle_run_event_response(
                             req_event, resp_event
                         )
+                        response_event = self._build_response_event(response_step)
+                        if response_event is not None:
+                            _ = yield response_event
+                            if self._maybe_handle_stop(current_execution):
+                                stop_event = self._set_status(
+                                    state.RunnerStatus.STOPPED, current_execution
+                                )
+                                _ = yield stop_event
+                                return
 
                         if self._process_tool_approval_response(
                             req,
@@ -600,6 +633,15 @@ class Runner:
                     response_step = self._handle_run_event_response(
                         req_event, resp_event
                     )
+                    response_event = self._build_response_event(response_step)
+                    if response_event is not None:
+                        _ = yield response_event
+                        if self._maybe_handle_stop(current_execution):
+                            stop_event = self._set_status(
+                                state.RunnerStatus.STOPPED, current_execution
+                            )
+                            _ = yield stop_event
+                            return
 
                     if (
                         response_step is not None
@@ -651,7 +693,18 @@ class Runner:
                         "Missing outcome_name for completion step on node with multiple outcomes",
                     )
                     resp_event = yield req_event
-                    self._handle_run_event_response(req_event, resp_event)
+                    response_step = self._handle_run_event_response(
+                        req_event, resp_event
+                    )
+                    response_event = self._build_response_event(response_step)
+                    if response_event is not None:
+                        _ = yield response_event
+                        if self._maybe_handle_stop(current_execution):
+                            stop_event = self._set_status(
+                                state.RunnerStatus.STOPPED, current_execution
+                            )
+                            _ = yield stop_event
+                            return
                     current_execution.status = state.RunStatus.FINISHED
                     status_event = self._set_status(
                         state.RunnerStatus.FINISHED,
@@ -669,7 +722,18 @@ class Runner:
                         f"Unknown outcome '{outcome_name}' for node '{current_runtime_node.name}'",
                     )
                     resp_event = yield req_event
-                    self._handle_run_event_response(req_event, resp_event)
+                    response_step = self._handle_run_event_response(
+                        req_event, resp_event
+                    )
+                    response_event = self._build_response_event(response_step)
+                    if response_event is not None:
+                        _ = yield response_event
+                        if self._maybe_handle_stop(current_execution):
+                            stop_event = self._set_status(
+                                state.RunnerStatus.STOPPED, current_execution
+                            )
+                            _ = yield stop_event
+                            return
                     current_execution.status = state.RunStatus.FINISHED
                     status_event = self._set_status(
                         state.RunnerStatus.FINISHED,

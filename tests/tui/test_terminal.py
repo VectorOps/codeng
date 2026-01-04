@@ -79,6 +79,7 @@ async def test_terminal_renders_on_append() -> None:
     assert tui_controls.ERASE_SCROLLBACK in output
     assert "hello" in output
 
+
 @pytest.mark.asyncio
 async def test_auto_render_not_scheduled_before_start() -> None:
     buffer = io.StringIO()
@@ -106,6 +107,7 @@ async def test_auto_render_scheduled_after_start() -> None:
 
     output = buffer.getvalue()
     assert "hello" in output
+
 
 def test_input_component_handles_keys_and_renders_cursor() -> None:
     buffer = io.StringIO()
@@ -728,3 +730,27 @@ def test_component_style_padding_uses_new_fields() -> None:
     assert padding.renderable == "x" or isinstance(
         padding.renderable, rich_console.RenderableType
     )
+
+
+def test_component_style_bottom_margin_adds_empty_lines() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=20,
+    )
+    component = DummyComponent("body")
+    style = tui_terminal.ComponentStyle(margin_bottom=2)
+    component.component_style = style
+
+    styled = component.apply_style("x")
+    options = console.options
+    lines = console.render_lines(
+        styled,
+        options=options,
+        pad=False,
+        new_lines=False,
+    )
+
+    assert len(lines) == 3
