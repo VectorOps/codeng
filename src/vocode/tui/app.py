@@ -60,13 +60,25 @@ class App:
 
     # Network packet hanbdlers
     def _register_handlers(self) -> None:
-        for kind in manager_proto.BasePacketKind:
-            self._router.register(kind, self._handle_packet_noop)
+        self._router.register(
+            manager_proto.BasePacketKind.RUNNER_REQ,
+            self._handle_packet_runner_req,
+        )
 
     async def _handle_packet_noop(
         self, envelope: manager_proto.BasePacketEnvelope
     ) -> typing.Optional[manager_proto.BasePacket]:
         _ = envelope
+        return None
+
+    async def _handle_packet_runner_req(
+        self, envelope: manager_proto.BasePacketEnvelope
+    ) -> typing.Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if not isinstance(payload, manager_proto.RunnerReqPacket):
+            return None
+        step = payload.step
+        self._state.handle_step(step)
         return None
 
     async def _recv_loop(self) -> None:
