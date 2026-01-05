@@ -65,6 +65,9 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
     assert req_payload.workflow_name == execution.workflow_name
     assert req_payload.workflow_execution_id == str(execution.id)
     assert req_payload.step == step
+    assert req_payload.input_required is False
+    assert req_payload.input_title is None
+    assert req_payload.input_subtitle is None
     resp = await response_task
     assert resp is not None
     assert resp.resp_type == runner_proto.RunEventResponseType.NOOP

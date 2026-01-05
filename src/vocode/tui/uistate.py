@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import typing
 from rich import console as rich_console
@@ -38,7 +39,7 @@ class TUIState:
             "",
             id="input",
             prefix="> ",
-            component_style=tui_styles.INPUT_COMPONENT_STYLE,
+            component_style=tui_styles.INPUT_PANEL_COMPONENT_STYLE,
         )
 
         self._input_component = input_component
@@ -155,10 +156,7 @@ class TUIState:
         markdown = self._format_message_markdown(step)
         if markdown is None:
             return
-        lines = markdown.splitlines()
-        while lines and not lines[-1].strip():
-            lines.pop()
-        trimmed = "\n".join(lines)
+        trimmed = markdown.strip()
         self._upsert_markdown_component(
             step,
             trimmed,
@@ -229,6 +227,24 @@ class TUIState:
             handler(step)
             return
         self._handle_default_step(step)
+
+    def set_input_panel_title(
+        self,
+        title: str | None,
+        subtitle: str | None = None,
+    ) -> None:
+        style = self._input_component.component_style
+        if style is None:
+            style = tui_styles.INPUT_PANEL_COMPONENT_STYLE
+        if style is None:
+            return
+        new_style = dataclasses.replace(
+            style,
+            panel_title=title,
+            panel_subtitle=subtitle,
+        )
+        self._input_component.component_style = new_style
+        self._terminal.notify_component(self._input_component)
 
     def _handle_submit(self, value: str) -> None:
         stripped = value.strip()

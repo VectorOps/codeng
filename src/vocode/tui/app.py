@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 import typing
 
@@ -15,6 +16,12 @@ from vocode import project as vocode_project
 from vocode.tui import uistate as tui_uistate
 
 
+@dataclass
+class PromptMeta:
+    title: str | None = None
+    subtitle: str | None = None
+
+
 class App:
     def __init__(self, project_path: Path) -> None:
         self._project_path = project_path
@@ -22,6 +29,7 @@ class App:
             manager_helpers.InMemoryEndpoint.pair()
         )
         self._push_msg_id = 0
+        self._prompt_stack: list[PromptMeta] = []
 
         project = vocode_project.Project.from_base_path(self._project_path)
         self._ui_server = manager_server.UIServer(
@@ -45,6 +53,28 @@ class App:
     def _next_msg_id(self) -> int:
         self._push_msg_id += 1
         return self._push_msg_id
+
+    def _push_prompt(self, prompt: PromptMeta) -> None:
+        self._prompt_stack.append(prompt)
+        self._sync_prompt_hint()
+
+    def _pop_prompt(self) -> PromptMeta | None:
+        if not self._prompt_stack:
+            self._sync_prompt_hint()
+            return None
+        popped = self._prompt_stack.pop()
+        self._sync_prompt_hint()
+        return popped
+
+    def _have_prompt(self) -> bool:
+        return bool(self._prompt_stack)
+
+    def _sync_prompt_hint(self) -> None:
+        if not self._prompt_stack:
+            self._state.set_input_panel_title(None, None)
+            return
+        current = self._prompt_stack[-1]
+        self._state.set_input_panel_title(current.title, current.subtitle)
 
     async def run(self) -> None:
         await self._state.start()
@@ -78,6 +108,12 @@ class App:
         if not isinstance(payload, manager_proto.RunnerReqPacket):
             return None
         step = payload.step
+        if payload.input_required:
+            prompt = PromptMeta(
+                title=payload.input_title,
+                subtitle=payload.input_subtitle,
+            )
+            self._push_prompt(prompt)
         self._state.handle_step(step)
         return None
 
@@ -90,6 +126,11 @@ class App:
 
     # UI handlers
     async def on_input(self, text: str) -> None:
+        if not self._have_prompt():
+            self._state.add_markdown("No input is expected right now.")
+            return
+
+        hint = self._pop_prompt()
         message = state.Message(
             role=models.Role.USER,
             text=text,

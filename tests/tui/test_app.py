@@ -7,7 +7,7 @@ import pytest
 from vocode import models
 from vocode import project as vocode_project
 from vocode.manager import proto as manager_proto
-from vocode.tui.app import App
+from vocode.tui.app import App, PromptMeta
 from vocode.tui import uistate as tui_uistate
 from tests.stub_project import StubProject
 
@@ -20,6 +20,16 @@ async def test_tui_app_sends_user_input_packet(
     class FakeTUIState:
         def __init__(self, on_input) -> None:
             self._on_input = on_input
+        
+        def add_markdown(self, markdown: str) -> None:
+            return None
+
+        def set_input_panel_title(
+            self,
+            title: str | None,
+            subtitle: str | None = None,
+        ) -> None:
+            return None
 
         async def start(self) -> None:
             return None
@@ -36,7 +46,7 @@ async def test_tui_app_sends_user_input_packet(
     )
 
     app = App(project_path=tmp_path)
-
+    app._push_prompt(PromptMeta(title="test"))
     text = "hello from tui"
     await app.on_input(text)
 

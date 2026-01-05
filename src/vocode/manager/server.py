@@ -122,12 +122,39 @@ class UIServer:
                 message=None,
             )
 
+        message = step.message
+
+        input_title: Optional[str] = None
+        input_subtitle: Optional[str] = None
+
+        needs_confirmation = False
+        if step.type == state.StepType.TOOL_REQUEST and message is not None:
+            for tool_req in message.tool_call_requests:
+                if tool_req.status == state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
+                    needs_confirmation = True
+                    break
+
+        input_required = False
+        if step.type == state.StepType.PROMPT:
+            input_required = True
+            input_title = "Input"
+        elif step.type == state.StepType.TOOL_REQUEST and needs_confirmation:
+            input_required = True
+            input_title = "Please confirm the tool call"
+            input_subtitle = (
+                "Empty line confirms, any text to reject with a message"
+            )
+
         packet = manager_proto.RunnerReqPacket(
             workflow_id=frame.workflow_name,
             workflow_name=execution.workflow_name,
             workflow_execution_id=str(execution.id),
             step=step,
+            input_required=input_required,
+            input_title=input_title,
+            input_subtitle=input_subtitle,
         )
+
         envelope = manager_proto.BasePacketEnvelope(
             msg_id=self._next_packet_id(),
             payload=packet,
@@ -137,10 +164,7 @@ class UIServer:
         if step.type == state.StepType.PROMPT:
             waiter = self._push_input_waiter()
             resp_packet = await waiter
-
-            resp_type = runner_proto.RunEventResponseType.APPROVE
-            if resp_packet.message is not None:
-                resp_type = runner_proto.RunEventResponseType.MESSAGE
+            resp_type = runner_proto.RunEventResponseType.MESSAGE
 
             return runner_proto.RunEventResp(
                 resp_type=resp_type,
@@ -148,19 +172,6 @@ class UIServer:
             )
 
         if step.type == state.StepType.TOOL_REQUEST:
-            message = step.message
-            if message is None:
-                return runner_proto.RunEventResp(
-                    resp_type=runner_proto.RunEventResponseType.APPROVE,
-                    message=None,
-                )
-
-            needs_confirmation = False
-            for tool_req in message.tool_call_requests:
-                if tool_req.status == state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
-                    needs_confirmation = True
-                    break
-
             if not needs_confirmation:
                 return runner_proto.RunEventResp(
                     resp_type=runner_proto.RunEventResponseType.APPROVE,

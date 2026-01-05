@@ -14,6 +14,11 @@ INPUT_COMPONENT_STYLE = tui_terminal.ComponentStyle(
     padding_pad=1,
     padding_style="on rgb(60,60,60)",
 )
+INPUT_PANEL_COMPONENT_STYLE = tui_terminal.ComponentStyle(
+    panel_box=rich_box.ROUNDED,
+    panel_style="on rgb(60,60,60)",
+    panel_title_align="left",
+)
 
 OUTPUT_MESSAGE_STYLE = tui_terminal.ComponentStyle(
     margin_bottom=1,

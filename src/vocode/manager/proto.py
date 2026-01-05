@@ -28,6 +28,9 @@ class RunnerReqPacket(BaseModel):
     workflow_name: str
     workflow_execution_id: str
     step: state.Step
+    input_required: bool = Field(default=False)
+    input_title: Optional[str] = Field(default=None)
+    input_subtitle: Optional[str] = Field(default=None)
 
 
 class UserInputPacket(BaseModel):
