@@ -156,3 +156,22 @@ def test_wrap_command_forces_newline_before_marker() -> None:
     )
     assert "printf '\\n%s:%s\\n'" in cmd_str
     assert marker in cmd_str
+
+
+@pytest.mark.asyncio
+async def test_last_empty_line_before_marker_is_suppressed() -> None:
+    marker = "VOCODE_TEST_MARK_SUPPRESS"
+    stdout_lines = ["out1\n", "\n", f"{marker}:0\n"]
+    handle = _DummyHandle(stdout_lines=stdout_lines)
+    processor = _DummyProcessor(handle=handle)
+    cmd = PersistentShellCommand(processor=processor, marker=marker, name="test")
+
+    rc = await cmd.wait()
+    assert rc == 0
+    assert processor.finished == [cmd]
+
+    collected: list[str] = []
+    async for line in cmd.iter_stdout():
+        collected.append(line)
+
+    assert collected == ["out1\n"]
