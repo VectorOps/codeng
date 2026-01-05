@@ -10,3 +10,9 @@ from .base import (  # noqa: F401
     get_tool,
     get_all_tools,
 )
+
+# Re-export ExecTool
+from .exec_tool import ExecTool  # noqa: F401
+
+# Re-export ApplyPatchTool
+from .apply_patch_tool import ApplyPatchTool  # noqa: F401
