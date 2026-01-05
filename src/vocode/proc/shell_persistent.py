@@ -309,6 +309,7 @@ class PersistentShellProcessor(ShellProcessor):
     async def _ensure_started(self) -> None:
         if self._handle is not None and self._handle.alive():
             return
+
         start_cmd = self._start_command()
         self._handle = await self._pm.spawn(
             command=start_cmd,
@@ -336,11 +337,9 @@ class PersistentShellProcessor(ShellProcessor):
         # Initialize rc to a fallback, run the inner, save rc, then print marker:rc
         # Emit a single marker line as "<marker>:<rc>"
         return (
-            "rc=127; "
-            f"{{ {inner}; rc=$?; }}; "
-            "echo "
-            + shlex.quote(marker)
-            + ':"$rc"\n'
+            "__rc=127; "
+            f"{{ {inner}; __rc=$?; }}; "
+            "printf '\\n%s:%s\\n' \"" + shlex.quote(marker) + '" "$__rc";\n'
         )
 
     def on_command_finished(self, cmd: PersistentShellCommand) -> None:
