@@ -103,10 +103,29 @@ class PersistentShellCommand(ShellCommandHandle):
             stdout_iter = handle.iter_stdout()
 
             async def _pump() -> None:
+                pending: Optional[str] = None
+
+                async def _flush_pending() -> None:
+                    nonlocal pending
+                    if pending is None:
+                        return
+                    if not self._stdout_consumed:
+                        self._stdout_buffer.append(pending)
+                    else:
+                        await self._stdout_queue.put(pending)
+                    pending = None
+
                 try:
                     async for line in stdout_iter:
                         text = line.rstrip("\r\n")
                         if text.startswith(self._marker):
+                            if pending is not None:
+                                pending_text = pending.rstrip("\r\n")
+                                if pending_text != "":
+                                    await _flush_pending()
+                                else:
+                                    pending = None
+
                             suffix = text[len(self._marker) :]
                             if suffix.startswith(":"):
                                 with contextlib.suppress(ValueError):
@@ -115,18 +134,20 @@ class PersistentShellCommand(ShellCommandHandle):
                                 self._returncode = 0
                             self._done.set()
                             self._processor.on_command_finished(self)
-                            # Stop stderr streaming when the command ends.
                             self._stop_stderr_streaming()
                             break
 
-                        # If nobody is consuming yet, keep lines in a buffer.
-                        if not self._stdout_consumed:
-                            self._stdout_buffer.append(line)
-                        else:
-                            await self._stdout_queue.put(line)
+                        if pending is not None:
+                            await _flush_pending()
+                        pending = line
                 finally:
                     with contextlib.suppress(Exception):
                         await stdout_iter.aclose()
+                    if pending is not None:
+                        if not self._stdout_consumed:
+                            self._stdout_buffer.append(pending)
+                        else:
+                            await self._stdout_queue.put(pending)
                     if not self._done.is_set():
                         # Shell exited without emitting the marker; treat as unknown non-zero.
                         self._returncode = (
