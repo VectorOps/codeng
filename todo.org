@@ -5,12 +5,12 @@
 ** [X] Add state to UIServer - first message sent to idle state should start the workflow
 ** [ ] Stream log messages/errors to client. Figure out general startup sequencing and error handling.
 ** [ ] Fix logging - have a special buffer and a way to see logs at will
-** [ ] Rethink tool step handling. Make it easier for UI to understand the tool execution state
-- Create a new tool step type instead of PROMPT
-- Add a status to tool req (pending_approval, running, complete), emit statuses to update tool req in UI (spinner, etc)
+** [X] Rethink tool step handling. Make it easier for UI to understand the tool execution state
 ** [X] Create Step renderer in TUI client
 ** [X] Add input request stack to TUI
-** [ ] Set input header depending on the top of the input stack
+** [X] Set input header depending on the top of the input stack
+** [ ] Fix APPROVE/DECLINE rendering
+** [ ] Fix knowlt summary documentation generation - it adds python docstring twice
 * [ ] Runner
 ** [X] Add is_complete to Step to differentiate between intermediate and final results
 ** [X] Add tool support by checking if complete step was received and it contains tool calls
