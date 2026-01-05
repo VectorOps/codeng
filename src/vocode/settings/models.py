@@ -129,15 +129,65 @@ class LoggingSettings(BaseModel):
     enabled_loggers: Dict[str, LogLevel] = Field(default_factory=dict)
 
 
+class ShellMode(str, Enum):
+    direct = "direct"
+    shell = "shell"
+
+
+class ShellSettings(BaseModel):
+    # How shell commands are executed:
+    # - "direct": each command runs in its own subprocess
+    # - "shell": commands run via a long-lived shell with wrapped markers
+    mode: ShellMode = ShellMode.shell
+    # POSIX-only in v1; reserved for future shells
+    type: Literal["bash"] = "bash"
+    # Program and args to start the long-lived shell process
+    program: str = "bash"
+    args: List[str] = Field(default_factory=lambda: ["--noprofile", "--norc"])
+    # Default per-command timeout (seconds)
+    default_timeout_s: int = 120
+
+
+class ProcessEnvSettings(BaseModel):
+    inherit_parent: bool = True
+    allowlist: Optional[List[str]] = None
+    denylist: Optional[List[str]] = None
+    defaults: Dict[str, str] = Field(default_factory=dict)
+
+
+class ProcessSettings(BaseModel):
+    # Backend key in the process backend registry. The backend is responsible
+    # for spawning subprocesses via the EnvPolicy configured below.
+    backend: Literal["local"] = "local"
+    env: ProcessEnvSettings = Field(default_factory=ProcessEnvSettings)
+    # Settings for long-lived interactive shells spawned through the process
+    # backend.
+    shell: ShellSettings = Field(default_factory=ShellSettings)
+
+
+class ExecToolSettings(BaseModel):
+    # Maximum characters of combined stdout/stderr returned by the exec tool.
+    # This guards against excessive subprocess output overwhelming callers.
+    max_output_chars: int = EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT
+    # Optional default timeout (seconds) for exec tool invocations when the
+    # tool spec does not provide a per-call override. None => use tool-level
+    # constant default.
+    timeout_s: Optional[float] = None
+
+
+class ToolSettings(BaseModel):
+    exec_tool: Optional[ExecToolSettings] = None
+
+
 class Settings(BaseModel):
     workflows: Dict[str, WorkflowConfig] = Field(default_factory=dict)
     # Optional name of the workflow to auto-start in interactive UIs
     default_workflow: Optional[str] = Field(default=None)
     tools: List[ToolSpec] = Field(default_factory=list)
+    tool_settings: Optional[ToolSettings] = Field(default=None)
     know: Optional[KnowProjectSettings] = Field(default=None)
-    # Optional logging configuration (per-logger overrides).
+    process: Optional[ProcessSettings] = Field(default=None)
     logging: Optional[LoggingSettings] = Field(default=None)
-    # Optional Model Context Protocol (MCP) configuration
 
     @model_validator(mode="after")
     def _sync_workflow_names(self) -> "Settings":

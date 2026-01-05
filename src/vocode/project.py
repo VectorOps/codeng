@@ -14,6 +14,8 @@ from .settings.loader import load_settings
 from .templates import write_default_config
 from .state import LLMUsageStats
 from .know import KnowProject, convert_know_tool
+from .proc.manager import ProcessManager
+from .proc.shell import ShellManager
 
 
 class ProjectState:
@@ -66,6 +68,10 @@ class Project:
         self.project_state: ProjectState = ProjectState()
         # Ephemeral (per-process) global LLM usage totals
         self.llm_usage: LLMUsageStats = LLMUsageStats()
+        # Process manager
+        self.processes: Optional[ProcessManager] = None
+        # Shell manager (built on top of ProcessManager)
+        self.shells: Optional[ShellManager] = None
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
         self.current_workflow: Optional[str] = None
@@ -148,6 +154,43 @@ class Project:
         if self.settings and self.settings.know:
             await self.know.start(self.settings.know)
 
+        # Initialize process manager (idempotent)
+        if self.processes is None:
+            backend_name = (
+                self.settings.process.backend
+                if (self.settings and self.settings.process)
+                else "local"
+            )
+            env = (
+                self.settings.process.env
+                if (self.settings and self.settings.process)
+                else None
+            )
+            env_policy = EnvPolicy(
+                inherit_parent=(env.inherit_parent if env else True),
+                allowlist=(env.allowlist if env else None),
+                denylist=(env.denylist if env else None),
+                defaults=(env.defaults if env else {}),
+            )
+            self.processes = ProcessManager(
+                backend_name=backend_name,
+                default_cwd=self.base_path,
+                env_policy=env_policy,
+            )
+
+        # Initialize shell manager (idempotent, depends on process manager)
+        if self.processes is not None and self.shells is None:
+            shell_settings = (
+                self.settings.process.shell
+                if (self.settings and self.settings.process)
+                else None
+            )
+            self.shells = ShellManager(
+                process_manager=self.processes,
+                settings=shell_settings,
+                default_cwd=self.base_path,
+            )
+
         # Register tools
         self.refresh_tools_from_registry()
 
@@ -156,6 +199,15 @@ class Project:
 
     async def shutdown(self) -> None:
         """Gracefully shut down project components."""
+        # Stop shell manager before underlying processes
+        if self.shells is not None:
+            await self.shells.stop()
+            self.shells = None
+        # Stop processes first to release IO and resources
+        if self.processes is not None:
+            await self.processes.shutdown()
+            self.processes = None
+        # Stop know
         await self.know.shutdown()
 
 
