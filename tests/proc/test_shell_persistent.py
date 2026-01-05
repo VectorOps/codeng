@@ -3,7 +3,7 @@ from typing import AsyncIterator, Optional
 
 import pytest
 
-from vocode.proc.shell_persistent import PersistentShellCommand
+from vocode.proc.shell_persistent import PersistentShellCommand, PersistentShellProcessor
 
 
 class _DummyHandle:
@@ -134,3 +134,25 @@ async def test_stderr_streams_and_closes_when_marker_seen() -> None:
     assert isinstance(stderr_lines, list)
     if stderr_lines:
         assert "err-before-hang\n" in stderr_lines
+
+
+class _DummySettings:
+    def __init__(self) -> None:
+        self.program = "sh"
+        self.args: list[str] = []
+
+
+def _make_processor_for_wrap() -> PersistentShellProcessor:
+    proc = object.__new__(PersistentShellProcessor)
+    proc._settings = _DummySettings()
+    return proc
+
+
+def test_wrap_command_forces_newline_before_marker() -> None:
+    proc = _make_processor_for_wrap()
+    marker = "VOCODE_TEST_MARK_WRAP"
+    cmd_str = proc._wrap_command_with_marker(
+        "printf 'a'; sleep 0.1; printf 'b'", marker
+    )
+    assert "printf '\\n%s:%s\\n'" in cmd_str
+    assert marker in cmd_str
