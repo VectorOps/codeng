@@ -8,6 +8,7 @@ import litellm
 from vocode import state, models
 from vocode.logger import logger
 from . import helpers as llm_helpers
+from .preprocessors import base as pre_base
 from ... import base as runner_base
 
 
@@ -20,7 +21,6 @@ INCLUDED_STEP_TYPES: Final = (
 
 @runner_base.ExecutorFactory.register("llm")
 class LLMExecutor(runner_base.BaseExecutor):
-
     def build_messages(self, inp: runner_base.ExecutorInput) -> List[Dict]:
         """
         Generate an OpenAI-compatible conversation from execution state.
@@ -28,8 +28,10 @@ class LLMExecutor(runner_base.BaseExecutor):
         cfg = self.config
         execution = inp.execution
 
-        messages: List[Dict[str, Any]] = []
+        collected_messages: List[state.Message] = []
+        message_step_types: Dict[str, Optional[state.StepType]] = {}
 
+        # Build synthetic system message (if any) as a Message, so preprocessors can modify it.
         system_parts: List[str] = []
         if cfg.system:
             system_parts.append(cfg.system)
@@ -50,7 +52,12 @@ class LLMExecutor(runner_base.BaseExecutor):
         if system_parts:
             system_prompt = "\n\n".join(p for p in system_parts if p).strip()
             if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
+                system_message = state.Message(
+                    role=models.Role.SYSTEM,
+                    text=system_prompt,
+                )
+                collected_messages.append(system_message)
+                message_step_types[str(system_message.id)] = None
 
         def _append_tool_response(resp: state.ToolCallResp) -> None:
             tool_msg: Dict[str, Any] = {
@@ -62,12 +69,10 @@ class LLMExecutor(runner_base.BaseExecutor):
             }
             if resp.result is not None:
                 tool_msg["content"] = json.dumps(resp.result)
-            messages.append(tool_msg)
+            serialized_messages.append(tool_msg)
 
-        def _append_message(
-            msg: state.Message,
-            step_type: Optional[state.StepType],
-        ) -> None:
+        def _append_message(msg: state.Message) -> None:
+            step_type = message_step_types.get(str(msg.id))
             if step_type == state.StepType.TOOL_RESULT:
                 if msg.tool_call_responses:
                     for resp in msg.tool_call_responses:
@@ -96,7 +101,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 if tool_calls:
                     base["tool_calls"] = tool_calls
 
-            messages.append(base)
+            serialized_messages.append(base)
 
             if msg.tool_call_responses:
                 for resp in msg.tool_call_responses:
@@ -105,9 +110,23 @@ class LLMExecutor(runner_base.BaseExecutor):
         for msg, step_type in runner_base.iter_execution_messages(execution):
             if step_type is not None and step_type not in INCLUDED_STEP_TYPES:
                 continue
-            _append_message(msg, step_type)
+            collected_messages.append(msg)
+            message_step_types[str(msg.id)] = step_type
 
-        return messages
+        if cfg.preprocessors:
+            processed_messages = pre_base.apply_preprocessors(
+                cfg.preprocessors,
+                self.project,
+                collected_messages,
+            )
+        else:
+            processed_messages = collected_messages
+
+        serialized_messages: List[Dict[str, Any]] = []
+        for msg in processed_messages:
+            _append_message(msg)
+
+        return serialized_messages
 
     def _build_step_from_message(
         self,

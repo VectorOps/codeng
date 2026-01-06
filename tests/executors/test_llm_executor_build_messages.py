@@ -79,3 +79,42 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
     assert second["name"] == "test-tool"
     assert second["content"] == '{"ok": true}'
     assert "arguments" not in second
+
+
+def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+        system="base system",
+        preprocessors=[
+            models.PreprocessorSpec(
+                name="string_inject",
+                options={"text": "prefix", "separator": "\n--\n"},
+                mode=models.Role.SYSTEM,
+                prepend=True,
+            )
+        ],
+    )
+
+    execution = state.NodeExecution(
+        node="llm-node",
+        input_messages=[],
+        steps=[],
+        status=state.RunStatus.RUNNING,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    run.node_executions[execution.id] = execution
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    inp = ExecutorInput(execution=execution, run=run)
+
+    conv = executor.build_messages(inp)
+
+    assert len(conv) == 1
+    first = conv[0]
+    assert first["role"] == "system"
+    assert first["content"].startswith("prefix")
+    assert "base system" in first["content"]
+    assert "\n--\n" in first["content"]
