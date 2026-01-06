@@ -7,11 +7,12 @@ import pytest
 
 from vocode import models, state
 from vocode.manager.base import BaseManager, RunnerFrame
-from vocode.runner.base import BaseExecutor, ExecutorInput
+from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.runner import Runner
 from vocode.runner.proto import RunEventReqKind, RunEventResp, RunEventResponseType
 
 
+@ExecutorFactory.register("manager-test")
 class ManagerTestExecutor(BaseExecutor):
     type = "manager-test"
 
@@ -31,9 +32,6 @@ class ManagerTestExecutor(BaseExecutor):
             is_complete=True,
         )
         yield step
-
-
-BaseExecutor.register("manager-test", ManagerTestExecutor)
 
 
 class DummyWorkflow:
@@ -139,19 +137,13 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
     assert set(node_execs_by_name.keys()) == {"node1"}
     node_exec = node_execs_by_name["node1"]
 
-    output_steps = [
-        s for s in events if s.type == state.StepType.OUTPUT_MESSAGE
-    ]
+    output_steps = [s for s in events if s.type == state.StepType.OUTPUT_MESSAGE]
     prompt_steps = [s for s in events if s.type == state.StepType.PROMPT]
     assert output_steps
     assert prompt_steps
 
-    prompt_steps_exec = [
-        s for s in node_exec.steps if s.type == state.StepType.PROMPT
-    ]
-    approval_steps = [
-        s for s in node_exec.steps if s.type == state.StepType.APPROVAL
-    ]
+    prompt_steps_exec = [s for s in node_exec.steps if s.type == state.StepType.PROMPT]
+    approval_steps = [s for s in node_exec.steps if s.type == state.StepType.APPROVAL]
     assert prompt_steps_exec
     assert approval_steps
 

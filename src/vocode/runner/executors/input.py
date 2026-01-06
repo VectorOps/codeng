@@ -3,7 +3,7 @@ from typing import AsyncIterator, Optional
 from pydantic import Field
 
 from vocode import models, state
-from vocode.runner.base import BaseExecutor, ExecutorInput, iter_execution_messages
+from vocode.runner import base as runner_base
 
 
 class InputNode(models.Node):
@@ -19,18 +19,18 @@ class InputNode(models.Node):
     )
 
 
-class InputExecutor(BaseExecutor):
-    type = "input"
+@runner_base.ExecutorFactory.register("input")
+class InputExecutor(runner_base.BaseExecutor):
 
     def __init__(self, config: InputNode, project: "Project"):
         super().__init__(config=config, project=project)
         self.config = config
 
-    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+    async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
 
         input_message: Optional[state.Message] = None
-        for msg, step_type in iter_execution_messages(execution):
+        for msg, step_type in runner_base.iter_execution_messages(execution):
             if step_type == state.StepType.INPUT_MESSAGE:
                 input_message = msg
 

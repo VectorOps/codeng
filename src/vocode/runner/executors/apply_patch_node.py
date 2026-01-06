@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 
 from vocode import models, state
 from vocode.patch import apply_patch, get_supported_formats
-from vocode.runner.base import BaseExecutor, ExecutorInput
+from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 if TYPE_CHECKING:
     from vocode.project import Project
@@ -30,8 +30,8 @@ class ApplyPatchNode(models.Node):
         return self
 
 
+@ExecutorFactory.register("apply_patch")
 class ApplyPatchExecutor(BaseExecutor):
-    type = "apply_patch"
 
     def __init__(self, config: ApplyPatchNode, project: "Project"):
         super().__init__(config=config, project=project)

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from pydantic import model_validator
 
 from vocode import models, state, settings
-from vocode.runner.base import BaseExecutor, ExecutorInput
+from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 if TYPE_CHECKING:
     from vocode.project import Project
@@ -51,9 +51,8 @@ def _compute_max_output_chars(project: "Project") -> int:
     return max_chars
 
 
+@ExecutorFactory.register("exec")
 class ExecExecutor(BaseExecutor):
-    type = "exec"
-
     def __init__(self, config: ExecNode, project: "Project"):
         super().__init__(config=config, project=project)
         self.config = config

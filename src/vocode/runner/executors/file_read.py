@@ -7,7 +7,7 @@ from typing import AsyncIterator, Optional, TYPE_CHECKING
 from pydantic import Field, field_validator
 
 from vocode import models, state
-from vocode.runner.base import BaseExecutor, ExecutorInput
+from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 if TYPE_CHECKING:
     from vocode.project import Project
@@ -34,9 +34,8 @@ class FileReadNode(models.Node):
         return list(v)  # type: ignore[arg-type]
 
 
+@ExecutorFactory.register("file_read")
 class FileReadExecutor(BaseExecutor):
-    type = "file_read"
-
     def __init__(self, config: FileReadNode, project: "Project"):
         super().__init__(config=config, project=project)
         self.config = config
