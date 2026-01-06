@@ -16,6 +16,7 @@ from .state import LLMUsageStats
 from .know import KnowProject, convert_know_tool
 from .proc.manager import ProcessManager
 from .proc.shell import ShellManager
+from .skills import Skill, discover_skills
 
 
 class ProjectState:
@@ -64,19 +65,15 @@ class Project:
         self.settings: Optional[Settings] = settings
         self.tools: Dict[str, "BaseTool"] = {}
         self.know: KnowProject = KnowProject()
-        # Project-level shared state for executors
         self.project_state: ProjectState = ProjectState()
-        # Ephemeral (per-process) global LLM usage totals
         self.llm_usage: LLMUsageStats = LLMUsageStats()
-        # Process manager
         self.processes: Optional[ProcessManager] = None
-        # Shell manager (built on top of ProcessManager)
         self.shells: Optional[ShellManager] = None
+        self.skills: List[Skill] = []
+        self._queue = Queue()
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
         self.current_workflow: Optional[str] = None
-        # Message queue
-        self._queue = Queue()
 
     @property
     def config_path(self) -> Path:
@@ -193,6 +190,9 @@ class Project:
 
         # Register tools
         self.refresh_tools_from_registry()
+
+        # Discover skills
+        self.skills = discover_skills(self.base_path)
 
         # Perform an initial refresh of all 'know' repositories on start
         await self.know.refresh_all()
