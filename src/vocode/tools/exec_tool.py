@@ -5,7 +5,7 @@ import json
 import platform
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from typing import Callable
-from vocode.tools.base import BaseTool, ToolTextResponse
+from vocode.tools.base import BaseTool, ToolTextResponse, ToolFactory
 from vocode.settings import EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT, ToolSpec
 from vocode.proc.shell import ShellManager
 
@@ -50,6 +50,7 @@ def _get_max_output_chars(project: "Project", spec: ToolSpec) -> int:
     return EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT
 
 
+@ToolFactory.register("exec")
 class ExecTool(BaseTool):
     """
     Execute a command via the project's ShellManager.
@@ -163,10 +164,4 @@ class ExecTool(BaseTool):
         }
 
 
-# Register tool on import
-try:
-    from .base import register_tool
-
-    register_tool(ExecTool.name, ExecTool)
-except Exception:
-    pass
+# registered via ToolFactory

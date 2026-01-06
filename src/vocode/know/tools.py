@@ -5,7 +5,7 @@ from typing import Any, Optional, TYPE_CHECKING, Union
 from pydantic import BaseModel
 
 from knowlt.tools.base import BaseTool as KnowBaseTool, ToolRegistry as KnowToolRegistry
-from ..tools import BaseTool, register_tool, ToolTextResponse
+from ..tools import BaseTool, ToolTextResponse
 from ..settings import ToolSpec
 
 if TYPE_CHECKING:

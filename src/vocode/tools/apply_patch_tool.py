@@ -1,7 +1,6 @@
 import asyncio
 from typing import Any, Dict, Optional, TYPE_CHECKING
-
-from vocode.tools.base import BaseTool, ToolTextResponse
+from vocode.tools.base import BaseTool, ToolTextResponse, ToolFactory
 from vocode.settings import ToolSpec
 from vocode.patch import apply_patch, get_supported_formats
 
@@ -9,6 +8,7 @@ if TYPE_CHECKING:
     from vocode.project import Project
 
 
+@ToolFactory.register("apply_patch")
 class ApplyPatchTool(BaseTool):
     """
     Apply a repository patch to the project's filesystem under base_path.
@@ -99,12 +99,3 @@ class ApplyPatchTool(BaseTool):
                 "additionalProperties": False,
             },
         }
-
-
-# Register tool on import
-try:
-    from .base import register_tool
-
-    register_tool(ApplyPatchTool.name, ApplyPatchTool)
-except Exception:
-    pass
