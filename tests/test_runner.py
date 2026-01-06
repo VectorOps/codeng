@@ -4,7 +4,7 @@ import pytest
 
 from vocode import state, models
 from tests.stub_project import StubProject
-from vocode.runner.base import BaseExecutor, ExecutorInput
+from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
 from vocode.runner.runner import Runner, RunEvent
 from vocode.runner.proto import RunEventResp, RunEventResponseType
@@ -34,9 +34,8 @@ async def drive_runner(
     return events
 
 
+@ExecutorFactory.register("fake")
 class FakeExecutor(BaseExecutor):
-    type = "fake"
-
     def __init__(self, config: models.Node, project):
         super().__init__(config, project)
         self._call_counts: Dict[str, int] = {}
@@ -101,12 +100,8 @@ class FakeExecutor(BaseExecutor):
             yield step
 
 
-BaseExecutor.register("fake", FakeExecutor)
-
-
+@ExecutorFactory.register("loop")
 class LoopExecutor(BaseExecutor):
-    type = "loop"
-
     def __init__(self, config: models.Node, project):
         super().__init__(config, project)
         self._run_counts: Dict[str, int] = {}
@@ -140,12 +135,8 @@ class LoopExecutor(BaseExecutor):
         yield final_step
 
 
-BaseExecutor.register("loop", LoopExecutor)
-
-
+@ExecutorFactory.register("tool-prompt")
 class ToolPromptExecutor(BaseExecutor):
-    type = "tool-prompt"
-
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
         has_tool_result = False
@@ -181,18 +172,14 @@ class ToolPromptExecutor(BaseExecutor):
         yield step
 
 
-BaseExecutor.register("tool-prompt", ToolPromptExecutor)
-
-
 class DummyWorkflow:
     def __init__(self, name: str, graph: models.Graph):
         self.name = name
         self.graph = graph
 
 
+@ExecutorFactory.register("no-complete")
 class NoCompleteExecutor(BaseExecutor):
-    type = "no-complete"
-
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
         msg = state.Message(
@@ -208,9 +195,7 @@ class NoCompleteExecutor(BaseExecutor):
         yield step
 
 
-BaseExecutor.register("no-complete", NoCompleteExecutor)
-
-
+@ExecutorFactory.register("multi-complete")
 class MultiCompleteExecutor(BaseExecutor):
     type = "multi-complete"
 
@@ -239,9 +224,6 @@ class MultiCompleteExecutor(BaseExecutor):
             is_complete=True,
         )
         yield step2
-
-
-BaseExecutor.register("multi-complete", MultiCompleteExecutor)
 
 
 @pytest.mark.asyncio
@@ -748,7 +730,7 @@ class ResumeSkipExecutor(BaseExecutor):
         raise AssertionError("ResumeSkipExecutor.run should not be called")
 
 
-BaseExecutor.register("resume-skip", ResumeSkipExecutor)
+ExecutorFactory.register("resume-skip", ResumeSkipExecutor)
 
 
 class ResumeRunExecutor(BaseExecutor):
@@ -769,7 +751,7 @@ class ResumeRunExecutor(BaseExecutor):
         yield step
 
 
-BaseExecutor.register("resume-run", ResumeRunExecutor)
+ExecutorFactory.register("resume-run", ResumeRunExecutor)
 
 
 @pytest.mark.asyncio
@@ -952,7 +934,9 @@ async def test_input_node_prompts_and_returns_user_message_as_output():
     input_exec = node_execs_by_name["input-node"]
 
     prompt_steps = [s for s in input_exec.steps if s.type == state.StepType.PROMPT]
-    input_steps = [s for s in input_exec.steps if s.type == state.StepType.INPUT_MESSAGE]
+    input_steps = [
+        s for s in input_exec.steps if s.type == state.StepType.INPUT_MESSAGE
+    ]
     output_steps = [
         s
         for s in input_exec.steps

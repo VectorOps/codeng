@@ -6,7 +6,7 @@ from vocode.logger import logger
 from vocode.project import Project
 from vocode.graph import RuntimeGraph
 from vocode.lib import message_helpers, validators
-from .base import BaseExecutor, ExecutorInput
+from .base import BaseExecutor, ExecutorFactory, ExecutorInput
 from .proto import RunEventReq, RunEventResp, RunEventResponseType
 from . import proto as runner_proto
 
@@ -31,7 +31,7 @@ class Runner:
         self._stop_requested = False
 
         self._executors: Dict[str, BaseExecutor] = {
-            n.name: BaseExecutor.create_for_node(n, project=self.project)
+            n.name: ExecutorFactory.create_for_node(n, project=self.project)
             for n in self.workflow.graph.nodes
         }
 

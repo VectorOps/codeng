@@ -1,7 +1,6 @@
 from typing import (
     Optional,
     ClassVar,
-    Dict,
     List,
     Any,
     Type,
@@ -17,35 +16,44 @@ class ExecutorInput(BaseModel):
     run: state.WorkflowExecution
 
 
-class BaseExecutor:
-    # Subclasses must set 'type' to the Node.type they handle
-    type: ClassVar[Optional[str]] = None
-    _registry: ClassVar[Dict[str, Type["BaseExecutor"]]] = {}
+class ExecutorFactory:
+    _registry: ClassVar[dict[str, Type["BaseExecutor"]]] = {}
 
-    def __init_subclass__(cls, **kwargs):
-        """Register Executor subclasses by their 'type' into the registry."""
-        super().__init_subclass__(**kwargs)
-        t = getattr(cls, "type", None)
-        if isinstance(t, str) and t:
-            BaseExecutor._registry[t] = cls
+    @classmethod
+    def register(
+        cls,
+        type_name: str,
+        exec_cls: Type["BaseExecutor"] | None = None,
+    ):
+        if exec_cls is None:
+
+            def decorator(inner: Type["BaseExecutor"]) -> Type["BaseExecutor"]:
+                cls._registry[type_name] = inner
+                return inner
+
+            return decorator
+        cls._registry[type_name] = exec_cls
+        return exec_cls
+
+    @classmethod
+    def create_for_node(
+        cls,
+        node: models.Node,
+        project: "Project",
+    ) -> "BaseExecutor":
+        sub = cls._registry.get(node.type)
+        if sub is None:
+            raise ValueError(f"No executor registered for node type '{node.type}'")
+        return sub(config=node, project=project)
+
+
+class BaseExecutor:
+    type: ClassVar[Optional[str]] = None
 
     def __init__(self, config: models.Node, project: "Project"):
         """Initialize an executor instance with its corresponding Node config and Project."""
         self.config = config
         self.project = project
-
-    @classmethod
-    def register(cls, type_name: str, exec_cls: Type["BaseExecutor"]) -> None:
-        """Manually register an Executor class under a node type name."""
-        cls._registry[type_name] = exec_cls
-
-    @classmethod
-    def create_for_node(cls, node: models.Node, project: "Project") -> "BaseExecutor":
-        """Create an Executor instance for the given Node using the registry."""
-        sub = cls._registry.get(node.type)
-        if sub is None:
-            raise ValueError(f"No executor registered for node type '{node.type}'")
-        return sub(config=node, project=project)
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         """

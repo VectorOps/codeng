@@ -5,21 +5,19 @@ from typing import AsyncIterator, Optional
 from pydantic import Field
 
 from vocode import models, state
-from vocode.runner.base import BaseExecutor, ExecutorInput
+from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 
 class ResultNode(models.Node):
     type: str = "result"
-
     confirmation: models.Confirmation = Field(
         default=models.Confirmation.AUTO,
         description="Result node auto confirmation.",
     )
 
 
+@ExecutorFactory.register("result")
 class ResultExecutor(BaseExecutor):
-    type = "result"
-
     def __init__(self, config: ResultNode, project: "Project"):
         super().__init__(config=config, project=project)
         self.config = config

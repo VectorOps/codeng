@@ -8,7 +8,7 @@ import litellm
 from vocode import state, models
 from vocode.logger import logger
 from . import helpers as llm_helpers
-from ...base import BaseExecutor, ExecutorInput, iter_execution_messages
+from ... import base as runner_base
 
 
 INCLUDED_STEP_TYPES: Final = (
@@ -18,10 +18,10 @@ INCLUDED_STEP_TYPES: Final = (
 )
 
 
-class LLMExecutor(BaseExecutor):
-    type = "llm"
+@runner_base.ExecutorFactory.register("llm")
+class LLMExecutor(runner_base.BaseExecutor):
 
-    def build_messages(self, inp: ExecutorInput) -> List[Dict]:
+    def build_messages(self, inp: runner_base.ExecutorInput) -> List[Dict]:
         """
         Generate an OpenAI-compatible conversation from execution state.
         """
@@ -102,7 +102,7 @@ class LLMExecutor(BaseExecutor):
                 for resp in msg.tool_call_responses:
                     _append_tool_response(resp)
 
-        for msg, step_type in iter_execution_messages(execution):
+        for msg, step_type in runner_base.iter_execution_messages(execution):
             if step_type is not None and step_type not in INCLUDED_STEP_TYPES:
                 continue
             _append_message(msg, step_type)
@@ -168,7 +168,7 @@ class LLMExecutor(BaseExecutor):
 
         return tools or None
 
-    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+    async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
         conv = self.build_messages(inp)
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)

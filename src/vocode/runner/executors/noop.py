@@ -6,7 +6,7 @@ from typing import AsyncIterator, Optional
 from pydantic import Field
 
 from vocode import models, state
-from vocode.runner.base import BaseExecutor, ExecutorInput
+from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 
 class NoopNode(models.Node):
@@ -27,11 +27,9 @@ class NoopNode(models.Node):
         ge=0,
         description="If set, sleep for this many seconds before producing the final response.",
     )
-
-
+ 
+@ExecutorFactory.register("noop")
 class NoopExecutor(BaseExecutor):
-    type = "noop"
-
     def __init__(self, config: NoopNode, project: "Project"):
         super().__init__(config=config, project=project)
         self.config = config

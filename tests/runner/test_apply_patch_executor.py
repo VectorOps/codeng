@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from vocode import models, state
-from vocode.runner.base import ExecutorInput
+from vocode.runner.base import ExecutorFactory, ExecutorInput
 from vocode.runner.executors.apply_patch_node import (
     ApplyPatchExecutor,
     ApplyPatchNode,
@@ -53,8 +53,8 @@ async def test_apply_patch_executor_success(tmp_path: Path) -> None:
     )
     run = state.WorkflowExecution(workflow_name="wf")
     run.node_executions[execution.id] = execution
-
-    executor = ApplyPatchExecutor(config=node, project=project)
+    executor = ExecutorFactory.create_for_node(node, project=project)
+    assert isinstance(executor, ApplyPatchExecutor)
     inp = ExecutorInput(execution=execution, run=run)
 
     steps = [step async for step in executor.run(inp)]
@@ -96,8 +96,8 @@ async def test_apply_patch_executor_unsupported_format(tmp_path: Path) -> None:
     )
     run = state.WorkflowExecution(workflow_name="wf")
     run.node_executions[execution.id] = execution
-
-    executor = ApplyPatchExecutor(config=node, project=project)
+    executor = ExecutorFactory.create_for_node(node, project=project)
+    assert isinstance(executor, ApplyPatchExecutor)
     inp = ExecutorInput(execution=execution, run=run)
 
     steps = [step async for step in executor.run(inp)]
