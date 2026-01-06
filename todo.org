@@ -22,11 +22,19 @@
 * [ ] Migrate nodes
 * [ ] UI
 ** [X] Create an in-memory bidirectional communication channel
+** [ ] History support
+- on_history_up, on_history_down events
+- history in UIState
+- on_submit in UIState forwarded to app.py
+** [ ] Command handler
+- extend server to support commands
+** [ ] Auto-complete support
+
+** [ ] Add toolbar component under input
 ** [ ] TUI library
 *** [X] Refactor apply_style
 *** [X] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences
 *** [X] Remove padding from SelectList
-*** [ ] Add toolbar
 *** [ ] Add animation support, potentially via Rich Live
 *** [ ] Add optimization to not re-render unchanged lines after top-level component if height did not change. Figure out generic algorithm.
 *** [ ] Fix up TUI tests - need to run Rich in non-terminal mode
