@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from vocode.tools import get_tool
+from vocode.tools import ToolFactory
 from vocode.settings import ToolSpec
 from tests.stub_project import StubProject
 
@@ -36,7 +36,7 @@ async def test_apply_patch_tool_success(tmp_path: Path):
 *** End Patch"""
 
     project = PatchTestProject(tmp_path)
-    ToolClass = get_tool("apply_patch")
+    ToolClass = ToolFactory.get("apply_patch")
     assert ToolClass is not None, "apply_patch tool should be registered"
 
     tool = ToolClass(project)  # type: ignore[call-arg]
@@ -64,7 +64,7 @@ async def test_apply_patch_tool_success(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_apply_patch_tool_unsupported_format(tmp_path: Path):
     project = PatchTestProject(tmp_path)
-    ToolClass = get_tool("apply_patch")
+    ToolClass = ToolFactory.get("apply_patch")
     assert ToolClass is not None
 
     tool = ToolClass(project)  # type: ignore[call-arg]

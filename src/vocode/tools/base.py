@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Type, Dict, TYPE_CHECKING, Optional, Annotated, Union
+from typing import Any, Type, Dict, TYPE_CHECKING, Optional, Annotated, Union, ClassVar
 from enum import Enum
 from pydantic import BaseModel, Field
 from vocode.state import Message
@@ -38,26 +38,52 @@ ToolResponse = Annotated[
 _registry: Dict[str, Type["BaseTool"]] = {}
 
 
+class ToolFactory:
+    _registry: ClassVar[Dict[str, Type["BaseTool"]]] = _registry
+
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        tool_cls: Type["BaseTool"] | None = None,
+    ):
+        def _do_register(inner: Type["BaseTool"]) -> Type["BaseTool"]:
+            if name in cls._registry:
+                raise ValueError(f"Tool with name '{name}' already registered.")
+            cls._registry[name] = inner
+            return inner
+
+        if tool_cls is None:
+            return _do_register
+        return _do_register(tool_cls)
+
+    @classmethod
+    def unregister(cls, name: str) -> bool:
+        return cls._registry.pop(name, None) is not None
+
+    @classmethod
+    def get(cls, name: str) -> Optional[Type["BaseTool"]]:
+        return cls._registry.get(name)
+
+    @classmethod
+    def all(cls) -> Dict[str, Type["BaseTool"]]:
+        return dict(cls._registry)
+
+
 def register_tool(name: str, tool: Type["BaseTool"]) -> None:
-    """Registers a tool instance."""
-    if name in _registry:
-        raise ValueError(f"Tool with name '{name}' already registered.")
-    _registry[name] = tool
+    ToolFactory.register(name, tool)
 
 
 def unregister_tool(name: str) -> bool:
-    """Unregister a tool instance by name. Returns True if removed, False if not present."""
-    return _registry.pop(name, None) is not None
+    return ToolFactory.unregister(name)
 
 
 def get_tool(name: str) -> Optional[Type["BaseTool"]]:
-    """Gets a tool instance by name."""
-    return _registry.get(name)
+    return ToolFactory.get(name)
 
 
 def get_all_tools() -> Dict[str, Type["BaseTool"]]:
-    """Returns a copy of the tool registry."""
-    return dict(_registry)
+    return ToolFactory.all()
 
 
 class BaseTool(ABC):
