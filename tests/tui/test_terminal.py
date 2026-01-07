@@ -10,6 +10,7 @@ from rich import segment as rich_segment
 from rich import style as rich_style
 
 from vocode.tui import lib as tui_terminal
+from vocode.tui import uistate as tui_uistate
 from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.input import base as input_base
@@ -368,6 +369,42 @@ def test_input_component_kill_and_case_keybindings() -> None:
     alt_c = input_base.KeyEvent(action="down", key="c", alt=True, text="c")
     component.on_key_event(alt_c)
     assert component.text == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_tui_state_input_history_navigation() -> None:
+    async def on_input(value: str) -> None:
+        return
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return
+
+    handler = DummyInputHandler()
+    state = tui_uistate.TUIState(on_input=on_input, input_handler=handler)
+    component = state._input_component
+
+    state._handle_submit("first")
+    state._handle_submit("second")
+
+    assert component.text == ""
+
+    key_up = input_base.KeyEvent(action="down", key="up")
+    component.on_key_event(key_up)
+    assert component.text == "second"
+
+    component.on_key_event(key_up)
+    assert component.text == "first"
+
+    component.on_key_event(key_up)
+    assert component.text == "first"
+
+    key_down = input_base.KeyEvent(action="down", key="down")
+    component.on_key_event(key_down)
+    assert component.text == "second"
+
+    component.on_key_event(key_down)
+    assert component.text == ""
 
 
 @pytest.mark.asyncio

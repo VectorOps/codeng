@@ -203,3 +203,49 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
     output = buffer.getvalue()
     assert "interim" in output
     assert "final" not in output
+
+
+def test_tui_state_history_up_places_cursor_on_last_row() -> None:
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+    )
+    ui_state.history.add("first line\nsecond line")
+    input_component = ui_state.terminal.components[-1]
+    event = input_base.KeyEvent(action="down", key="up")
+    input_component.on_key_event(event)
+    assert input_component.cursor_row == len(input_component.lines) - 1
+
+
+def test_tui_state_history_down_places_cursor_on_first_row() -> None:
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+    )
+    ui_state.history.add("one\nTWO")
+    ui_state.history.add("alpha\nbeta")
+    input_component = ui_state.terminal.components[-1]
+    event_up = input_base.KeyEvent(action="down", key="up")
+    input_component.on_key_event(event_up)
+    input_component.on_key_event(event_up)
+    input_component.on_key_event(event_up)
+    assert input_component.cursor_row == len(input_component.lines) - 1
+    event_down = input_base.KeyEvent(action="down", key="down")
+    input_component.on_key_event(event_down)
+    assert input_component.cursor_row == 0
