@@ -10,6 +10,7 @@ from vocode import models as vocode_models
 from vocode.logger import logger
 from vocode.tui import lib as tui_terminal
 from vocode.tui import styles as tui_styles
+from vocode.tui import history as tui_history
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
@@ -43,6 +44,9 @@ class TUIState:
         )
 
         self._input_component = input_component
+        self._history_manager = tui_history.HistoryManager()
+        self._input_keymap = self._create_input_keymap()
+        self._input_component.set_key_event_handler(self._handle_input_key_event)
         self._step_components: dict[str, tui_markdown_component.MarkdownComponent] = {}
         self._step_handlers: dict[
             vocode_state.StepType, typing.Callable[[vocode_state.Step], None]
@@ -62,6 +66,64 @@ class TUIState:
     @property
     def terminal(self) -> tui_terminal.Terminal:
         return self._terminal
+
+    @property
+    def history(self) -> tui_history.HistoryManager:
+        return self._history_manager
+
+    def _create_input_keymap(
+        self,
+    ) -> dict[tui_input_component.KeyBinding, typing.Callable[[input_base.KeyEvent], bool]]:
+        return {
+            tui_input_component.KeyBinding("up"): self._handle_history_up,
+            tui_input_component.KeyBinding("p", ctrl=True): self._handle_history_up,
+            tui_input_component.KeyBinding("down"): self._handle_history_down,
+            tui_input_component.KeyBinding("n", ctrl=True): self._handle_history_down,
+        }
+
+    def _handle_input_key_event(self, event: input_base.KeyEvent) -> bool:
+        binding = tui_input_component.KeyBinding(
+            key=event.key,
+            ctrl=event.ctrl,
+            alt=event.alt,
+            shift=event.shift,
+        )
+        handler = self._input_keymap.get(binding)
+        if handler is None:
+            return False
+        return handler(event)
+
+    def _handle_history_up(self, event: input_base.KeyEvent) -> bool:
+        component = self._input_component
+        if component.cursor_row != 0:
+            return False
+        new_text = self._history_manager.navigate_previous(component.text)
+        if new_text is None:
+            return False
+        component.text = new_text
+        lines = component.lines
+        if lines:
+            last_row = len(lines) - 1
+            last_col = len(lines[last_row])
+            component.set_cursor_position(last_row, last_col)
+        return True
+
+    def _handle_history_down(self, event: input_base.KeyEvent) -> bool:
+        component = self._input_component
+        lines = component.lines
+        if not lines:
+            return False
+        last_row = len(lines) - 1
+        if component.cursor_row != last_row:
+            return False
+        new_text = self._history_manager.navigate_next()
+        if new_text is None:
+            return False
+        component.text = new_text
+        lines = component.lines
+        if lines:
+            component.set_cursor_position(0, 0)
+        return True
 
     async def start(self) -> None:
         await self._terminal.start()
@@ -248,6 +310,7 @@ class TUIState:
 
     def _handle_submit(self, value: str) -> None:
         stripped = value.strip()
+        self._history_manager.add(stripped)
         self._input_component.text = ""
         # TODO: Configurable
         # if not stripped:

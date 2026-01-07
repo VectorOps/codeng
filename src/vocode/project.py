@@ -15,6 +15,7 @@ from .templates import write_default_config
 from .state import LLMUsageStats
 from .know import KnowProject, convert_know_tool
 from .proc.manager import ProcessManager
+from .proc.base import EnvPolicy
 from .proc.shell import ShellManager
 from .skills import Skill, discover_skills
 
@@ -107,7 +108,7 @@ class Project:
         """
         Refresh self.tools from the global registry and dynamic sources, excluding disabled tools per settings.
         """
-        from .tools import get_all_tools
+        from .tools import ToolFactory
 
         disabled_tool_names = (
             {
@@ -120,7 +121,7 @@ class Project:
         )
 
         # Code tools
-        all_tools = get_all_tools()
+        all_tools = ToolFactory.all()
         self.tools = {
             name: cls(self)
             for name, cls in all_tools.items()

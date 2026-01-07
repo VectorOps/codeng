@@ -41,4 +41,5 @@
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided
 * [ ] Tools
-** [ ] Refactor tool registration
+** [X] Refactor tool registration
+** [ ] Simplify error reporting for v4a patch tool

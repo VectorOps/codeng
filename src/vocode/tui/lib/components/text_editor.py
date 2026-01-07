@@ -53,6 +53,25 @@ class TextEditor:
     def cursor_col(self) -> int:
         return self._cursor_col
 
+    def set_cursor_position(self, row: int, col: int) -> None:
+        if not self._lines:
+            self._cursor_row = 0
+            self._cursor_col = 0
+            return
+        max_row = len(self._lines) - 1
+        if row < 0:
+            row = 0
+        elif row > max_row:
+            row = max_row
+        line = self._lines[row]
+        max_col = len(line)
+        if col < 0:
+            col = 0
+        elif col > max_col:
+            col = max_col
+        self._cursor_row = row
+        self._cursor_col = col
+
     def move_cursor_left(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return

@@ -183,3 +183,16 @@ def test_move_cursor_word_across_lines() -> None:
     editor.move_cursor_word_right()
     assert editor.cursor_row == 1
     assert editor.cursor_col == len("two ")
+
+
+def test_set_cursor_position_clamps_within_bounds() -> None:
+    editor = components_text_editor.TextEditor("one\ntwo")
+    editor.set_cursor_position(0, 1)
+    assert editor.cursor_row == 0
+    assert editor.cursor_col == 1
+    editor.set_cursor_position(-1, -5)
+    assert editor.cursor_row == 0
+    assert editor.cursor_col == 0
+    editor.set_cursor_position(10, 10)
+    assert editor.cursor_row == 1
+    assert editor.cursor_col == len("two")
