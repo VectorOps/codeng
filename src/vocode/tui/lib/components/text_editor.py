@@ -21,6 +21,9 @@ class TextEditor:
         else:
             self._cursor_row = last_row
             self._cursor_col = 0
+        self._cursor_event_subscribers: list[
+            typing.Callable[[int, int], None]
+        ] = []
 
     @property
     def text(self) -> str:
@@ -28,6 +31,8 @@ class TextEditor:
 
     @text.setter
     def text(self, value: str) -> None:
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         lines = value.splitlines() if value else []
         if not lines:
             lines = [""]
@@ -40,6 +45,7 @@ class TextEditor:
         else:
             self._cursor_row = last_row
             self._cursor_col = 0
+        self._emit_cursor_event(previous_row, previous_col)
 
     @property
     def lines(self) -> list[str]:
@@ -53,10 +59,26 @@ class TextEditor:
     def cursor_col(self) -> int:
         return self._cursor_col
 
+    def subscribe_cursor_event(
+        self, subscriber: typing.Callable[[int, int], None]
+    ) -> None:
+        self._cursor_event_subscribers.append(subscriber)
+
+    def _emit_cursor_event(self, previous_row: int, previous_col: int) -> None:
+        row = self._cursor_row
+        col = self._cursor_col
+        if row == previous_row and col == previous_col:
+            return
+        for subscriber in list(self._cursor_event_subscribers):
+            subscriber(row, col)
+
     def set_cursor_position(self, row: int, col: int) -> None:
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         if not self._lines:
             self._cursor_row = 0
             self._cursor_col = 0
+            self._emit_cursor_event(previous_row, previous_col)
             return
         max_row = len(self._lines) - 1
         if row < 0:
@@ -71,20 +93,26 @@ class TextEditor:
             col = max_col
         self._cursor_row = row
         self._cursor_col = col
+        self._emit_cursor_event(previous_row, previous_col)
 
     def move_cursor_left(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         if self._cursor_col > 0:
             self._cursor_col -= 1
         elif self._cursor_row > 0:
             self._cursor_row -= 1
             line = self._lines[self._cursor_row]
             self._cursor_col = max(len(line) - 1, 0)
+        self._emit_cursor_event(previous_row, previous_col)
 
     def move_cursor_right(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         line = self._lines[self._cursor_row]
         last_index = len(line)
         if self._cursor_col < last_index:
@@ -93,37 +121,52 @@ class TextEditor:
             self._cursor_row += 1
             line = self._lines[self._cursor_row]
             self._cursor_col = len(line)
+        self._emit_cursor_event(previous_row, previous_col)
 
     def move_cursor_up(self) -> None:
         if self._cursor_row <= 0:
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         self._cursor_row -= 1
         line = self._lines[self._cursor_row]
         max_index = len(line)
         self._cursor_col = min(self._cursor_col, max_index)
+        self._emit_cursor_event(previous_row, previous_col)
 
     def move_cursor_down(self) -> None:
         if self._cursor_row >= len(self._lines) - 1:
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         self._cursor_row += 1
         line = self._lines[self._cursor_row]
         max_index = len(line)
         self._cursor_col = min(self._cursor_col, max_index)
+        self._emit_cursor_event(previous_row, previous_col)
 
     def move_cursor_line_start(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         self._cursor_col = 0
+        self._emit_cursor_event(previous_row, previous_col)
 
     def move_cursor_line_end(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         line = self._lines[self._cursor_row]
         self._cursor_col = len(line)
+        self._emit_cursor_event(previous_row, previous_col)
 
     def move_cursor_word_left(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         row = self._cursor_row
         col = self._cursor_col
         while True:
@@ -138,10 +181,12 @@ class TextEditor:
                     i -= 1
                 self._cursor_row = row
                 self._cursor_col = i
+                self._emit_cursor_event(previous_row, previous_col)
                 return
             if row == 0:
                 self._cursor_row = 0
                 self._cursor_col = 0
+                self._emit_cursor_event(previous_row, previous_col)
                 return
             row -= 1
             col = len(self._lines[row])
@@ -150,6 +195,8 @@ class TextEditor:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
         last_row = len(self._lines) - 1
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         row = self._cursor_row
         col = self._cursor_col
         while True:
@@ -165,10 +212,12 @@ class TextEditor:
                     i += 1
                 self._cursor_row = row
                 self._cursor_col = i
+                self._emit_cursor_event(previous_row, previous_col)
                 return
             if row >= last_row:
                 self._cursor_row = row
                 self._cursor_col = n
+                self._emit_cursor_event(previous_row, previous_col)
                 return
             row += 1
             col = 0
@@ -176,14 +225,19 @@ class TextEditor:
     def insert_char(self, ch: str) -> None:
         if not ch:
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         line = self._lines[self._cursor_row]
         col = self._cursor_col
         self._lines[self._cursor_row] = line[:col] + ch + line[col:]
         self._cursor_col = col + len(ch)
+        self._emit_cursor_event(previous_row, previous_col)
 
     def backspace(self) -> None:
         if self._cursor_row == 0 and self._cursor_col == 0:
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         line = self._lines[self._cursor_row]
         if self._cursor_col > 0 and line:
             col = self._cursor_col
@@ -197,8 +251,11 @@ class TextEditor:
             del self._lines[self._cursor_row]
             self._cursor_row = prev_row
             self._cursor_col = len(prev_line)
+        self._emit_cursor_event(previous_row, previous_col)
 
     def delete(self) -> None:
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         line = self._lines[self._cursor_row]
         if line and self._cursor_col < len(line):
             col = self._cursor_col
@@ -215,8 +272,11 @@ class TextEditor:
                 self._cursor_col,
                 len(self._lines[self._cursor_row]),
             )
+        self._emit_cursor_event(previous_row, previous_col)
 
     def break_line(self) -> None:
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         line = self._lines[self._cursor_row]
         split_index = min(self._cursor_col, len(line))
         first = line[:split_index]
@@ -226,23 +286,30 @@ class TextEditor:
         self._lines.insert(insert_row, second)
         self._cursor_row = insert_row
         self._cursor_col = 0
+        self._emit_cursor_event(previous_row, previous_col)
 
     def kill_to_line_end(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         line = self._lines[self._cursor_row]
         col = self._cursor_col
         if col < len(line):
             self._lines[self._cursor_row] = line[:col]
+        self._emit_cursor_event(previous_row, previous_col)
 
     def kill_to_line_start(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         line = self._lines[self._cursor_row]
         col = self._cursor_col
         if col > 0:
             self._lines[self._cursor_row] = line[col:]
             self._cursor_col = 0
+        self._emit_cursor_event(previous_row, previous_col)
 
     def kill_word_backward(self) -> None:
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
@@ -289,6 +356,8 @@ class TextEditor:
         self._cursor_col = old_col
 
     def _transform_word(self, transform: typing.Callable[[str], str]) -> None:
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
         if self._cursor_row < 0 or self._cursor_row >= len(self._lines):
             return
         line = self._lines[self._cursor_row]
@@ -310,6 +379,7 @@ class TextEditor:
         new_word = transform(word)
         self._lines[self._cursor_row] = line[:i] + new_word + line[j:]
         self._cursor_col = j
+        self._emit_cursor_event(previous_row, previous_col)
 
     def uppercase_word(self) -> None:
         self._transform_word(lambda s: s.upper())
