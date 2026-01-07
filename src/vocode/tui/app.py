@@ -29,7 +29,7 @@ class App:
             manager_helpers.InMemoryEndpoint.pair()
         )
         self._push_msg_id = 0
-        self._prompt_stack: list[PromptMeta] = []
+        self._prompt: PromptMeta | None = None
 
         project = vocode_project.Project.from_base_path(self._project_path)
         self._ui_server = manager_server.UIServer(
@@ -54,27 +54,12 @@ class App:
         self._push_msg_id += 1
         return self._push_msg_id
 
-    def _push_prompt(self, prompt: PromptMeta) -> None:
-        self._prompt_stack.append(prompt)
-        self._sync_prompt_hint()
-
-    def _pop_prompt(self) -> PromptMeta | None:
-        if not self._prompt_stack:
-            self._sync_prompt_hint()
-            return None
-        popped = self._prompt_stack.pop()
-        self._sync_prompt_hint()
-        return popped
-
-    def _have_prompt(self) -> bool:
-        return bool(self._prompt_stack)
-
-    def _sync_prompt_hint(self) -> None:
-        if not self._prompt_stack:
+    def _set_prompt(self, prompt: PromptMeta | None) -> None:
+        self._prompt = prompt
+        if prompt is None:
             self._state.set_input_panel_title(None, None)
             return
-        current = self._prompt_stack[-1]
-        self._state.set_input_panel_title(current.title, current.subtitle)
+        self._state.set_input_panel_title(prompt.title, prompt.subtitle)
 
     async def run(self) -> None:
         await self._state.start()
@@ -94,6 +79,10 @@ class App:
             manager_proto.BasePacketKind.RUNNER_REQ,
             self._handle_packet_runner_req,
         )
+        self._router.register(
+            manager_proto.BasePacketKind.INPUT_PROMPT,
+            self._handle_packet_input_prompt,
+        )
 
     async def _handle_packet_noop(
         self, envelope: manager_proto.BasePacketEnvelope
@@ -108,13 +97,27 @@ class App:
         if not isinstance(payload, manager_proto.RunnerReqPacket):
             return None
         step = payload.step
-        if payload.input_required:
-            prompt = PromptMeta(
-                title=payload.input_title,
-                subtitle=payload.input_subtitle,
-            )
-            self._push_prompt(prompt)
+        # Prompt presentation is driven by INPUT_PROMPT packets; ignore
+        # any input_* fields on RunnerReq.
         self._state.handle_step(step)
+        return None
+
+    async def _handle_packet_input_prompt(
+        self, envelope: manager_proto.BasePacketEnvelope
+    ) -> typing.Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if not isinstance(payload, manager_proto.InputPromptPacket):
+            return None
+        # If both title and subtitle are None, clear the prompt. Otherwise,
+        # set the prompt to the provided values.
+        if payload.title is None and payload.subtitle is None:
+            self._set_prompt(None)
+            return None
+        prompt = PromptMeta(
+            title=payload.title,
+            subtitle=payload.subtitle,
+        )
+        self._set_prompt(prompt)
         return None
 
     async def _recv_loop(self) -> None:
@@ -126,11 +129,6 @@ class App:
 
     # UI handlers
     async def on_input(self, text: str) -> None:
-        if not self._have_prompt():
-            self._state.add_markdown("No input is expected right now.")
-            return
-
-        hint = self._pop_prompt()
         message = state.Message(
             role=models.Role.USER,
             text=text,

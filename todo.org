@@ -22,14 +22,13 @@
 * [ ] Migrate nodes
 * [ ] UI
 ** [X] Create an in-memory bidirectional communication channel
-** [ ] History support
+** [X] History support
 - on_history_up, on_history_down events
 - history in UIState
 - on_submit in UIState forwarded to app.py
 ** [ ] Command handler
 - extend server to support commands
 ** [ ] Auto-complete support
-
 ** [ ] Add toolbar component under input
 ** [ ] TUI library
 *** [X] Refactor apply_style
