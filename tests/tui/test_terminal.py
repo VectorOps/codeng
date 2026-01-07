@@ -302,6 +302,23 @@ def test_input_component_emacs_movement_keys() -> None:
     assert component.cursor_col == len("hello world")
 
 
+def test_input_component_emits_cursor_event_with_new_position() -> None:
+    component = tui_input_component.InputComponent("ab")
+    positions: list[tuple[int, int]] = []
+
+    def on_cursor_event(row: int, col: int) -> None:
+        positions.append((row, col))
+
+    component.subscribe_cursor_event(on_cursor_event)
+
+    left_event = input_base.KeyEvent(action="down", key="left")
+    component.on_key_event(left_event)
+    component.on_key_event(left_event)
+    component.on_key_event(left_event)
+
+    assert positions == [(0, 1), (0, 0)]
+
+
 def test_input_component_kill_and_case_keybindings() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(

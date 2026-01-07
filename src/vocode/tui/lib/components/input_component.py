@@ -38,9 +38,13 @@ class InputComponent(tui_base.Component):
             component_style=component_style,
         )
         self._editor = components_text_editor.TextEditor(text)
+        self._editor.subscribe_cursor_event(self._handle_editor_cursor_event)
         self._single_line = single_line
         self._keymap = self._create_keymap()
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
+        self._cursor_event_subscribers: list[
+            typing.Callable[[int, int], None]
+        ] = []
         self._prefix = prefix
         # box_style removed; styling should be applied via Component.apply_style
         self._key_event_handler: typing.Callable[
@@ -88,6 +92,10 @@ class InputComponent(tui_base.Component):
         if terminal is not None:
             terminal.notify_component(self)
 
+    def _handle_editor_cursor_event(self, row: int, col: int) -> None:
+        for subscriber in list(self._cursor_event_subscribers):
+            subscriber(row, col)
+
     def set_key_event_handler(
         self, handler: typing.Callable[[input_base.KeyEvent], bool] | None
     ) -> None:
@@ -132,6 +140,11 @@ class InputComponent(tui_base.Component):
 
     def subscribe_submit(self, subscriber: typing.Callable[[str], None]) -> None:
         self._submit_subscribers.append(subscriber)
+
+    def subscribe_cursor_event(
+        self, subscriber: typing.Callable[[int, int], None]
+    ) -> None:
+        self._cursor_event_subscribers.append(subscriber)
 
     def submit(self) -> None:
         value = self.text
