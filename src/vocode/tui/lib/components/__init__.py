@@ -5,6 +5,7 @@ from .text_editor import TextEditor
 from .select_list import SelectItem, SelectListComponent
 
 from .markdown_component import MarkdownComponent
+from .callback_renderable_component import CallbackRenderableComponent
 
 __all__ = [
     "InputComponent",
@@ -12,4 +13,5 @@ __all__ = [
     "SelectItem",
     "SelectListComponent",
     "MarkdownComponent",
+    "CallbackRenderableComponent",
 ]
