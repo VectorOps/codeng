@@ -14,6 +14,7 @@ class BasePacketKind(str, Enum):
     RUNNER_REQ = "runner_req"
     UI_STATE = "ui_state"
     USER_INPUT = "user_input"
+    INPUT_PROMPT = "input_prompt"
 
 
 class AckPacket(BaseModel):
@@ -29,8 +30,6 @@ class RunnerReqPacket(BaseModel):
     workflow_execution_id: str
     step: state.Step
     input_required: bool = Field(default=False)
-    input_title: Optional[str] = Field(default=None)
-    input_subtitle: Optional[str] = Field(default=None)
 
 
 class UserInputPacket(BaseModel):
@@ -43,6 +42,14 @@ class UserInputPacket(BaseModel):
 class UIServerStatus(str, Enum):
     IDLE = "idle"
     RUNNING = "running"
+
+
+class InputPromptPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.INPUT_PROMPT] = Field(
+        default=BasePacketKind.INPUT_PROMPT
+    )
+    title: Optional[str] = Field(default=None)
+    subtitle: Optional[str] = Field(default=None)
 
 
 class RunnerStackFrame(BaseModel):
@@ -61,7 +68,13 @@ class UIServerStatePacket(BaseModel):
 
 
 BasePacket = Annotated[
-    typing.Union[AckPacket, RunnerReqPacket, UserInputPacket, UIServerStatePacket],
+    typing.Union[
+        AckPacket,
+        RunnerReqPacket,
+        UserInputPacket,
+        InputPromptPacket,
+        UIServerStatePacket,
+    ],
     Field(discriminator="kind"),
 ]
 

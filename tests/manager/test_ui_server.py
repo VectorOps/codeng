@@ -66,8 +66,7 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
     assert req_payload.workflow_execution_id == str(execution.id)
     assert req_payload.step == step
     assert req_payload.input_required is False
-    assert req_payload.input_title is None
-    assert req_payload.input_subtitle is None
+
     resp = await response_task
     assert resp is not None
     assert resp.resp_type == runner_proto.RunEventResponseType.NOOP
@@ -126,7 +125,10 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     assert req_payload.workflow_name == execution.workflow_name
     assert req_payload.workflow_execution_id == str(execution.id)
     assert req_payload.step == step
-
+    initial_prompt_envelope = await client_endpoint.recv()
+    initial_prompt_payload = initial_prompt_envelope.payload
+    assert initial_prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
+    assert isinstance(initial_prompt_payload, manager_proto.InputPromptPacket)
     user_message = state.Message(
         role=models.Role.USER,
         text="user input message",
@@ -148,6 +150,14 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     assert resp is not None
     assert resp.resp_type == runner_proto.RunEventResponseType.MESSAGE
     assert resp.message == user_message
+ 
+    prompt_envelope = await client_endpoint.recv()
+    prompt_payload = prompt_envelope.payload
+    assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
+    assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
+    # After user input, UIServer clears the prompt.
+    assert prompt_payload.title is None
+    assert prompt_payload.subtitle is None
 
     dummy_task.cancel()
     with pytest.raises(asyncio.CancelledError):

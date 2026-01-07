@@ -141,9 +141,7 @@ class UIServer:
         elif step.type == state.StepType.TOOL_REQUEST and needs_confirmation:
             input_required = True
             input_title = "Please confirm the tool call"
-            input_subtitle = (
-                "Empty line confirms, any text to reject with a message"
-            )
+            input_subtitle = "Empty line confirms, any text to reject with a message"
 
         packet = manager_proto.RunnerReqPacket(
             workflow_id=frame.workflow_name,
@@ -151,8 +149,6 @@ class UIServer:
             workflow_execution_id=str(execution.id),
             step=step,
             input_required=input_required,
-            input_title=input_title,
-            input_subtitle=input_subtitle,
         )
 
         envelope = manager_proto.BasePacketEnvelope(
@@ -160,6 +156,17 @@ class UIServer:
             payload=packet,
         )
         await self._endpoint.send(envelope)
+
+        if input_required:
+            prompt_packet = manager_proto.InputPromptPacket(
+                title=input_title,
+                subtitle=input_subtitle,
+            )
+            prompt_envelope = manager_proto.BasePacketEnvelope(
+                msg_id=self._next_packet_id(),
+                payload=prompt_packet,
+            )
+            await self._endpoint.send(prompt_envelope)
 
         if step.type == state.StepType.PROMPT:
             waiter = self._push_input_waiter()
@@ -256,6 +263,12 @@ class UIServer:
         if not waiter.done():
             user_input = cast(manager_proto.UserInputPacket, payload)
             waiter.set_result(user_input)
+            prompt_packet = manager_proto.InputPromptPacket()
+            prompt_envelope = manager_proto.BasePacketEnvelope(
+                msg_id=self._next_packet_id(),
+                payload=prompt_packet,
+            )
+            await self._endpoint.send(prompt_envelope)
 
         return None
 
