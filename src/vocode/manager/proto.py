@@ -15,6 +15,9 @@ class BasePacketKind(str, Enum):
     UI_STATE = "ui_state"
     USER_INPUT = "user_input"
     INPUT_PROMPT = "input_prompt"
+    AUTOCOMPLETE_REQ = "autocomplete_req"
+    AUTOCOMPLETE_RESP = "autocomplete_resp"
+    TEXT_MESSAGE = "text_message"
 
 
 class AckPacket(BaseModel):
@@ -67,6 +70,35 @@ class UIServerStatePacket(BaseModel):
     runners: list[RunnerStackFrame] = Field(default_factory=list)
 
 
+class AutocompleteReqPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.AUTOCOMPLETE_REQ] = Field(
+        default=BasePacketKind.AUTOCOMPLETE_REQ
+    )
+    text: str
+    cursor: int
+
+
+class AutocompleteRespPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.AUTOCOMPLETE_RESP] = Field(
+        default=BasePacketKind.AUTOCOMPLETE_RESP
+    )
+    items: list[str] = Field(default_factory=list)
+
+
+class TextMessageFormat(str, Enum):
+    PLAIN = "plain"
+    RICH_TEXT = "rich_text"
+    MARKDOWN = "markdown"
+
+
+class TextMessagePacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.TEXT_MESSAGE] = Field(
+        default=BasePacketKind.TEXT_MESSAGE
+    )
+    text: str
+    format: TextMessageFormat = Field(default=TextMessageFormat.PLAIN)
+
+
 BasePacket = Annotated[
     typing.Union[
         AckPacket,
@@ -74,6 +106,9 @@ BasePacket = Annotated[
         UserInputPacket,
         InputPromptPacket,
         UIServerStatePacket,
+        AutocompleteReqPacket,
+        AutocompleteRespPacket,
+        TextMessagePacket,
     ],
     Field(discriminator="kind"),
 ]

@@ -76,6 +76,28 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
     with pytest.raises(asyncio.CancelledError):
         await dummy_task
 
+
+@pytest.mark.asyncio
+async def test_uiserver_handles_autocomplete_request() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    req = manager_proto.AutocompleteReqPacket(text="he", cursor=2)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=req)
+    await client_endpoint.send(envelope)
+
+    server_incoming = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_incoming)
+    assert handled is True
+
+    resp_envelope = await client_endpoint.recv()
+    resp_payload = resp_envelope.payload
+    assert resp_payload.kind == manager_proto.BasePacketKind.AUTOCOMPLETE_RESP
+    assert isinstance(resp_payload, manager_proto.AutocompleteRespPacket)
+    assert resp_payload.items == []
+
+
 @pytest.mark.asyncio
 async def test_uiserver_on_runner_event_user_input_message() -> None:
     project = StubProject()
@@ -150,7 +172,7 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     assert resp is not None
     assert resp.resp_type == runner_proto.RunEventResponseType.MESSAGE
     assert resp.message == user_message
- 
+
     prompt_envelope = await client_endpoint.recv()
     prompt_payload = prompt_envelope.payload
     assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT

@@ -23,3 +23,7 @@ INPUT_PANEL_COMPONENT_STYLE = tui_terminal.ComponentStyle(
 OUTPUT_MESSAGE_STYLE = tui_terminal.ComponentStyle(
     margin_bottom=1,
 )
+
+TOOLBAR_COMPONENT_STYLE = tui_terminal.ComponentStyle(
+    padding_pad=1,
+)
