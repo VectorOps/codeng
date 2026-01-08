@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import enum
 import json
 import typing
 from rich import console as rich_console
@@ -14,8 +15,23 @@ from vocode.tui import history as tui_history
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
+from vocode.tui.lib.components import select_list as tui_select_list
 from vocode.tui.lib.input import base as input_base
 from vocode.tui.lib.input import handler as input_handler_mod
+
+
+AUTOCOMPLETE_DEBOUNCE_MS: typing.Final[int] = 250
+
+
+class ActionKind(str, enum.Enum):
+    DEFAULT = "default"
+    AUTOCOMPLETE = "autocomplete"
+
+
+@dataclasses.dataclass
+class ActionItem:
+    kind: ActionKind
+    component: tui_terminal.Component
 
 
 class TUIState:
@@ -24,8 +40,12 @@ class TUIState:
         on_input: typing.Callable[[str], typing.Awaitable[None]],
         console: rich_console.Console | None = None,
         input_handler: input_base.InputHandler | None = None,
+        on_autocomplete_request: (
+            typing.Callable[[str, int], typing.Awaitable[None]] | None
+        ) = None,
     ) -> None:
         self._on_input = on_input
+        self._on_autocomplete_request = on_autocomplete_request
         if input_handler is None:
             input_handler = input_handler_mod.PosixInputHandler()
         settings = tui_terminal.TerminalSettings()
@@ -59,9 +79,25 @@ class TUIState:
 
         self._terminal.append_component(header)
         self._terminal.append_component(input_component)
+
+        toolbar = tui_rich_text_component.RichTextComponent(
+            "", id="toolbar", component_style=tui_styles.TOOLBAR_COMPONENT_STYLE
+        )
+        self._toolbar_component = toolbar
+        self._terminal.append_component(toolbar)
+
+        self._action_stack: list[ActionItem] = [
+            ActionItem(kind=ActionKind.DEFAULT, component=toolbar)
+        ]
+
         self._terminal.push_focus(input_component)
 
         self._input_component.subscribe_submit(self._handle_submit)
+        self._input_component.subscribe_cursor_event(self._handle_cursor_event)
+
+        self._autocomplete_task: asyncio.Task[None] | None = None
+        self._last_autocomplete_text: str | None = None
+        self._last_autocomplete_cursor: int | None = None
 
     @property
     def terminal(self) -> tui_terminal.Terminal:
@@ -73,7 +109,9 @@ class TUIState:
 
     def _create_input_keymap(
         self,
-    ) -> dict[tui_input_component.KeyBinding, typing.Callable[[input_base.KeyEvent], bool]]:
+    ) -> dict[
+        tui_input_component.KeyBinding, typing.Callable[[input_base.KeyEvent], bool]
+    ]:
         return {
             tui_input_component.KeyBinding("up"): self._handle_history_up,
             tui_input_component.KeyBinding("p", ctrl=True): self._handle_history_up,
@@ -82,6 +120,23 @@ class TUIState:
         }
 
     def _handle_input_key_event(self, event: input_base.KeyEvent) -> bool:
+        top = self._action_stack[-1]
+        if top.kind is ActionKind.AUTOCOMPLETE:
+            component = typing.cast(tui_select_list.SelectListComponent, top.component)
+            if event.key in ("up", "down", "enter", "tab", "esc", "escape"):
+                if event.action == "down":
+                    mapped_key = event.key
+                    if mapped_key == "tab":
+                        mapped_key = "enter"
+                    mapped_event = input_base.KeyEvent(
+                        action="down",
+                        key=mapped_key,
+                        ctrl=False,
+                        alt=False,
+                        shift=False,
+                    )
+                    component.on_key_event(mapped_event)
+                return True
         binding = tui_input_component.KeyBinding(
             key=event.key,
             ctrl=event.ctrl,
@@ -141,7 +196,7 @@ class TUIState:
             markdown,
             component_style=component_style,
         )
-        self._terminal.insert_component(-1, component)
+        self._terminal.insert_component(-2, component)
 
     def add_rich_text(
         self,
@@ -152,7 +207,20 @@ class TUIState:
             text,
             component_style=component_style,
         )
-        self._terminal.insert_component(-1, component)
+        self._terminal.insert_component(-2, component)
+
+    def add_text_message(
+        self,
+        text: str,
+        text_format: str = "plain",
+        component_style: tui_terminal.ComponentStyle | None = None,
+    ) -> None:
+        if component_style is None:
+            component_style = tui_styles.OUTPUT_MESSAGE_STYLE
+        if text_format == "markdown":
+            self.add_markdown(text, component_style=component_style)
+        else:
+            self.add_rich_text(text, component_style=component_style)
 
     def _format_message_markdown(self, step: vocode_state.Step) -> str | None:
         message = step.message
@@ -212,7 +280,7 @@ class TUIState:
             component_style=component_style,
         )
         self._step_components[step_id] = component
-        self._terminal.insert_component(-1, component)
+        self._terminal.insert_component(-2, component)
 
     def _handle_output_message_step(self, step: vocode_state.Step) -> None:
         markdown = self._format_message_markdown(step)
@@ -316,3 +384,111 @@ class TUIState:
         # if not stripped:
         #    return
         asyncio.create_task(self._on_input(stripped))
+
+    def _handle_cursor_event(self, row: int, col: int) -> None:
+        if self._on_autocomplete_request is None:
+            return
+        lines = self._input_component.lines
+        if row < 0 or row >= len(lines):
+            return
+        line = lines[row]
+        if col < 0:
+            col = 0
+        if col > len(line):
+            col = len(line)
+        end = col
+        while end < len(line) and not line[end].isspace():
+            end += 1
+        text = line[:end]
+        cursor = col
+        self._last_autocomplete_text = text
+        self._last_autocomplete_cursor = cursor
+        if self._autocomplete_task is not None and not self._autocomplete_task.done():
+            self._autocomplete_task.cancel()
+        loop = asyncio.get_running_loop()
+
+        async def _debounced() -> None:
+            try:
+                await asyncio.sleep(AUTOCOMPLETE_DEBOUNCE_MS / 1000.0)
+            except asyncio.CancelledError:
+                return
+            current_text = self._last_autocomplete_text
+            current_cursor = self._last_autocomplete_cursor
+            if current_text is None or current_cursor is None:
+                return
+            await self._on_autocomplete_request(current_text, current_cursor)
+
+        self._autocomplete_task = loop.create_task(_debounced())
+
+    def handle_autocomplete_options(self, items: list[str] | None) -> None:
+        if not items:
+            self._pop_autocomplete()
+            return
+        top = self._action_stack[-1]
+        if top.kind is ActionKind.AUTOCOMPLETE:
+            component = typing.cast(tui_select_list.SelectListComponent, top.component)
+            component.set_items(
+                [{"id": str(index), "text": value} for index, value in enumerate(items)]
+            )
+            return
+        select = tui_select_list.SelectListComponent(id="autocomplete")
+
+        def _on_select(item: tui_select_list.SelectItem | None) -> None:
+            if item is None:
+                self._pop_autocomplete()
+                return
+            value = item.text
+            lines = self._input_component.lines
+            row = self._input_component.cursor_row
+            col = self._input_component.cursor_col
+            if row < 0 or row >= len(lines):
+                self._pop_autocomplete()
+                return
+            line = lines[row]
+            if col < 0:
+                col = 0
+            if col > len(line):
+                col = len(line)
+            start = col
+            while start > 0 and not line[start - 1].isspace():
+                start -= 1
+            end = col
+            while end < len(line) and not line[end].isspace():
+                end += 1
+            new_line = line[:start] + value + line[end:]
+            all_lines = list(lines)
+            all_lines[row] = new_line
+            self._input_component.text = "\n".join(all_lines)
+            self._input_component.set_cursor_position(row, start + len(value))
+            self._pop_autocomplete()
+
+        select.subscribe_select(_on_select)
+        select.set_items(
+            [{"id": str(index), "text": value} for index, value in enumerate(items)]
+        )
+        self._push_action(ActionKind.AUTOCOMPLETE, select)
+
+    def _push_action(self, kind: ActionKind, component: tui_terminal.Component) -> None:
+        current_component = self._action_stack[-1].component
+        if component is not current_component:
+            terminal = self._terminal
+            if terminal is not None:
+                terminal.remove_component(current_component)
+                terminal.append_component(component)
+        self._action_stack.append(ActionItem(kind=kind, component=component))
+        self._toolbar_component = component
+
+    def _pop_autocomplete(self) -> None:
+        if len(self._action_stack) <= 1:
+            return
+        top = self._action_stack[-1]
+        if top.kind is not ActionKind.AUTOCOMPLETE:
+            return
+        terminal = self._terminal
+        if terminal is not None:
+            terminal.remove_component(top.component)
+        self._action_stack.pop()
+        self._toolbar_component = self._action_stack[-1].component
+        if terminal is not None:
+            if self._toolbar_component not in terminal.components:
+                terminal.append_component(self._toolbar_component)

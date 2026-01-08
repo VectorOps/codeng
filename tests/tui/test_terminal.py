@@ -398,7 +398,11 @@ async def test_tui_state_input_history_navigation() -> None:
             return
 
     handler = DummyInputHandler()
-    state = tui_uistate.TUIState(on_input=on_input, input_handler=handler)
+    state = tui_uistate.TUIState(
+        on_input=on_input,
+        input_handler=handler,
+        on_autocomplete_request=None,
+    )
     component = state._input_component
 
     state._handle_submit("first")

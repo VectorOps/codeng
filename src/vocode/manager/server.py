@@ -11,6 +11,8 @@ from vocode.runner import proto as runner_proto
 from .base import BaseManager, RunnerFrame
 from .helpers import BaseEndpoint, IncomingPacketRouter, RpcHelper
 from . import proto as manager_proto
+from .autocomplete import AutocompleteManager
+from .commands import CommandManager
 
 
 class UIServer:
@@ -32,10 +34,16 @@ class UIServer:
         self._input_waiters: list[asyncio.Future[manager_proto.UserInputPacket]] = []
         self._recv_task: Optional[asyncio.Task[None]] = None
         self._started = False
+        self._autocomplete = AutocompleteManager()
+        self._commands = CommandManager()
 
         self._router.register(
             manager_proto.BasePacketKind.USER_INPUT,
             self._on_user_input_packet,
+        )
+        self._router.register(
+            manager_proto.BasePacketKind.AUTOCOMPLETE_REQ,
+            self._on_autocomplete_packet,
         )
 
     def _next_packet_id(self) -> int:
@@ -45,6 +53,25 @@ class UIServer:
     @property
     def manager(self) -> BaseManager:
         return self._manager
+
+    @property
+    def commands(self) -> CommandManager:
+        return self._commands
+
+    async def send_text_message(
+        self,
+        text: str,
+        text_format: manager_proto.TextMessageFormat = manager_proto.TextMessageFormat.PLAIN,
+    ) -> None:
+        packet = manager_proto.TextMessagePacket(text=text, format=text_format)
+        await self.send_packet(packet)
+
+    async def send_packet(self, payload: manager_proto.BasePacket) -> None:
+        envelope = manager_proto.BasePacketEnvelope(
+            msg_id=self._next_packet_id(),
+            payload=payload,
+        )
+        await self._endpoint.send(envelope)
 
     async def _recv_loop(self) -> None:
         while True:
@@ -150,23 +177,14 @@ class UIServer:
             step=step,
             input_required=input_required,
         )
-
-        envelope = manager_proto.BasePacketEnvelope(
-            msg_id=self._next_packet_id(),
-            payload=packet,
-        )
-        await self._endpoint.send(envelope)
+        await self.send_packet(packet)
 
         if input_required:
             prompt_packet = manager_proto.InputPromptPacket(
                 title=input_title,
                 subtitle=input_subtitle,
             )
-            prompt_envelope = manager_proto.BasePacketEnvelope(
-                msg_id=self._next_packet_id(),
-                payload=prompt_packet,
-            )
-            await self._endpoint.send(prompt_envelope)
+            await self.send_packet(prompt_packet)
 
         if step.type == state.StepType.PROMPT:
             waiter = self._push_input_waiter()
@@ -228,11 +246,7 @@ class UIServer:
             status=self._status,
             runners=runners,
         )
-        envelope = manager_proto.BasePacketEnvelope(
-            msg_id=self._next_packet_id(),
-            payload=state_packet,
-        )
-        await self._endpoint.send(envelope)
+        await self.send_packet(state_packet)
         return runner_proto.RunEventResp(
             resp_type=runner_proto.RunEventResponseType.NOOP,
             message=None,
@@ -256,6 +270,23 @@ class UIServer:
         if payload.kind != manager_proto.BasePacketKind.USER_INPUT:
             return None
 
+        message = payload.message
+        text = message.text
+
+        if text.startswith("/") and len(text) > 1:
+            raw = text[1:]
+            parts = raw.split(maxsplit=1)
+            name = parts[0]
+            args = parts[1] if len(parts) > 1 else ""
+
+            handled = await self._commands.run(self, name, args)
+            if not handled:
+                await self.send_text_message(
+                    f"Unknown command: /{name}",
+                    text_format=manager_proto.TextMessageFormat.RICH_TEXT,
+                )
+            return None
+
         waiter = self._pop_input_waiter()
         if waiter is None:
             return None
@@ -264,12 +295,21 @@ class UIServer:
             user_input = cast(manager_proto.UserInputPacket, payload)
             waiter.set_result(user_input)
             prompt_packet = manager_proto.InputPromptPacket()
-            prompt_envelope = manager_proto.BasePacketEnvelope(
-                msg_id=self._next_packet_id(),
-                payload=prompt_packet,
-            )
-            await self._endpoint.send(prompt_envelope)
+            await self.send_packet(prompt_packet)
 
+        return None
+
+    async def _on_autocomplete_packet(
+        self,
+        envelope: manager_proto.BasePacketEnvelope,
+    ) -> Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if payload.kind != manager_proto.BasePacketKind.AUTOCOMPLETE_REQ:
+            return None
+        req = cast(manager_proto.AutocompleteReqPacket, payload)
+        items = await self._autocomplete.get_completions(req.text, req.cursor)
+        resp = manager_proto.AutocompleteRespPacket(items=items)
+        await self.send_packet(resp)
         return None
 
     async def on_ui_packet(self, envelope: manager_proto.BasePacketEnvelope) -> bool:

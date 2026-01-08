@@ -18,9 +18,9 @@ async def test_tui_app_sends_user_input_packet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeTUIState:
-        def __init__(self, on_input) -> None:
+        def __init__(self, on_input, on_autocomplete_request=None) -> None:
             self._on_input = on_input
-        
+
         def add_markdown(self, markdown: str) -> None:
             return None
 
@@ -64,7 +64,7 @@ async def test_tui_app_clears_prompt_on_input_prompt_packet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeTUIState:
-        def __init__(self, on_input) -> None:
+        def __init__(self, on_input, on_autocomplete_request=None) -> None:
             self._on_input = on_input
             self.last_title: str | None = None
             self.last_subtitle: str | None = None

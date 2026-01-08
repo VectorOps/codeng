@@ -19,6 +19,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
 
     async def on_input(_: str) -> None:
         return None
+
     class DummyInputHandler(input_base.InputHandler):
         async def run(self) -> None:
             return None
@@ -27,9 +28,10 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
         on_input=on_input,
         console=console,
         input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
     )
     terminal = ui_state.terminal
-    assert len(terminal.components) == 2
+    assert len(terminal.components) == 3
 
     execution = state.NodeExecution(
         node="node",
@@ -47,7 +49,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
     ui_state.handle_step(step1)
 
     components = terminal.components
-    assert len(components) == 3
+    assert len(components) == 4
     header = components[0]
     step_component = components[1]
     input_component = components[2]
@@ -68,7 +70,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
     ui_state.handle_step(step2)
 
     components_after_update = terminal.components
-    assert len(components_after_update) == 3
+    assert len(components_after_update) == 4
     assert components_after_update[1] is step_component
     assert step_component.markdown == "second"
 
@@ -80,7 +82,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
     )
 
     ui_state.handle_step(step_no_message)
-    assert len(terminal.components) == 3
+    assert len(terminal.components) == 4
 
     empty_message = state.Message(role=models.Role.USER, text="\n\n")
     step_empty_text = state.Step(
@@ -91,7 +93,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
     )
 
     ui_state.handle_step(step_empty_text)
-    assert len(terminal.components) == 3
+    assert len(terminal.components) == 4
     assert step_component.markdown == ""
 
     await terminal.render()
@@ -116,9 +118,10 @@ async def test_tui_state_hides_all_output_mode_hide_all() -> None:
         on_input=on_input,
         console=console,
         input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
     )
     terminal = ui_state.terminal
-    assert len(terminal.components) == 2
+    assert len(terminal.components) == 3
 
     execution = state.NodeExecution(
         node="node",
@@ -134,7 +137,7 @@ async def test_tui_state_hides_all_output_mode_hide_all() -> None:
 
     ui_state.handle_step(step)
 
-    assert len(terminal.components) == 2
+    assert len(terminal.components) == 3
     await terminal.render()
     output = buffer.getvalue()
     assert "hidden" not in output
@@ -156,9 +159,10 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
         on_input=on_input,
         console=console,
         input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
     )
     terminal = ui_state.terminal
-    assert len(terminal.components) == 2
+    assert len(terminal.components) == 3
 
     execution = state.NodeExecution(
         node="node",
@@ -177,7 +181,7 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
     ui_state.handle_step(step1)
 
     components = terminal.components
-    assert len(components) == 3
+    assert len(components) == 4
     step_component = components[1]
     assert isinstance(step_component, tui_markdown_component.MarkdownComponent)
     assert step_component.markdown == "interim"
@@ -195,7 +199,7 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
     ui_state.handle_step(step2)
 
     components_after_update = terminal.components
-    assert len(components_after_update) == 3
+    assert len(components_after_update) == 4
     assert components_after_update[1] is step_component
     assert step_component.markdown == "interim"
 
@@ -217,9 +221,10 @@ def test_tui_state_history_up_places_cursor_on_last_row() -> None:
         on_input=on_input,
         console=None,
         input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
     )
     ui_state.history.add("first line\nsecond line")
-    input_component = ui_state.terminal.components[-1]
+    input_component = ui_state.terminal.components[-2]
     event = input_base.KeyEvent(action="down", key="up")
     input_component.on_key_event(event)
     assert input_component.cursor_row == len(input_component.lines) - 1
@@ -237,10 +242,11 @@ def test_tui_state_history_down_places_cursor_on_first_row() -> None:
         on_input=on_input,
         console=None,
         input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
     )
     ui_state.history.add("one\nTWO")
     ui_state.history.add("alpha\nbeta")
-    input_component = ui_state.terminal.components[-1]
+    input_component = ui_state.terminal.components[-2]
     event_up = input_base.KeyEvent(action="down", key="up")
     input_component.on_key_event(event_up)
     input_component.on_key_event(event_up)

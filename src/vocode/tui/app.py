@@ -48,7 +48,10 @@ class App:
 
         self._register_handlers()
 
-        self._state = tui_uistate.TUIState(on_input=self.on_input)
+        self._state = tui_uistate.TUIState(
+            on_input=self.on_input,
+            on_autocomplete_request=self.on_autocomplete_request,
+        )
 
     def _next_msg_id(self) -> int:
         self._push_msg_id += 1
@@ -82,6 +85,14 @@ class App:
         self._router.register(
             manager_proto.BasePacketKind.INPUT_PROMPT,
             self._handle_packet_input_prompt,
+        )
+        self._router.register(
+            manager_proto.BasePacketKind.AUTOCOMPLETE_RESP,
+            self._handle_packet_autocomplete_resp,
+        )
+        self._router.register(
+            manager_proto.BasePacketKind.TEXT_MESSAGE,
+            self._handle_packet_text_message,
         )
 
     async def _handle_packet_noop(
@@ -120,6 +131,27 @@ class App:
         self._set_prompt(prompt)
         return None
 
+    async def _handle_packet_autocomplete_resp(
+        self, envelope: manager_proto.BasePacketEnvelope
+    ) -> typing.Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if not isinstance(payload, manager_proto.AutocompleteRespPacket):
+            return None
+        self._state.handle_autocomplete_options(payload.items)
+        return None
+
+    async def _handle_packet_text_message(
+        self, envelope: manager_proto.BasePacketEnvelope
+    ) -> typing.Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if not isinstance(payload, manager_proto.TextMessagePacket):
+            return None
+        self._state.add_text_message(
+            payload.text,
+            text_format=payload.format.value,
+        )
+        return None
+
     async def _recv_loop(self) -> None:
         while True:
             envelope = await self._endpoint_ui.recv()
@@ -139,6 +171,14 @@ class App:
             payload=packet,
         )
 
+        await self._endpoint_ui.send(envelope)
+
+    async def on_autocomplete_request(self, text: str, cursor: int) -> None:
+        packet = manager_proto.AutocompleteReqPacket(text=text, cursor=cursor)
+        envelope = manager_proto.BasePacketEnvelope(
+            msg_id=self._next_msg_id(),
+            payload=packet,
+        )
         await self._endpoint_ui.send(envelope)
 
 
