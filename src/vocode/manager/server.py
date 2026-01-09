@@ -274,21 +274,19 @@ class UIServer:
         text = message.text
 
         if text.startswith("/") and len(text) > 1:
-            raw = text[1:]
-            parts = raw.split(maxsplit=1)
-            name = parts[0]
-            args = parts[1] if len(parts) > 1 else ""
-
-            handled = await self._commands.run(self, name, args)
+            handled = await self._commands.execute(self, text[1:])
             if not handled:
-                await self.send_text_message(
-                    f"Unknown command: /{name}",
-                    text_format=manager_proto.TextMessageFormat.RICH_TEXT,
+                await self.send_packet(
+                    manager_proto.InputPromptPacket(
+                        title="Unknown command",
+                        subtitle=f"Unknown command: /{text[1:].split(maxsplit=1)[0]}",
+                    )
                 )
             return None
 
         waiter = self._pop_input_waiter()
         if waiter is None:
+            # TODO: No waiter needs input, send error message
             return None
 
         if not waiter.done():
