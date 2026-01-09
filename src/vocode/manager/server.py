@@ -13,6 +13,7 @@ from .helpers import BaseEndpoint, IncomingPacketRouter, RpcHelper
 from . import proto as manager_proto
 from .autocomplete import AutocompleteManager
 from .commands import CommandManager
+from .commands import workflows as workflow_commands
 
 
 class UIServer:
@@ -86,6 +87,8 @@ class UIServer:
         self._status = manager_proto.UIServerStatus.RUNNING
 
         self._recv_task = asyncio.create_task(self._recv_loop())
+
+        await workflow_commands.register_workflow_commands(self._commands)
 
         settings = self._manager.project.settings
         if settings is not None:
@@ -276,11 +279,8 @@ class UIServer:
         if text.startswith("/") and len(text) > 1:
             handled = await self._commands.execute(self, text[1:])
             if not handled:
-                await self.send_packet(
-                    manager_proto.InputPromptPacket(
-                        title="Unknown command",
-                        subtitle=f"Unknown command: /{text[1:].split(maxsplit=1)[0]}",
-                    )
+                await self.send_text_message(
+                    f"Unknown command: /{text[1:].split(maxsplit=1)[0]}"
                 )
             return None
 

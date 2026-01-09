@@ -1,19 +1,23 @@
 from __future__ import annotations
 
-import inspect
 import shlex
 import typing
 
 from pydantic import BaseModel, ValidationError
 
-from . import proto as manager_proto
+from .. import proto as manager_proto
 
 
 if typing.TYPE_CHECKING:
-    from .server import UIServer
+    from ..server import UIServer
 
 
 ParsedCommand = tuple[str, list[str], str]
+
+
+class _CommandMeta(BaseModel):
+    description: str | None
+    params: list[str] = []
 
 
 class CommandError(Exception):
@@ -26,10 +30,12 @@ class ParamSpec:
     def __init__(
         self,
         index: int,
+        name: str,
         converter: typing.Callable[[str], typing.Any],
         splat: bool = False,
     ) -> None:
         self.index = index
+        self.name = name
         self.converter = converter
         self.splat = splat
 
@@ -40,9 +46,9 @@ class DeclarativeCommand:
         name: str,
         handler: typing.Callable[..., typing.Awaitable[None]],
         params: list[ParamSpec],
+        description: str | None = None,
+        param_names: list[str] | None = None,
     ) -> None:
-        if not params:
-            raise ValueError("DeclarativeCommand requires at least one parameter.")
         params_sorted = sorted(params, key=lambda p: p.index)
         seen: set[int] = set()
         splat_spec: ParamSpec | None = None
@@ -66,31 +72,8 @@ class DeclarativeCommand:
         self.handler = handler
         self.params = params_sorted
         self._splat = splat_spec
-        self._param_names: dict[int, str] = {}
-
-        try:
-            sig = inspect.signature(handler)
-        except ValueError:
-            parameters: list[inspect.Parameter] = []
-        else:
-            parameters = list(sig.parameters.values())
-
-        arg_parameters = parameters[1:] if parameters else []
-        for spec in self.params:
-            position = spec.index + 1
-            if 0 <= spec.index < len(arg_parameters):
-                self._param_names[spec.index] = arg_parameters[spec.index].name
-            else:
-                self._param_names[spec.index] = f"arg{position}"
-
-    async def register(self, manager: CommandManager) -> None:
-        async def invoker(
-            server: UIServer, args: typing.Sequence[str], raw_args: str
-        ) -> None:
-            values = self._parse_params(args)
-            await self.handler(server, *values)
-
-        await manager.register_invoker(self.name, invoker)
+        self.description = description
+        self.param_names = list(param_names) if param_names is not None else None
 
     def _parse_params(self, args: typing.Sequence[str]) -> list[typing.Any]:
         tokens = list(args)
@@ -104,8 +87,9 @@ class DeclarativeCommand:
             if missing_specs:
                 first_missing = min(missing_specs, key=lambda p: p.index)
                 position = first_missing.index + 1
-                name = self._param_names.get(first_missing.index, f"arg{position}")
-                raise CommandError(f"Missing value for '{name}' (position {position}).")
+                raise CommandError(
+                    f"Missing value for '{first_missing.name}' (position {position})."
+                )
             raise CommandError(
                 f"Expected at least {required_count} argument(s), got {len(tokens)}."
             )
@@ -130,45 +114,88 @@ class DeclarativeCommand:
             return spec.converter(token)
         except Exception as exc:
             position = spec.index + 1
-            name = self._param_names.get(spec.index, f"arg{position}")
             raise CommandError(
-                f"Invalid value for '{name}' at position {position}: {exc}."
+                f"Invalid value for '{spec.name}' at position {position}: {exc}."
             ) from exc
 
 
 CommandInvoker = typing.Callable[
-    ["UIServer", typing.Sequence[str], str], typing.Awaitable[None]
+    ["UIServer", typing.Sequence[str]], typing.Awaitable[None]
 ]
-CommandHandler = typing.Callable[["UIServer", str], typing.Awaitable[None]]
+CommandHandler = typing.Callable[["UIServer", list[str]], typing.Awaitable[None]]
+
+
+_GLOBAL_COMMANDS: dict[str, DeclarativeCommand] = {}
 
 
 class CommandManager:
     def __init__(self) -> None:
         self._commands: dict[str, CommandInvoker] = {}
+        self._metadata: dict[str, _CommandMeta] = {}
+        for name, decl in _GLOBAL_COMMANDS.items():
+            if name not in self._commands:
+                self._commands[name] = self._build_invoker(decl)
+                if decl.param_names is None:
+                    params = [spec.name for spec in decl.params]
+                else:
+                    params = list(decl.param_names)
+                self._metadata[name] = _CommandMeta(
+                    description=decl.description,
+                    params=params,
+                )
 
-    async def register(self, name: str, handler: CommandHandler) -> None:
-        async def invoker(
-            server: UIServer, args: typing.Sequence[str], raw_args: str
-        ) -> None:
-            await handler(server, raw_args)
+    def _build_invoker(self, decl: DeclarativeCommand) -> CommandInvoker:
+        async def invoker(server: UIServer, args: typing.Sequence[str]) -> None:
+            values = decl._parse_params(args)
+            await decl.handler(server, *values)
 
-        await self.register_invoker(name, invoker)
+        return invoker
 
-    async def register_invoker(self, name: str, invoker: CommandInvoker) -> None:
+    async def register(
+        self,
+        name: str,
+        handler: CommandHandler,
+        *,
+        description: str | None = None,
+        params: list[str] | None = None,
+    ) -> None:
+        async def invoker(server: UIServer, args: typing.Sequence[str]) -> None:
+            await handler(server, list(args))
+
+        await self.register_invoker(
+            name,
+            invoker,
+            description=description,
+            params=params,
+        )
+
+    async def register_invoker(
+        self,
+        name: str,
+        invoker: CommandInvoker,
+        *,
+        description: str | None = None,
+        params: list[str] | None = None,
+    ) -> None:
         if name in self._commands:
             raise ValueError(f"Command with name '{name}' already registered.")
         self._commands[name] = invoker
+        if params is None:
+            params = []
+        self._metadata[name] = _CommandMeta(description=description, params=params)
 
     async def unregister(self, name: str) -> bool:
         return self._commands.pop(name, None) is not None
 
-    async def run(self, server: UIServer, name: str, args: str) -> bool:
-        invoker = self._commands.get(name)
-        if invoker is None:
-            return False
-        parsed_args = self._parse_args(args)
-        await invoker(server, parsed_args, args)
-        return True
+    def get_help_entries(self) -> list[tuple[str, str | None, list[str]]]:
+        entries: list[tuple[str, str | None, list[str]]] = []
+        for name in sorted(self._commands.keys()):
+            meta = self._metadata.get(name)
+            if meta is None:
+                entries.append((name, None, []))
+            else:
+                entries.append((name, meta.description, list(meta.params)))
+        return entries
 
     async def execute(self, server: UIServer, text: str) -> bool:
         try:
@@ -184,7 +211,7 @@ class CommandManager:
             await self._send_unknown_command(server, name)
             return True
         try:
-            await invoker(server, args, raw_args)
+            await invoker(server, args)
         except CommandError as exc:
             await self._send_command_error(server, exc.message)
         return True
@@ -213,11 +240,7 @@ class CommandManager:
         return name, args, raw_args
 
     async def _send_unknown_command(self, server: UIServer, name: str) -> None:
-        packet = manager_proto.InputPromptPacket(
-            title="Unknown command",
-            subtitle=f"Unknown command: /{name}",
-        )
-        await server.send_packet(packet)
+        await server.send_text_message(f"Unknown command: /{name}")
 
     async def _send_command_error(self, server: UIServer, message: str) -> None:
         packet = manager_proto.InputPromptPacket(
@@ -229,6 +252,7 @@ class CommandManager:
 
 def option(
     index: int,
+    name: str,
     *,
     type: (
         typing.Callable[[str], typing.Any] | type[BaseModel] | type[ValidationError]
@@ -246,7 +270,7 @@ def option(
             params: list[ParamSpec] = []
         else:
             params = list(existing)
-        params.append(ParamSpec(index=index, converter=type, splat=splat))
+        params.append(ParamSpec(index=index, name=name, converter=type, splat=splat))
         setattr(func, "_command_params", params)
         return func
 
@@ -255,15 +279,26 @@ def option(
 
 def command(
     name: str,
+    *,
+    description: str | None = None,
+    params: list[str] | None = None,
 ) -> typing.Callable[
     [typing.Callable[..., typing.Awaitable[None]]], DeclarativeCommand
 ]:
     def decorator(
         func: typing.Callable[..., typing.Awaitable[None]],
     ) -> DeclarativeCommand:
-        params = getattr(func, "_command_params", None)
-        if not params:
+        params_specs = getattr(func, "_command_params", None)
+        if not params_specs:
             raise ValueError("Declarative command requires option declarations.")
-        return DeclarativeCommand(name=name, handler=func, params=list(params))
+        decl = DeclarativeCommand(
+            name=name,
+            handler=func,
+            params=list(params_specs),
+            description=description,
+            param_names=params,
+        )
+        _GLOBAL_COMMANDS[name] = decl
+        return decl
 
     return decorator
