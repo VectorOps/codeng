@@ -62,18 +62,26 @@ class BaseManager:
         self._started = True
 
     async def stop(self) -> None:
-        for frame in list(self._runner_stack):
+        await self.stop_all_runners()
+        if self._started:
+            await self.project.shutdown()
+            self._started = False
+
+    async def stop_all_runners(self) -> None:
+        frames = list(self._runner_stack)
+        for frame in frames:
             frame.runner.stop()
-        for frame in list(self._runner_stack):
+            frame.task.cancel()
+
+        for frame in frames:
             try:
                 await frame.task
             except Exception:
                 pass
+
         self._runner_stack.clear()
+
         self.project.current_workflow = None
-        if self._started:
-            await self.project.shutdown()
-            self._started = False
 
     async def start_workflow(
         self,
@@ -156,6 +164,7 @@ class BaseManager:
             agen = runner.run()
             send: Optional[RunEventResp] = None
             while True:
+                logger.info("E1")
                 try:
                     if send is None:
                         event = await agen.__anext__()
@@ -164,6 +173,8 @@ class BaseManager:
                 except StopAsyncIteration:
                     break
                 send = await self._emit_run_event(frame, event)
+        except asyncio.CancelledError:
+            pass
         except Exception as ex:
             logger.exception("BaseManager._run_runner_task exception", exc=ex)
             raise
@@ -174,6 +185,7 @@ class BaseManager:
         for frame in self._runner_stack:
             if frame.workflow_name == workflow_name and frame.runner is runner:
                 return frame
+
         dummy_task = asyncio.create_task(asyncio.sleep(0))
         return RunnerFrame(
             workflow_name=workflow_name,

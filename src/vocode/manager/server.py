@@ -229,6 +229,18 @@ class UIServer:
         frame: RunnerFrame,
         event: runner_proto.RunEventReq,
     ) -> Optional[runner_proto.RunEventResp]:
+        stats = event.stats
+        if stats is not None and stats.status in (
+            state.RunnerStatus.STOPPED,
+            state.RunnerStatus.FINISHED,
+        ):
+            for waiter in self._input_waiters:
+                if not waiter.done():
+                    waiter.cancel()
+            self._input_waiters.clear()
+            prompt_packet = manager_proto.InputPromptPacket()
+            await self.send_packet(prompt_packet)
+
         runners: list[manager_proto.RunnerStackFrame] = []
         for runner_frame in self._manager.runner_stack:
             stats = runner_frame.last_stats

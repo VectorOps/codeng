@@ -452,11 +452,15 @@ class Runner:
 
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
+        logger.info("runner.run")
+
         if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
             raise RuntimeError(
                 f"run() not allowed when runner status is '{self.status}'. Allowed: 'idle', 'stopped'"
             )
+
         self._stop_requested = False
+
         (
             runtime_node,
             current_execution,

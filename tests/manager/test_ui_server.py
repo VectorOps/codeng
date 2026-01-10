@@ -78,6 +78,64 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    await server.start()
+
+    execution = state.WorkflowExecution(workflow_name="wf-ui-stop-input")
+    stats = runner_proto.RunStats(
+        status=state.RunnerStatus.STOPPED,
+        current_node_name="node-stop",
+    )
+
+    class DummyRunner:
+        def __init__(self, execution: state.WorkflowExecution) -> None:
+            self.execution = execution
+
+    async def dummy_coro() -> None:
+        await asyncio.Event().wait()
+
+    dummy_task = asyncio.create_task(dummy_coro())
+    runner = DummyRunner(execution)
+    frame = RunnerFrame(
+        workflow_name=execution.workflow_name,
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        task=dummy_task,
+        last_stats=stats,
+    )
+    server.manager._runner_stack.append(frame)
+
+    # Simulate that a prompt was shown and an input waiter is pending.
+    server._push_input_waiter()
+
+    event = runner_proto.RunEventReq(
+        kind=runner_proto.RunEventReqKind.STATUS,
+        execution=execution,
+        stats=stats,
+    )
+
+    await server.on_runner_event(frame, event)
+
+    # First packet is an INPUT_PROMPT clearing the prompt, followed by UI_STATE.
+    envelope_prompt = await client_endpoint.recv()
+    prompt_payload = envelope_prompt.payload
+    assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
+    assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
+    assert prompt_payload.title is None
+    assert prompt_payload.subtitle is None
+
+    envelope_state = await client_endpoint.recv()
+    assert envelope_state.payload.kind == manager_proto.BasePacketKind.UI_STATE
+
+    dummy_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dummy_task
+
+
+@pytest.mark.asyncio
 async def test_uiserver_handles_autocomplete_request() -> None:
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()

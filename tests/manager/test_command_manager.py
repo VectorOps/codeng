@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from vocode import models, state
+from vocode import settings as vocode_settings
 from vocode.manager import helpers as manager_helpers
 from vocode.manager import proto as manager_proto
 from vocode.manager.commands import CommandManager, command, option
@@ -43,10 +44,11 @@ async def test_command_manager_execute_reports_syntax_error() -> None:
     assert handled is True
     envelope = await client_endpoint.recv()
     payload = envelope.payload
-    assert payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
-    assert isinstance(payload, manager_proto.InputPromptPacket)
-    assert payload.title == "Command error"
-    assert "Invalid command syntax" in (payload.subtitle or "")
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    text = payload.text
+    assert "Command error:" in text
+    assert "Invalid command syntax" in text
 
 
 @command("echo2")
@@ -90,9 +92,11 @@ async def test_declarative_command_validation_error() -> None:
     assert handled is True
     envelope = await client_endpoint.recv()
     payload = envelope.payload
-    assert isinstance(payload, manager_proto.InputPromptPacket)
-    assert payload.title == "Command error"
-    assert "Invalid value for 'value' at position 1" in (payload.subtitle or "")
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    text = payload.text
+    assert "Command error:" in text
+    assert "Invalid value for 'value' at position 1" in text
 
 
 @command("splat-echo")
@@ -200,3 +204,64 @@ async def test_help_command_lists_debug_and_workflows() -> None:
     text = payload.text
     assert "/debug" in text
     assert "/workflows" in text
+
+
+@pytest.mark.asyncio
+async def test_run_command_unknown_workflow_reports_error() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    message = state.Message(role=models.Role.USER, text="/run missing")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    text = payload.text
+    assert "Command error:" in text
+    assert "Unknown workflow 'missing'." in text
+
+
+@pytest.mark.asyncio
+async def test_run_command_stops_all_and_starts_workflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = vocode_settings.Settings()
+    settings.workflows["alpha"] = vocode_settings.WorkflowConfig()
+    project = StubProject(settings=settings)
+
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    called: list[tuple[str, object]] = []
+
+    async def fake_stop_all_runners() -> None:
+        called.append(("stop_all", None))
+
+    async def fake_start_workflow(name: str) -> None:
+        called.append(("start", name))
+
+    monkeypatch.setattr(server.manager, "stop_all_runners", fake_stop_all_runners)
+    monkeypatch.setattr(server.manager, "start_workflow", fake_start_workflow)
+
+    message = state.Message(role=models.Role.USER, text="/run alpha")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    assert ("stop_all", None) in called
+    assert ("start", "alpha") in called

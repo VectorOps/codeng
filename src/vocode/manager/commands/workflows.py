@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from vocode import settings as vocode_settings
 
-from .base import CommandManager, CommandHandler
+from .base import CommandManager, CommandHandler, CommandError
 
 
 async def register_workflow_commands(manager: CommandManager) -> None:
@@ -22,4 +22,31 @@ async def register_workflow_commands(manager: CommandManager) -> None:
         "workflows",
         list_workflows,
         description="List configured workflows",
+    )
+
+    async def run_workflow(server, args: list[str]) -> None:
+        if not args:
+            raise CommandError("Usage: /run <workflow-name>")
+        workflow_name = args[0]
+
+        project = server.manager.project
+        config = project.settings
+        if config is None or not isinstance(config, vocode_settings.Settings):
+            raise CommandError("Project settings do not define any workflows.")
+
+        if workflow_name not in config.workflows:
+            raise CommandError(f"Unknown workflow '{workflow_name}'.")
+
+        print("1")
+        await server.manager.stop_all_runners()
+        print("2")
+        await server.manager.start_workflow(workflow_name)
+
+        print("START")
+
+    await manager.register(
+        "run",
+        run_workflow,
+        description="Stop all running workflows and start the given workflow",
+        params=["<workflow-name>"],
     )
