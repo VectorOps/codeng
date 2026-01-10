@@ -243,11 +243,7 @@ class CommandManager:
         await server.send_text_message(f"Unknown command: /{name}")
 
     async def _send_command_error(self, server: UIServer, message: str) -> None:
-        packet = manager_proto.InputPromptPacket(
-            title="Command error",
-            subtitle=message,
-        )
-        await server.send_packet(packet)
+        await server.send_text_message(f"Command error: {message}")
 
 
 def option(
