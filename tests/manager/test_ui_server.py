@@ -336,3 +336,29 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
     dummy_task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await dummy_task
+
+
+@pytest.mark.asyncio
+async def test_uiserver_handles_stop_request_packet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    called: list[object] = []
+
+    async def fake_stop_current_runner() -> None:
+        called.append(object())
+
+    monkeypatch.setattr(server.manager, "stop_current_runner", fake_stop_current_runner)
+
+    stop_packet = manager_proto.StopReqPacket()
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=stop_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+    assert called

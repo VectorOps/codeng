@@ -29,6 +29,8 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
         console=console,
         input_handler=DummyInputHandler(),
         on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
     )
     terminal = ui_state.terminal
     assert len(terminal.components) == 3
@@ -119,6 +121,8 @@ async def test_tui_state_hides_all_output_mode_hide_all() -> None:
         console=console,
         input_handler=DummyInputHandler(),
         on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
     )
     terminal = ui_state.terminal
     assert len(terminal.components) == 3
@@ -160,6 +164,8 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
         console=console,
         input_handler=DummyInputHandler(),
         on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
     )
     terminal = ui_state.terminal
     assert len(terminal.components) == 3
@@ -222,6 +228,8 @@ def test_tui_state_history_up_places_cursor_on_last_row() -> None:
         console=None,
         input_handler=DummyInputHandler(),
         on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
     )
     ui_state.history.add("first line\nsecond line")
     input_component = ui_state.terminal.components[-2]
@@ -243,6 +251,8 @@ def test_tui_state_history_down_places_cursor_on_first_row() -> None:
         console=None,
         input_handler=DummyInputHandler(),
         on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
     )
     ui_state.history.add("one\nTWO")
     ui_state.history.add("alpha\nbeta")

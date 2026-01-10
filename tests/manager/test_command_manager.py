@@ -233,7 +233,9 @@ async def test_run_command_unknown_workflow_reports_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_command_stops_all_and_starts_workflow(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_command_stops_all_and_starts_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     settings = vocode_settings.Settings()
     settings.workflows["alpha"] = vocode_settings.WorkflowConfig()
     project = StubProject(settings=settings)
@@ -265,3 +267,100 @@ async def test_run_command_stops_all_and_starts_workflow(monkeypatch: pytest.Mon
 
     assert ("stop_all", None) in called
     assert ("start", "alpha") in called
+
+
+@pytest.mark.asyncio
+async def test_continue_command_calls_manager_continue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = vocode_settings.Settings()
+    settings.workflows["alpha"] = vocode_settings.WorkflowConfig()
+    project = StubProject(settings=settings)
+
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    called: list[object] = []
+
+    async def fake_continue_current_runner() -> None:
+        called.append(object())
+
+    monkeypatch.setattr(
+        server.manager, "continue_current_runner", fake_continue_current_runner
+    )
+
+    message = state.Message(role=models.Role.USER, text="/continue")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    assert called
+
+
+@pytest.mark.asyncio
+async def test_continue_command_with_args_reports_usage_error() -> None:
+    project = StubProject()
+
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    message = state.Message(role=models.Role.USER, text="/continue extra")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    text = payload.text
+    assert "Command error:" in text
+    assert "Usage: /continue" in text
+
+
+@pytest.mark.asyncio
+async def test_continue_command_reports_manager_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    async def fake_continue_current_runner() -> None:
+        raise RuntimeError("No active runner to continue")
+
+    monkeypatch.setattr(
+        server.manager, "continue_current_runner", fake_continue_current_runner
+    )
+
+    message = state.Message(role=models.Role.USER, text="/continue")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    text = payload.text
+    assert "Command error:" in text
+    assert "No active runner to continue" in text

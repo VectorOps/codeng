@@ -15,6 +15,7 @@ class BasePacketKind(str, Enum):
     UI_STATE = "ui_state"
     USER_INPUT = "user_input"
     INPUT_PROMPT = "input_prompt"
+    STOP_REQ = "stop_req"
     AUTOCOMPLETE_REQ = "autocomplete_req"
     AUTOCOMPLETE_RESP = "autocomplete_resp"
     TEXT_MESSAGE = "text_message"
@@ -53,6 +54,12 @@ class InputPromptPacket(BaseModel):
     )
     title: Optional[str] = Field(default=None)
     subtitle: Optional[str] = Field(default=None)
+
+
+class StopReqPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.STOP_REQ] = Field(
+        default=BasePacketKind.STOP_REQ
+    )
 
 
 class RunnerStackFrame(BaseModel):
@@ -106,6 +113,7 @@ BasePacket = Annotated[
         UserInputPacket,
         InputPromptPacket,
         UIServerStatePacket,
+        StopReqPacket,
         AutocompleteReqPacket,
         AutocompleteRespPacket,
         TextMessagePacket,
