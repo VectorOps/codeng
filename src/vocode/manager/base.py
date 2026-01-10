@@ -24,7 +24,7 @@ class RunnerFrame:
     workflow_name: str
     runner: Runner
     initial_message: Optional[state.Message]
-    task: asyncio.Task[None]
+    task: Optional[asyncio.Task[None]]
     last_stats: Optional[runner_proto.RunStats] = None
 
 
@@ -71,13 +71,18 @@ class BaseManager:
         frames = list(self._runner_stack)
         for frame in frames:
             frame.runner.stop()
-            frame.task.cancel()
+            task = frame.task
+            if task is not None:
+                task.cancel()
 
         for frame in frames:
-            try:
-                await frame.task
-            except Exception:
-                pass
+            task = frame.task
+            if task is not None:
+                try:
+                    await task
+                except Exception:
+                    pass
+                frame.task = None
 
         self._runner_stack.clear()
 
@@ -90,9 +95,7 @@ class BaseManager:
     ) -> Runner:
         workflow = self._build_workflow(workflow_name)
         runner = Runner(workflow, self.project, initial_message)
-        task = asyncio.create_task(
-            self._run_runner_task(workflow_name, runner, initial_message)
-        )
+        task = asyncio.create_task(self._run_runner_task(workflow_name, runner))
         frame = RunnerFrame(
             workflow_name=workflow_name,
             runner=runner,
@@ -111,12 +114,44 @@ class BaseManager:
             return
         frame = self._runner_stack[-1]
         frame.runner.stop()
-        try:
-            await frame.task
-        except Exception:
-            pass
+        task = frame.task
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except Exception:
+                pass
+            frame.task = None
 
         logger.debug("manager.stop_current_runner")
+
+    async def continue_current_runner(self) -> Runner:
+        if not self._runner_stack:
+            raise RuntimeError("No active runner to continue")
+
+        frame = self._runner_stack[-1]
+        if frame.task is not None and not frame.task.done():
+            raise RuntimeError("Current runner task is already running")
+
+        if frame.runner.status not in (
+            state.RunnerStatus.IDLE,
+            state.RunnerStatus.STOPPED,
+        ):
+            raise RuntimeError(
+                f"Cannot continue runner in status '{frame.runner.status}'"
+            )
+
+        task = asyncio.create_task(
+            self._run_runner_task(frame.workflow_name, frame.runner)
+        )
+        frame.task = task
+        self.project.current_workflow = frame.workflow_name
+
+        logger.debug(
+            "manager.continue_current_runner", workflow_name=frame.workflow_name
+        )
+
+        return frame.runner
 
     async def restart_current_runner(
         self,
@@ -157,14 +192,12 @@ class BaseManager:
         self,
         workflow_name: str,
         runner: Runner,
-        initial_message: Optional[state.Message],
     ) -> None:
         frame = self._find_frame(workflow_name, runner)
         try:
             agen = runner.run()
             send: Optional[RunEventResp] = None
             while True:
-                logger.info("E1")
                 try:
                     if send is None:
                         event = await agen.__anext__()
@@ -195,7 +228,10 @@ class BaseManager:
         )
 
     def _on_runner_finished(self, frame: RunnerFrame) -> None:
-        self._runner_stack = [f for f in self._runner_stack if f is not frame]
+        frame.task = None
+        if frame.runner.status == state.RunnerStatus.FINISHED:
+            self._runner_stack = [f for f in self._runner_stack if f is not frame]
+
         if self._runner_stack:
             self.project.current_workflow = self._runner_stack[-1].workflow_name
         else:

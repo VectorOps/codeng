@@ -226,6 +226,8 @@ class PosixInputHandler(input_base.InputHandler):
         self._esc_time: float | None = None
         self._esc_sequence_timeout = esc_sequence_timeout
         self._select_idle_timeout = select_idle_timeout
+        self._sigint_installed = False
+        self._prev_sigint_handler: typing.Any | None = None
 
     async def run(self) -> None:
         self.start()
@@ -247,6 +249,7 @@ class PosixInputHandler(input_base.InputHandler):
         self._stop_event = asyncio.Event()
         self._setup_terminal()
         self._install_winch_handler()
+        self._install_sigint_handler()
         self._running = True
         thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._thread = thread
@@ -262,6 +265,7 @@ class PosixInputHandler(input_base.InputHandler):
             thread.join()
             self._thread = None
         self._remove_winch_handler()
+        self._remove_sigint_handler()
         self._teardown_terminal()
         self._loop = None
         self._stop_event = None
@@ -308,6 +312,49 @@ class PosixInputHandler(input_base.InputHandler):
         if loop is None or loop.is_closed():
             return
         loop.call_soon_threadsafe(self._emit_resize_event)
+
+    def _install_sigint_handler(self) -> None:
+        if not hasattr(signal, "SIGINT"):
+            return
+        if self._sigint_installed:
+            return
+        try:
+            prev = signal.getsignal(signal.SIGINT)
+            self._prev_sigint_handler = prev
+
+            def _handle_sigint(signum, frame) -> None:
+                _ = signum
+                _ = frame
+                loop = self._loop
+                if loop is None or loop.is_closed():
+                    return
+                event = input_base.KeyEvent(
+                    action="down",
+                    key="c",
+                    ctrl=True,
+                )
+                loop.call_soon_threadsafe(self.publish, event)
+
+            signal.signal(signal.SIGINT, _handle_sigint)
+            self._sigint_installed = True
+        except ValueError:
+            self._prev_sigint_handler = None
+
+    def _remove_sigint_handler(self) -> None:
+        if not self._sigint_installed:
+            return
+        if not hasattr(signal, "SIGINT"):
+            self._sigint_installed = False
+            self._prev_sigint_handler = None
+            return
+        prev = self._prev_sigint_handler
+        if prev is not None:
+            try:
+                signal.signal(signal.SIGINT, prev)
+            except ValueError:
+                pass
+        self._sigint_installed = False
+        self._prev_sigint_handler = None
 
     def _emit_resize_event(self) -> None:
         try:

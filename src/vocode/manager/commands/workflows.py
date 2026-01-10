@@ -37,16 +37,27 @@ async def register_workflow_commands(manager: CommandManager) -> None:
         if workflow_name not in config.workflows:
             raise CommandError(f"Unknown workflow '{workflow_name}'.")
 
-        print("1")
         await server.manager.stop_all_runners()
-        print("2")
         await server.manager.start_workflow(workflow_name)
-
-        print("START")
 
     await manager.register(
         "run",
         run_workflow,
         description="Stop all running workflows and start the given workflow",
         params=["<workflow-name>"],
+    )
+
+    async def continue_workflow(server, args: list[str]) -> None:
+        if args:
+            raise CommandError("Usage: /continue")
+
+        try:
+            await server.manager.continue_current_runner()
+        except RuntimeError as exc:
+            raise CommandError(str(exc)) from exc
+
+    await manager.register(
+        "continue",
+        continue_workflow,
+        description="Continue the current stopped workflow",
     )

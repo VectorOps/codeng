@@ -118,7 +118,6 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
         manager._run_runner_task(
             workflow_name="wf-manager-events",
             runner=runner,
-            initial_message=initial_message,
         )
     )
 
@@ -209,7 +208,6 @@ async def test_manager_status_events_are_stored_and_not_forwarded() -> None:
         manager._run_runner_task(
             workflow_name="wf-manager-status",
             runner=runner,
-            initial_message=initial_message,
         )
     )
 

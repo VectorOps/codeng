@@ -402,6 +402,8 @@ async def test_tui_state_input_history_navigation() -> None:
         on_input=on_input,
         input_handler=handler,
         on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
     )
     component = state._input_component
 
@@ -812,3 +814,61 @@ def test_component_style_bottom_margin_adds_empty_lines() -> None:
     )
 
     assert len(lines) == 3
+
+
+@pytest.mark.asyncio
+async def test_tui_state_ctrl_c_triggers_on_stop() -> None:
+    async def on_input(_: str) -> None:
+        return
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return
+
+    called: list[object] = []
+
+    async def on_stop() -> None:
+        called.append(object())
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=on_stop,
+        on_eof=None,
+    )
+    input_component = ui_state.terminal.components[-2]
+    event = input_base.KeyEvent(action="down", key="c", ctrl=True)
+    input_component.on_key_event(event)
+    await asyncio.sleep(0)
+    assert called
+
+
+@pytest.mark.asyncio
+async def test_tui_state_ctrl_d_triggers_on_eof() -> None:
+    async def on_input(_: str) -> None:
+        return
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return
+
+    called: list[object] = []
+
+    async def on_eof() -> None:
+        called.append(object())
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=on_eof,
+    )
+    input_component = ui_state.terminal.components[-2]
+    event = input_base.KeyEvent(action="down", key="d", ctrl=True)
+    input_component.on_key_event(event)
+    await asyncio.sleep(0)
+    assert called

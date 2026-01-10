@@ -30,6 +30,7 @@ class App:
         )
         self._push_msg_id = 0
         self._prompt: PromptMeta | None = None
+        self._recv_task: asyncio.Task[None] | None = None
 
         project = vocode_project.Project.from_base_path(self._project_path)
         self._ui_server = manager_server.UIServer(
@@ -51,6 +52,8 @@ class App:
         self._state = tui_uistate.TUIState(
             on_input=self.on_input,
             on_autocomplete_request=self.on_autocomplete_request,
+            on_stop=self.on_stop_request,
+            on_eof=self.on_eof_request,
         )
 
     def _next_msg_id(self) -> int:
@@ -68,13 +71,17 @@ class App:
         await self._state.start()
         await self._ui_server.start()
 
-        recv_task = asyncio.create_task(self._recv_loop())
+        self._recv_task = asyncio.create_task(self._recv_loop())
         try:
-            await recv_task
+            await self._recv_task
+        except asyncio.CancelledError:
+            pass
         finally:
             await self._state.stop()
-            recv_task.cancel()
+            if self._recv_task is not None:
+                self._recv_task.cancel()
             await self._ui_server.stop()
+            self._recv_task = None
 
     # Network packet hanbdlers
     def _register_handlers(self) -> None:
@@ -171,6 +178,19 @@ class App:
             payload=packet,
         )
 
+        await self._endpoint_ui.send(envelope)
+
+    async def on_eof_request(self) -> None:
+        recv_task = self._recv_task
+        if recv_task is not None:
+            recv_task.cancel()
+
+    async def on_stop_request(self) -> None:
+        packet = manager_proto.StopReqPacket()
+        envelope = manager_proto.BasePacketEnvelope(
+            msg_id=self._next_msg_id(),
+            payload=packet,
+        )
         await self._endpoint_ui.send(envelope)
 
     async def on_autocomplete_request(self, text: str, cursor: int) -> None:

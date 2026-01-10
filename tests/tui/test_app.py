@@ -18,7 +18,9 @@ async def test_tui_app_sends_user_input_packet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeTUIState:
-        def __init__(self, on_input, on_autocomplete_request=None) -> None:
+        def __init__(
+            self, on_input, on_autocomplete_request=None, on_stop=None, on_eof=None
+        ) -> None:
             self._on_input = on_input
 
         def add_markdown(self, markdown: str) -> None:
@@ -64,7 +66,9 @@ async def test_tui_app_clears_prompt_on_input_prompt_packet(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeTUIState:
-        def __init__(self, on_input, on_autocomplete_request=None) -> None:
+        def __init__(
+            self, on_input, on_autocomplete_request=None, on_stop=None, on_eof=None
+        ) -> None:
             self._on_input = on_input
             self.last_title: str | None = None
             self.last_subtitle: str | None = None
@@ -103,3 +107,50 @@ async def test_tui_app_clears_prompt_on_input_prompt_packet(
 
     assert state.last_title is None
     assert state.last_subtitle is None
+
+
+@pytest.mark.asyncio
+async def test_tui_app_sends_stop_request_packet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTUIState:
+        def __init__(
+            self, on_input, on_autocomplete_request=None, on_stop=None, on_eof=None
+        ) -> None:
+            self._on_input = on_input
+            self._on_stop = on_stop
+
+        def add_markdown(self, markdown: str) -> None:
+            return None
+
+        def set_input_panel_title(
+            self,
+            title: str | None,
+            subtitle: str | None = None,
+        ) -> None:
+            return None
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(tui_uistate, "TUIState", FakeTUIState)
+
+    monkeypatch.setattr(
+        vocode_project.Project,
+        "from_base_path",
+        classmethod(lambda cls, path: StubProject()),
+    )
+
+    app = App(project_path=tmp_path)
+
+    await app.on_stop_request()
+
+    envelope = await app._endpoint_server.recv()
+    payload = envelope.payload
+
+    assert payload.kind == manager_proto.BasePacketKind.STOP_REQ
+    assert isinstance(payload, manager_proto.StopReqPacket)

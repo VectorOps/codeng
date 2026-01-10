@@ -43,9 +43,13 @@ class TUIState:
         on_autocomplete_request: (
             typing.Callable[[str, int], typing.Awaitable[None]] | None
         ) = None,
+        on_stop: typing.Callable[[], typing.Awaitable[None]] | None = None,
+        on_eof: typing.Callable[[], typing.Awaitable[None]] | None = None,
     ) -> None:
         self._on_input = on_input
         self._on_autocomplete_request = on_autocomplete_request
+        self._on_stop = on_stop
+        self._on_eof = on_eof
         if input_handler is None:
             input_handler = input_handler_mod.PosixInputHandler()
         settings = tui_terminal.TerminalSettings()
@@ -117,6 +121,8 @@ class TUIState:
             tui_input_component.KeyBinding("p", ctrl=True): self._handle_history_up,
             tui_input_component.KeyBinding("down"): self._handle_history_down,
             tui_input_component.KeyBinding("n", ctrl=True): self._handle_history_down,
+            tui_input_component.KeyBinding("c", ctrl=True): self._handle_stop,
+            tui_input_component.KeyBinding("d", ctrl=True): self._handle_eof,
         }
 
     def _handle_input_key_event(self, event: input_base.KeyEvent) -> bool:
@@ -178,6 +184,20 @@ class TUIState:
         lines = component.lines
         if lines:
             component.set_cursor_position(0, 0)
+        return True
+
+    def _handle_stop(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        if self._on_stop is None:
+            return False
+        asyncio.create_task(self._on_stop())
+        return True
+
+    def _handle_eof(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        if self._on_eof is None:
+            return False
+        asyncio.create_task(self._on_eof())
         return True
 
     async def start(self) -> None:

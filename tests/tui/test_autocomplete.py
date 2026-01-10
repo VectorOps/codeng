@@ -32,6 +32,8 @@ async def test_tui_state_triggers_autocomplete_request_on_cursor_move() -> None:
         console=console,
         input_handler=DummyInputHandler(),
         on_autocomplete_request=on_autocomplete,
+        on_stop=None,
+        on_eof=None,
     )
     component = ui_state.terminal.components[-2]
     component.text = "hello"
@@ -54,6 +56,8 @@ def test_tui_state_autocomplete_stack_and_toolbar() -> None:
         console=None,
         input_handler=DummyInputHandler(),
         on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
     )
     terminal = ui_state.terminal
     assert len(terminal.components) == 3

@@ -46,6 +46,10 @@ class UIServer:
             manager_proto.BasePacketKind.AUTOCOMPLETE_REQ,
             self._on_autocomplete_packet,
         )
+        self._router.register(
+            manager_proto.BasePacketKind.STOP_REQ,
+            self._on_stop_packet,
+        )
 
     def _next_packet_id(self) -> int:
         self._push_msg_id += 1
@@ -320,6 +324,16 @@ class UIServer:
         items = await self._autocomplete.get_completions(req.text, req.cursor)
         resp = manager_proto.AutocompleteRespPacket(items=items)
         await self.send_packet(resp)
+        return None
+
+    async def _on_stop_packet(
+        self,
+        envelope: manager_proto.BasePacketEnvelope,
+    ) -> Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if payload.kind != manager_proto.BasePacketKind.STOP_REQ:
+            return None
+        await self._manager.stop_current_runner()
         return None
 
     async def on_ui_packet(self, envelope: manager_proto.BasePacketEnvelope) -> bool:
