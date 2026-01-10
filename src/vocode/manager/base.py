@@ -212,7 +212,7 @@ class BaseManager:
             logger.exception("BaseManager._run_runner_task exception", exc=ex)
             raise
         finally:
-            self._on_runner_finished(frame)
+            await self._on_runner_finished(frame)
 
     def _find_frame(self, workflow_name: str, runner: Runner) -> RunnerFrame:
         for frame in self._runner_stack:
@@ -227,9 +227,26 @@ class BaseManager:
             task=dummy_task,
         )
 
-    def _on_runner_finished(self, frame: RunnerFrame) -> None:
+    async def _on_runner_finished(self, frame: RunnerFrame) -> None:
+        runner = frame.runner
+        stats = frame.last_stats
+        if stats is None or stats.status != runner.status:
+            current_node_name: Optional[str] = None
+            if stats is not None:
+                current_node_name = stats.current_node_name
+            stats = runner_proto.RunStats(
+                status=runner.status,
+                current_node_name=current_node_name,
+            )
+            event = RunEventReq(
+                kind=runner_proto.RunEventReqKind.STATUS,
+                execution=runner.execution,
+                stats=stats,
+            )
+            await self._emit_run_event(frame, event)
+
         frame.task = None
-        if frame.runner.status == state.RunnerStatus.FINISHED:
+        if runner.status == state.RunnerStatus.FINISHED:
             self._runner_stack = [f for f in self._runner_stack if f is not frame]
 
         if self._runner_stack:
