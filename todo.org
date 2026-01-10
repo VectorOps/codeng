@@ -14,6 +14,7 @@
 ** [ ] Add a way for knowlt to return individual symbols from file by id. have compact ids, not uuids.
 ** [ ] Add context compression? How?
 ** [ ] Implement tool call formatters
+** [ ] LLM usage stats
 ** [ ] Child runner support
 *** [ ] Base implementation
 *** [ ] Stopping child runner and resuming
@@ -36,6 +37,7 @@
 - extend server to support commands
 ** [ ] Auto-complete support
 ** [ ] Add toolbar component under input
+*** [ ] Better toolbar
 ** [ ] TUI library
 *** [X] Refactor apply_style
 *** [X] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences

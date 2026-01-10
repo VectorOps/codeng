@@ -90,6 +90,10 @@ class App:
             self._handle_packet_runner_req,
         )
         self._router.register(
+            manager_proto.BasePacketKind.UI_STATE,
+            self._handle_packet_ui_state,
+        )
+        self._router.register(
             manager_proto.BasePacketKind.INPUT_PROMPT,
             self._handle_packet_input_prompt,
         )
@@ -118,6 +122,15 @@ class App:
         # Prompt presentation is driven by INPUT_PROMPT packets; ignore
         # any input_* fields on RunnerReq.
         self._state.handle_step(step)
+        return None
+
+    async def _handle_packet_ui_state(
+        self, envelope: manager_proto.BasePacketEnvelope
+    ) -> typing.Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if not isinstance(payload, manager_proto.UIServerStatePacket):
+            return None
+        self._state.handle_ui_state(payload)
         return None
 
     async def _handle_packet_input_prompt(

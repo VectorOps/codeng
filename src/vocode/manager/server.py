@@ -233,6 +233,7 @@ class UIServer:
         frame: RunnerFrame,
         event: runner_proto.RunEventReq,
     ) -> Optional[runner_proto.RunEventResp]:
+        # If we stopped running, cancel all input waiters
         stats = event.stats
         if stats is not None and stats.status in (
             state.RunnerStatus.STOPPED,
@@ -245,6 +246,7 @@ class UIServer:
             prompt_packet = manager_proto.InputPromptPacket()
             await self.send_packet(prompt_packet)
 
+        # Generate runner stack summary
         runners: list[manager_proto.RunnerStackFrame] = []
         for runner_frame in self._manager.runner_stack:
             stats = runner_frame.last_stats
@@ -261,7 +263,13 @@ class UIServer:
                 )
             )
 
+        # Send stack packet
         state_packet = manager_proto.UIServerStatePacket(
+            status=self._status,
+            runners=runners,
+        )
+        logger.info(
+            "STATE",
             status=self._status,
             runners=runners,
         )
