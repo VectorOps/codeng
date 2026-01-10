@@ -43,6 +43,7 @@ class StepType(str, Enum):
     APPROVAL = "approval"
     REJECTION = "rejection"
     PROMPT = "prompt"
+    PROMPT_CONFIRM = "prompt_confirm"
     TOOL_REQUEST = "tool_request"
     TOOL_RESULT = "tool_result"
 

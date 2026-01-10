@@ -117,7 +117,7 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
         assert event.step is not None
         step = event.step
         events.append(step)
-        if step.type == state.StepType.PROMPT:
+        if step.type in (state.StepType.PROMPT, state.StepType.PROMPT_CONFIRM):
             return RunEventResp(
                 resp_type=RunEventResponseType.APPROVE,
                 message=None,
@@ -164,11 +164,13 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
     node_exec = node_execs_by_name["node1"]
 
     output_steps = [s for s in events if s.type == state.StepType.OUTPUT_MESSAGE]
-    prompt_steps = [s for s in events if s.type == state.StepType.PROMPT]
+    prompt_steps = [s for s in events if s.type == state.StepType.PROMPT_CONFIRM]
     assert output_steps
     assert prompt_steps
 
-    prompt_steps_exec = [s for s in node_exec.steps if s.type == state.StepType.PROMPT]
+    prompt_steps_exec = [
+        s for s in node_exec.steps if s.type == state.StepType.PROMPT_CONFIRM
+    ]
     approval_steps = [s for s in node_exec.steps if s.type == state.StepType.APPROVAL]
     assert prompt_steps_exec
     assert approval_steps

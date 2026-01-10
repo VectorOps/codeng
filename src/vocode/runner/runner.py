@@ -537,9 +537,9 @@ class Runner:
                 raise RuntimeError(
                     "Executor yielded more than one complete step for a single run."
                 )
-            if (
-                last_complete_step is not None
-                and last_complete_step.type == state.StepType.PROMPT
+            if last_complete_step is not None and last_complete_step.type in (
+                state.StepType.PROMPT,
+                state.StepType.PROMPT_CONFIRM,
             ):
                 continue
 
@@ -668,7 +668,7 @@ class Runner:
                     )
                     prompt_step = state.Step(
                         execution=current_execution,
-                        type=state.StepType.PROMPT,
+                        type=state.StepType.PROMPT_CONFIRM,
                         message=prompt_message,
                     )
                     persisted_prompt = self._persist_step(prompt_step)

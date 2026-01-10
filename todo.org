@@ -15,6 +15,7 @@
 ** [ ] Add context compression? How?
 ** [ ] Implement tool call formatters
 ** [ ] LLM usage stats
+** [ ] Add history editing mode
 ** [ ] Child runner support
 *** [ ] Base implementation
 *** [ ] Stopping child runner and resuming

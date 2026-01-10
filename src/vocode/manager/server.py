@@ -169,9 +169,12 @@ class UIServer:
                     break
 
         input_required = False
-        if step.type == state.StepType.PROMPT:
+        if step.type in (state.StepType.PROMPT, state.StepType.PROMPT_CONFIRM):
             input_required = True
-            input_title = "Input"
+            if step.type == state.StepType.PROMPT_CONFIRM:
+                input_title = "Press enter to confirm or provide a reply"
+            else:
+                input_title = "Input"
         elif step.type == state.StepType.TOOL_REQUEST and needs_confirmation:
             input_required = True
             input_title = "Please confirm the tool call"
@@ -196,11 +199,26 @@ class UIServer:
         if step.type == state.StepType.PROMPT:
             waiter = self._push_input_waiter()
             resp_packet = await waiter
-            resp_type = runner_proto.RunEventResponseType.MESSAGE
+            return runner_proto.RunEventResp(
+                resp_type=runner_proto.RunEventResponseType.MESSAGE,
+                message=resp_packet.message,
+            )
+
+        if step.type == state.StepType.PROMPT_CONFIRM:
+            waiter = self._push_input_waiter()
+            resp_packet = await waiter
+
+            message_packet = resp_packet.message
+            text = message_packet.text if message_packet is not None else ""
+            if text:
+                return runner_proto.RunEventResp(
+                    resp_type=runner_proto.RunEventResponseType.MESSAGE,
+                    message=message_packet,
+                )
 
             return runner_proto.RunEventResp(
-                resp_type=resp_type,
-                message=resp_packet.message,
+                resp_type=runner_proto.RunEventResponseType.APPROVE,
+                message=None,
             )
 
         if step.type == state.StepType.TOOL_REQUEST:

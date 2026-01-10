@@ -287,7 +287,7 @@ async def test_runner_execution_flow():
         step = event.step
         execution = step.execution
 
-        if step.type == state.StepType.PROMPT and execution.node == "node1":
+        if step.type == state.StepType.PROMPT_CONFIRM and execution.node == "node1":
             prompt_count += 1
             if prompt_count == 1:
                 return RunEventResp(
@@ -343,7 +343,9 @@ async def test_runner_execution_flow():
     ]
     assert len(node1_input_steps) >= 2
 
-    prompt_steps = [e.step for e in events if e.step.type == state.StepType.PROMPT]
+    prompt_steps = [
+        e.step for e in events if e.step.type == state.StepType.PROMPT_CONFIRM
+    ]
     assert prompt_steps
     assert all(s.execution.node == "node1" for s in prompt_steps)
 

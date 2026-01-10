@@ -78,7 +78,10 @@ class TUIState:
         ] = {
             vocode_state.StepType.OUTPUT_MESSAGE: self._handle_output_message_step,
             vocode_state.StepType.INPUT_MESSAGE: self._handle_input_message_step,
+            vocode_state.StepType.APPROVAL: self._handle_approval_step,
+            vocode_state.StepType.REJECTION: self._handle_rejection_step,
             vocode_state.StepType.PROMPT: self._handle_prompt_step,
+            vocode_state.StepType.PROMPT_CONFIRM: self._handle_prompt_step,
             vocode_state.StepType.TOOL_REQUEST: self._handle_tool_request_step,
         }
 
@@ -355,6 +358,25 @@ class TUIState:
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )
 
+    def _handle_approval_step(self, step: vocode_state.Step) -> None:
+        _ = step
+        self.add_rich_text(
+            "User approved.",
+            component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
+        )
+
+    def _handle_rejection_step(self, step: vocode_state.Step) -> None:
+        message = step.message
+        text = "User declined."
+        if message is not None:
+            raw = message.text.strip()
+            if raw:
+                text = raw
+        self.add_markdown(
+            text,
+            component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
+        )
+
     def _handle_tool_request_step(self, step: vocode_state.Step) -> None:
         markdown = self._format_tool_request_markdown(step)
         if markdown is None:
@@ -372,6 +394,7 @@ class TUIState:
         self.add_markdown(markdown)
 
     def handle_step(self, step: vocode_state.Step) -> None:
+        logger.info("uistep", step=step)
         mode = step.output_mode
         if mode == vocode_models.OutputMode.HIDE_ALL:
             if step.message is not None:
