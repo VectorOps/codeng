@@ -245,6 +245,78 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    node_execution = state.NodeExecution(
+        node="node1",
+        status=state.RunStatus.RUNNING,
+    )
+    execution = state.WorkflowExecution(workflow_name="wf-ui-server-user-input-confirm")
+    execution.node_executions[node_execution.id] = node_execution
+    step = state.Step(
+        execution=node_execution,
+        type=state.StepType.PROMPT_CONFIRM,
+    )
+    execution.steps.append(step)
+    event = runner_proto.RunEventReq(
+        kind=runner_proto.RunEventReqKind.STEP,
+        execution=execution,
+        step=step,
+    )
+
+    class DummyRunner:
+        pass
+
+    async def dummy_coro() -> None:
+        await asyncio.Event().wait()
+
+    dummy_task = asyncio.create_task(dummy_coro())
+    frame = RunnerFrame(
+        workflow_name="wf-ui-server-user-input-confirm",
+        runner=DummyRunner(),
+        initial_message=None,
+        task=dummy_task,
+    )
+
+    response_task = asyncio.create_task(server.on_runner_event(frame, event))
+
+    _ = await client_endpoint.recv()
+    prompt_envelope = await client_endpoint.recv()
+    prompt_payload = prompt_envelope.payload
+    assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
+    assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
+    assert prompt_payload.title == "Press enter to confirm or provide a reply"
+
+    user_message = state.Message(
+        role=models.Role.USER,
+        text="",
+    )
+    user_input_packet = manager_proto.UserInputPacket(
+        message=user_message,
+    )
+    response_envelope = manager_proto.BasePacketEnvelope(
+        msg_id=prompt_envelope.msg_id + 1,
+        payload=user_input_packet,
+    )
+    await client_endpoint.send(response_envelope)
+
+    server_incoming = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_incoming)
+    assert handled is True
+
+    resp = await response_task
+    assert resp is not None
+    assert resp.resp_type == runner_proto.RunEventResponseType.APPROVE
+
+    dummy_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dummy_task
+
+
+@pytest.mark.asyncio
 async def test_uiserver_autostarts_default_workflow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

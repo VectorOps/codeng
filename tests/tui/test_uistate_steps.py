@@ -215,6 +215,56 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
     assert "final" not in output
 
 
+@pytest.mark.asyncio
+async def test_tui_state_renders_approval_and_rejection_steps() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+    terminal = ui_state.terminal
+
+    execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+
+    approval_step = state.Step(
+        execution=execution,
+        type=state.StepType.APPROVAL,
+    )
+    ui_state.handle_step(approval_step)
+
+    rejection_message = state.Message(
+        role=models.Role.USER,
+        text="Rejected because of reasons.",
+    )
+    rejection_step = state.Step(
+        execution=execution,
+        type=state.StepType.REJECTION,
+        message=rejection_message,
+    )
+    ui_state.handle_step(rejection_step)
+
+    await terminal.render()
+    output = buffer.getvalue()
+    assert "User approved." in output
+    assert "Rejected because of reasons." in output
+
+
 def test_tui_state_history_up_places_cursor_on_last_row() -> None:
     async def on_input(_: str) -> None:
         return None
