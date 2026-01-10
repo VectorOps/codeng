@@ -189,26 +189,35 @@ class UIServer:
         )
         await self.send_packet(packet)
 
-        if input_required:
-            prompt_packet = manager_proto.InputPromptPacket(
-                title=input_title,
-                subtitle=input_subtitle,
+        if not input_required:
+            if step.type == state.StepType.TOOL_REQUEST and not needs_confirmation:
+                return runner_proto.RunEventResp(
+                    resp_type=runner_proto.RunEventResponseType.APPROVE,
+                    message=None,
+                )
+
+            return runner_proto.RunEventResp(
+                resp_type=runner_proto.RunEventResponseType.NOOP,
+                message=None,
             )
-            await self.send_packet(prompt_packet)
+
+        prompt_packet = manager_proto.InputPromptPacket(
+            title=input_title,
+            subtitle=input_subtitle,
+        )
+        await self.send_packet(prompt_packet)
+
+        waiter = self._push_input_waiter()
+        resp_packet = await waiter
+        message_packet = resp_packet.message
 
         if step.type == state.StepType.PROMPT:
-            waiter = self._push_input_waiter()
-            resp_packet = await waiter
             return runner_proto.RunEventResp(
                 resp_type=runner_proto.RunEventResponseType.MESSAGE,
-                message=resp_packet.message,
+                message=message_packet,
             )
 
         if step.type == state.StepType.PROMPT_CONFIRM:
-            waiter = self._push_input_waiter()
-            resp_packet = await waiter
-
-            message_packet = resp_packet.message
             text = message_packet.text if message_packet is not None else ""
             if text:
                 return runner_proto.RunEventResp(
@@ -222,23 +231,13 @@ class UIServer:
             )
 
         if step.type == state.StepType.TOOL_REQUEST:
-            if not needs_confirmation:
-                return runner_proto.RunEventResp(
-                    resp_type=runner_proto.RunEventResponseType.APPROVE,
-                    message=None,
-                )
-
-            waiter = self._push_input_waiter()
-            resp_packet = await waiter
-
             resp_type = runner_proto.RunEventResponseType.APPROVE
-            if resp_packet.message is not None:
-                if resp_packet.message.text:
-                    resp_type = runner_proto.RunEventResponseType.DECLINE
+            if message_packet is not None and message_packet.text:
+                resp_type = runner_proto.RunEventResponseType.DECLINE
 
             return runner_proto.RunEventResp(
                 resp_type=resp_type,
-                message=resp_packet.message,
+                message=message_packet,
             )
 
         return runner_proto.RunEventResp(
