@@ -420,7 +420,6 @@ class Runner:
         ):
             current_execution.status = state.RunStatus.STOPPED
         return True
-        # NOTE: self.status handled by caller via _set_status and emitted event
 
     def stop(self) -> None:
         if self.status in (
@@ -452,8 +451,6 @@ class Runner:
 
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
-        logger.info("runner.run")
-
         if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
             raise RuntimeError(
                 f"run() not allowed when runner status is '{self.status}'. Allowed: 'idle', 'stopped'"

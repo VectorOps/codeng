@@ -9,6 +9,7 @@ from rich import console as rich_console
 from vocode import state as vocode_state
 from vocode import models as vocode_models
 from vocode.logger import logger
+from vocode.manager import proto as manager_proto
 from vocode.tui import lib as tui_terminal
 from vocode.tui import styles as tui_styles
 from vocode.tui import history as tui_history
@@ -87,6 +88,7 @@ class TUIState:
         toolbar = tui_rich_text_component.RichTextComponent(
             "", id="toolbar", component_style=tui_styles.TOOLBAR_COMPONENT_STYLE
         )
+        self._base_toolbar_component = toolbar
         self._toolbar_component = toolbar
         self._terminal.append_component(toolbar)
 
@@ -102,6 +104,7 @@ class TUIState:
         self._autocomplete_task: asyncio.Task[None] | None = None
         self._last_autocomplete_text: str | None = None
         self._last_autocomplete_cursor: int | None = None
+        self._ui_state: manager_proto.UIServerStatePacket | None = None
 
     @property
     def terminal(self) -> tui_terminal.Terminal:
@@ -110,6 +113,10 @@ class TUIState:
     @property
     def history(self) -> tui_history.HistoryManager:
         return self._history_manager
+
+    @property
+    def last_ui_state(self) -> manager_proto.UIServerStatePacket | None:
+        return self._ui_state
 
     def _create_input_keymap(
         self,
@@ -378,6 +385,10 @@ class TUIState:
             return
         self._handle_default_step(step)
 
+    def handle_ui_state(self, packet: manager_proto.UIServerStatePacket) -> None:
+        self._ui_state = packet
+        self._update_toolbar_from_ui_state()
+
     def set_input_panel_title(
         self,
         title: str | None,
@@ -512,3 +523,17 @@ class TUIState:
         if terminal is not None:
             if self._toolbar_component not in terminal.components:
                 terminal.append_component(self._toolbar_component)
+
+    def _update_toolbar_from_ui_state(self) -> None:
+        toolbar = self._base_toolbar_component
+        ui_state = self._ui_state
+        text = ""
+        if ui_state is not None and ui_state.runners:
+            frame = ui_state.runners[-1]
+            workflow_name = frame.workflow_name
+            node_name = frame.node_name
+            if node_name:
+                text = f"{workflow_name}@{node_name}"
+            else:
+                text = workflow_name
+        toolbar.text = text
