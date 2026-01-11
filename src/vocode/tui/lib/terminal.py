@@ -426,17 +426,14 @@ class Terminal:
             self._print_lines(lines_to_output)
             new_cursor_line = row + len(lines_to_output)
         else:
-            padded_lines: tui_base.Lines = []
-            for line in lines_to_output:
-                current_len = sum(len(segment.text) for segment in line)
-                if current_len < width:
-                    pad = width - current_len
-                    if pad > 0:
-                        line = list(line)
-                        line.append(rich_segment.Segment(" " * pad))
-                padded_lines.append(line)
+            if lines_to_output:
+                cleared_lines: tui_base.Lines = []
+                for line in lines_to_output:
+                    new_line = [tui_controls.CustomControl.erase_line_end().segment]
+                    new_line.extend(line)
+                    cleared_lines.append(new_line)
 
-            self._print_lines(padded_lines)
+                self._print_lines(cleared_lines)
             new_cursor_line = row + len(lines_to_output)
             self._console.control(tui_controls.CustomControl.erase_down())
 

@@ -12,6 +12,7 @@ ERASE_SCREEN: typing.Final[str] = "\x1b[2J"
 CURSOR_HOME: typing.Final[str] = "\x1b[H"
 CURSOR_COLUMN_1: typing.Final[str] = "\x1b[1G"
 ERASE_DOWN: typing.Final[str] = "\x1b[J"
+ERASE_LINE_END: typing.Final[str] = "\x1b[K"
 CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = "\x1b[{}F"
 
 
@@ -44,3 +45,7 @@ class CustomControl(rich_control.Control):
     @classmethod
     def cursor_previous_line(cls, count: int) -> "CustomControl":
         return cls(CURSOR_PREVIOUS_LINE_FMT.format(count))
+
+    @classmethod
+    def erase_line_end(cls) -> "CustomControl":
+        return cls(ERASE_LINE_END)
