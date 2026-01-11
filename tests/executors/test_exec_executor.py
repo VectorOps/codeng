@@ -43,7 +43,6 @@ def test_exec_executor_streaming(tmp_path: Path) -> None:
         steps: list[state.Step] = []
         async for step in executor.run(inp):
             steps.append(step)
-            print(step.message)
 
         assert steps
 

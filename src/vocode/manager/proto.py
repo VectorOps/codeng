@@ -82,14 +82,20 @@ class AutocompleteReqPacket(BaseModel):
         default=BasePacketKind.AUTOCOMPLETE_REQ
     )
     text: str
-    cursor: int
+    row: int
+    col: int
 
 
 class AutocompleteRespPacket(BaseModel):
     kind: typing.Literal[BasePacketKind.AUTOCOMPLETE_RESP] = Field(
         default=BasePacketKind.AUTOCOMPLETE_RESP
     )
-    items: list[str] = Field(default_factory=list)
+    items: list["AutocompleteItem"] = Field(default_factory=list)
+
+
+class AutocompleteItem(BaseModel):
+    title: str
+    value: Optional[str] = None
 
 
 class TextMessageFormat(str, Enum):

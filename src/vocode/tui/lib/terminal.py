@@ -299,16 +299,29 @@ class Terminal:
         asyncio.run(_main())
 
     def _full_render(self) -> None:
-        new_cache: typing.Dict[tui_base.Component, tui_base.Lines] = {}
         options = self._console.options
-        for component in self._components:
+
+        for component in self._dirty_components:
             lines = component.render(options)
-            new_cache[component] = lines
+            self._cache[component] = lines
 
         all_lines: tui_base.Lines = []
         for component in self._components:
-            lines = new_cache.get(component, [])
+            lines = self._cache.get(component, [])
             all_lines.extend(lines)
+
+            component.is_visible = False
+
+        height = self._console.size.height
+        if height > 0:
+            covered = 0
+            for component in reversed(self._components):
+                if covered >= height:
+                    break
+                component.is_visible = True
+                lines = self._cache.get(component, [])
+                covered += len(lines)
+
         self._console.control(tui_controls.CustomControl.sync_update_start())
         self._console.control(
             tui_controls.CustomControl.erase_scrollback(),
@@ -318,8 +331,6 @@ class Terminal:
         self._print_lines(all_lines)
         self._set_cursor_line(len(all_lines))
         self._console.control(tui_controls.CustomControl.sync_update_end())
-
-        self._cache = new_cache
 
     def _incremental_render(
         self, changed_components: typing.Set[tui_base.Component]
@@ -431,6 +442,37 @@ class Terminal:
 
         self._set_cursor_line(new_cursor_line)
         self._console.control(tui_controls.CustomControl.sync_update_end())
+
+        # Update component visibility using a conservative bottom-up band and cleanup
+        n_components = len(self._components)
+        prev_first_visible = None
+        for index in range(n_components - 1, -1, -1):
+            if not self._components[index].is_visible:
+                break
+            prev_first_visible = index
+
+        visible_budget = self._cursor_line
+        new_first_visible = None
+        for index in range(n_components - 1, -1, -1):
+            if visible_budget <= 0:
+                break
+
+            component = self._components[index]
+            cached_lines = self._cache.get(component, ())
+            line_count = len(cached_lines)
+
+            if line_count <= 0:
+                component.is_visible = False
+                continue
+
+            component.is_visible = True
+            visible_budget -= line_count
+            new_first_visible = index
+
+        if prev_first_visible is not None and new_first_visible is not None:
+            if prev_first_visible < new_first_visible:
+                for index in range(prev_first_visible, new_first_visible):
+                    self._components[index].is_visible = False
 
         return True
 

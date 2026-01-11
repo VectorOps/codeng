@@ -206,8 +206,8 @@ class App:
         )
         await self._endpoint_ui.send(envelope)
 
-    async def on_autocomplete_request(self, text: str, cursor: int) -> None:
-        packet = manager_proto.AutocompleteReqPacket(text=text, cursor=cursor)
+    async def on_autocomplete_request(self, text: str, row: int, col: int) -> None:
+        packet = manager_proto.AutocompleteReqPacket(text=text, row=row, col=col)
         envelope = manager_proto.BasePacketEnvelope(
             msg_id=self._next_msg_id(),
             payload=packet,
