@@ -9,7 +9,8 @@
 ** [X] Create Step renderer in TUI client
 ** [X] Add input request stack to TUI
 ** [X] Set input header depending on the top of the input stack
-** [ ] Fix APPROVE/DECLINE rendering
+** [X] Fix APPROVE/DECLINE rendering
+** [ ] Do not pad lines with spaces - it breaks copy-paste
 ** [ ] Fix knowlt summary documentation generation - it adds python docstring twice
 ** [ ] Add a way for knowlt to return individual symbols from file by id. have compact ids, not uuids.
 ** [ ] Add context compression? How?
@@ -25,7 +26,7 @@
 ** [X] Create a separate BaseModel for runner generator responses, do not use Step. Convert response to a step.
 ** [X] Tool rejection might include a message - pass that as a tool response
 ** [ ] Correctly handle incorrect response to PROMPT
-** [ ] Extend PROMPT Step to have mode (message, approval, etc)
+** [X] Extend PROMPT Step to have mode (message, approval, etc)
 * [X] Migrate tools
 * [X] Migrate nodes
 * [ ] UI

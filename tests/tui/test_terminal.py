@@ -872,3 +872,43 @@ async def test_tui_state_ctrl_d_triggers_on_eof() -> None:
     input_component.on_key_event(event)
     await asyncio.sleep(0)
     assert called
+
+
+@pytest.mark.asyncio
+async def test_component_visibility_full_and_incremental_render() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        height=3,
+    )
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    top = MultiLineComponent(["top1", "top2"], id="top")
+    bottom = MultiLineComponent(["bottom1", "bottom2"], id="bottom")
+
+    terminal.append_component(top)
+    terminal.append_component(bottom)
+
+    await terminal.render()
+
+    assert top.is_visible
+    assert bottom.is_visible
+
+    bottom.lines.append("bottom3")
+    terminal.notify_component(bottom)
+
+    await terminal.render()
+
+    assert not top.is_visible
+    assert bottom.is_visible
+
+    top.lines = ["top1"]
+    terminal.notify_component(top)
+
+    await terminal.render()
+
+    assert not top.is_visible
+    assert bottom.is_visible

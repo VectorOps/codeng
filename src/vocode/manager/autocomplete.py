@@ -1,23 +1,48 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import ClassVar, Optional
+import dataclasses
 
-from typing import Awaitable, Callable, Optional
+if TYPE_CHECKING:
+    from .server import UIServer
 
 
-AutocompleteProvider = Callable[[str, int], Awaitable[Optional[list[str]]]]
+@dataclasses.dataclass
+class AutocompleteItem:
+    title: str
+    value: str | None = None
+
+
+AutocompleteProvider = Callable[
+    ["UIServer", str, int, int], Awaitable[Optional[list[AutocompleteItem]]]
+]
 
 
 class AutocompleteManager:
+    _default_providers: ClassVar[list[AutocompleteProvider]] = []
+
     def __init__(self) -> None:
-        self._providers: list[AutocompleteProvider] = []
+        self._providers: list[AutocompleteProvider] = list(self._default_providers)
+
+    @classmethod
+    def register_default(cls, provider: AutocompleteProvider) -> AutocompleteProvider:
+        cls._default_providers.append(provider)
+        return provider
 
     def register(self, provider: AutocompleteProvider) -> None:
         self._providers.append(provider)
 
-    async def get_completions(self, text: str, cursor: int) -> list[str]:
-        results: list[str] = []
+    async def get_completions(
+        self,
+        server: "UIServer",
+        text: str,
+        row: int,
+        col: int,
+    ) -> list[AutocompleteItem]:
+        results: list[AutocompleteItem] = []
         for provider in self._providers:
-            items = await provider(text, cursor)
+            items = await provider(server, text, row, col)
             if items is None:
                 continue
             results.extend(items)

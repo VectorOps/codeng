@@ -346,8 +346,17 @@ class UIServer:
         if payload.kind != manager_proto.BasePacketKind.AUTOCOMPLETE_REQ:
             return None
         req = cast(manager_proto.AutocompleteReqPacket, payload)
-        items = await self._autocomplete.get_completions(req.text, req.cursor)
-        resp = manager_proto.AutocompleteRespPacket(items=items)
+        items = await self._autocomplete.get_completions(
+            self,
+            req.text,
+            req.row,
+            req.col,
+        )
+        resp_items = [
+            manager_proto.AutocompleteItem(title=item.title, value=item.value)
+            for item in items
+        ]
+        resp = manager_proto.AutocompleteRespPacket(items=resp_items)
         await self.send_packet(resp)
         return None
 

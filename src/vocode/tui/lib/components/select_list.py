@@ -4,7 +4,6 @@ import typing
 
 from pydantic import BaseModel
 from rich import console as rich_console
-from rich import markdown as rich_markdown
 from rich import segment as rich_segment
 from rich import style as rich_style
 from rich import text as rich_text
@@ -20,6 +19,7 @@ SELECTED_STYLE: typing.Final[rich_style.Style] = rich_style.Style(reverse=True)
 class SelectItem(BaseModel):
     id: str
     text: str
+    value: str | None = None
 
 
 class SelectListComponent(tui_base.Component):
@@ -168,9 +168,9 @@ class SelectListComponent(tui_base.Component):
         visible_items = self._items[start:end]
         lines: tui_base.Lines = []
         for index, item in enumerate(visible_items):
-            markdown = rich_markdown.Markdown(item.text)
+            text = rich_text.Text(item.text)
             item_lines = console.render_lines(
-                markdown,
+                text,
                 options=options,
                 pad=False,
                 new_lines=False,

@@ -89,6 +89,7 @@ class Component(ABC):
         self.id = id
         self.terminal: TerminalLike | None = None
         self.component_style = component_style
+        self.is_visible: bool = False
 
     @abstractmethod
     def render(self, options: rich_console.ConsoleOptions) -> Lines:

@@ -14,6 +14,7 @@ from vocode.manager.server import UIServer
 from vocode.manager import proto as manager_proto
 from vocode.runner import proto as runner_proto
 from tests.stub_project import StubProject
+from vocode.manager import autocomplete_providers as autocomplete_providers
 
 
 @pytest.mark.asyncio
@@ -141,7 +142,7 @@ async def test_uiserver_handles_autocomplete_request() -> None:
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
-    req = manager_proto.AutocompleteReqPacket(text="he", cursor=2)
+    req = manager_proto.AutocompleteReqPacket(text="he", row=0, col=2)
     envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=req)
     await client_endpoint.send(envelope)
 
@@ -154,6 +155,26 @@ async def test_uiserver_handles_autocomplete_request() -> None:
     assert resp_payload.kind == manager_proto.BasePacketKind.AUTOCOMPLETE_RESP
     assert isinstance(resp_payload, manager_proto.AutocompleteRespPacket)
     assert resp_payload.items == []
+
+
+@pytest.mark.asyncio
+async def test_run_autocomplete_provider_uses_workflow_name_values() -> None:
+    project = StubProject()
+    workflow_name = "wf-auto"
+    project.settings.workflows[workflow_name] = vocode_settings.WorkflowConfig()
+    server_endpoint, _ = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    items = await autocomplete_providers.run_autocomplete_provider(
+        server,
+        "/run ",
+        0,
+        5,
+    )
+
+    assert items is not None
+    assert [item.title for item in items] == ["/run wf-auto - workflow"]
+    assert [item.value for item in items] == [workflow_name]
 
 
 @pytest.mark.asyncio
