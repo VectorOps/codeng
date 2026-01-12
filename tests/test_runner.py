@@ -1006,6 +1006,206 @@ async def test_runner_resume_from_input_message_re_runs_executor():
 
 
 @pytest.mark.asyncio
+async def test_runner_emits_waiting_input_status_for_prompt_steps():
+    node = InputNode(
+        name="input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        message="Say something",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-waiting-input-prompt", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=None,
+    )
+
+    agen = runner.run()
+
+    def handler(event: RunEvent) -> RunEventResp:
+        if event.step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        step = event.step
+        if step.type == state.StepType.PROMPT and step.execution.node == "input-node":
+            user_message = state.Message(
+                role=models.Role.USER,
+                text="user-text",
+            )
+            return RunEventResp(
+                resp_type=RunEventResponseType.MESSAGE,
+                message=user_message,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=False)
+
+    status_events: list[tuple[int, RunEvent]] = [
+        (i, e) for i, e in enumerate(events) if e.step is None and e.stats is not None
+    ]
+    waiting_indices = [
+        idx
+        for idx, ev in status_events
+        if ev.stats is not None
+        and ev.stats.status == state.RunnerStatus.WAITING_INPUT
+        and ev.stats.current_node_name == "input-node"
+    ]
+    assert waiting_indices
+    first_wait_idx = waiting_indices[0]
+    running_indices = [
+        idx
+        for idx, ev in status_events
+        if ev.stats is not None
+        and ev.stats.status == state.RunnerStatus.RUNNING
+        and ev.stats.current_node_name == "input-node"
+    ]
+    assert running_indices
+    assert any(run_idx > first_wait_idx for run_idx in running_indices)
+
+
+@pytest.mark.asyncio
+async def test_runner_emits_waiting_input_status_for_initial_need_input():
+    node = models.Node(
+        name="root",
+        type="initial-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = InitialInputWorkflow(name="wf-waiting-input-initial", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=None,
+    )
+
+    agen = runner.run()
+    expected_text = "user-initial-message"
+
+    def handler(event: RunEvent) -> RunEventResp:
+        step = event.step
+        if step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        if step.type == state.StepType.PROMPT and step.execution.node == "root":
+            user_message = state.Message(
+                role=models.Role.USER,
+                text=expected_text,
+            )
+            return RunEventResp(
+                resp_type=RunEventResponseType.MESSAGE,
+                message=user_message,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=False)
+
+    status_events: list[tuple[int, RunEvent]] = [
+        (i, e) for i, e in enumerate(events) if e.step is None and e.stats is not None
+    ]
+    waiting_indices = [
+        idx
+        for idx, ev in status_events
+        if ev.stats is not None
+        and ev.stats.status == state.RunnerStatus.WAITING_INPUT
+        and ev.stats.current_node_name == "root"
+    ]
+    assert waiting_indices
+    first_wait_idx = waiting_indices[0]
+    running_indices = [
+        idx
+        for idx, ev in status_events
+        if ev.stats is not None
+        and ev.stats.status == state.RunnerStatus.RUNNING
+        and ev.stats.current_node_name == "root"
+    ]
+    assert running_indices
+    first_run_idx = running_indices[0]
+    assert first_run_idx > first_wait_idx
+
+
+@pytest.mark.asyncio
+async def test_runner_emits_waiting_input_status_for_tool_confirmation():
+    node = models.Node(
+        name="tool-node",
+        type="tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-waiting-input-tool", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    agen = runner.run()
+
+    def handler(event: RunEvent) -> RunEventResp:
+        step = event.step
+        if step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        if (
+            step.type == state.StepType.TOOL_REQUEST
+            and step.message is not None
+            and step.message.tool_call_requests
+        ):
+            return RunEventResp(
+                resp_type=RunEventResponseType.APPROVE,
+                message=None,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=False)
+
+    status_events: list[tuple[int, RunEvent]] = [
+        (i, e) for i, e in enumerate(events) if e.step is None and e.stats is not None
+    ]
+    waiting_indices = [
+        idx
+        for idx, ev in status_events
+        if ev.stats is not None
+        and ev.stats.status == state.RunnerStatus.WAITING_INPUT
+        and ev.stats.current_node_name == "tool-node"
+    ]
+    assert waiting_indices
+    first_wait_idx = waiting_indices[0]
+    running_indices = [
+        idx
+        for idx, ev in status_events
+        if ev.stats is not None
+        and ev.stats.status == state.RunnerStatus.RUNNING
+        and ev.stats.current_node_name == "tool-node"
+    ]
+    assert running_indices
+    assert any(run_idx > first_wait_idx for run_idx in running_indices)
+
+
+@pytest.mark.asyncio
 async def test_input_node_prompts_and_returns_user_message_as_output():
     node = InputNode(
         name="input-node",

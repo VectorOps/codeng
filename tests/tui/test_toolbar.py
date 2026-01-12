@@ -59,6 +59,10 @@ def test_tui_state_updates_toolbar_from_ui_state() -> None:
     ui_state.handle_ui_state(packet)
 
     assert toolbar.text == "wf-toolbar@node-toolbar"
+    renderable = toolbar._build_renderable(rich_console.Console())
+    rendered_text = str(renderable)
+    assert "wf-toolbar@node-toolbar" in rendered_text
+    assert "running" in rendered_text
 
 
 @pytest.mark.asyncio

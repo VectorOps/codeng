@@ -2,6 +2,7 @@ from typing import Optional, Dict, AsyncIterator
 
 from vocode import models, state
 from vocode import settings as vocode_settings
+from vocode.lib.date import utcnow
 from vocode.logger import logger
 from vocode.project import Project
 from vocode.graph import RuntimeGraph
@@ -457,13 +458,31 @@ class Runner:
             stats=stats,
         )
 
+    def _set_running_after_input(
+        self,
+        current_execution: Optional[state.NodeExecution],
+    ) -> Optional[RunEventReq]:
+        if self.status in (
+            state.RunnerStatus.STOPPED,
+            state.RunnerStatus.FINISHED,
+        ):
+            return None
+        if self.status != state.RunnerStatus.WAITING_INPUT:
+            return None
+        return self._set_status(
+            state.RunnerStatus.RUNNING,
+            current_execution=current_execution,
+        )
+
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
+        # Status verification
         if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
             raise RuntimeError(
                 f"run() not allowed when runner status is '{self.status}'. Allowed: 'idle', 'stopped'"
             )
 
+        # Calculate resume state, if any
         self._stop_requested = False
 
         (
@@ -481,12 +500,19 @@ class Runner:
             _ = yield status_event
             return
 
+        # See if we need initial input
         if (
             self.need_input
             and self.initial_message is None
             and not self.execution.steps
             and current_execution is not None
         ):
+            waiting_event = self._set_status(
+                state.RunnerStatus.WAITING_INPUT,
+                current_execution=current_execution,
+            )
+            _ = yield waiting_event
+
             prompt_text = self.need_input_prompt or "What are we doing today?"
             prompt_message = state.Message(
                 role=models.Role.ASSISTANT,
@@ -523,6 +549,8 @@ class Runner:
                     )
                     _ = yield stop_event
                     return
+
+        # Initialize runner loop
         status_event = self._set_status(
             state.RunnerStatus.RUNNING,
             current_execution=current_execution,
@@ -548,11 +576,21 @@ class Runner:
                 skip_executor_for_current = False
                 use_resume_step = None
             else:
+                # Intermediate executor loop
                 async for step in executor.run(executor_input):
                     node_output_mode = current_runtime_node.model.output_mode
                     if step.output_mode != node_output_mode:
                         step.output_mode = node_output_mode
                     persisted_step = self._persist_step(step)
+                    if step.type in (
+                        state.StepType.PROMPT,
+                        state.StepType.PROMPT_CONFIRM,
+                    ):
+                        waiting_event = self._set_status(
+                            state.RunnerStatus.WAITING_INPUT,
+                            current_execution=current_execution,
+                        )
+                        _ = yield waiting_event
                     req = RunEventReq(
                         kind=runner_proto.RunEventReqKind.STEP,
                         execution=self.execution,
@@ -576,6 +614,15 @@ class Runner:
                             _ = yield stop_event
                             return
 
+                    if persisted_step.type in (
+                        state.StepType.PROMPT,
+                        state.StepType.PROMPT_CONFIRM,
+                    ):
+                        resume_status_event = self._set_running_after_input(
+                            current_execution
+                        )
+                        if resume_status_event is not None:
+                            _ = yield resume_status_event
                     if persisted_step.is_complete:
                         complete_step_count += 1
                         last_complete_step = persisted_step
@@ -615,6 +662,13 @@ class Runner:
                         )
                         tool_request_steps[id(req)] = persisted_prompt
 
+                        if not is_auto_approved:
+                            waiting_event = self._set_status(
+                                state.RunnerStatus.WAITING_INPUT,
+                                current_execution=current_execution,
+                            )
+                            _ = yield waiting_event
+
                         req_event = RunEventReq(
                             kind=runner_proto.RunEventReqKind.STEP,
                             execution=self.execution,
@@ -646,6 +700,12 @@ class Runner:
                                 return
 
                         before_len = len(approved)
+                        if not is_auto_approved:
+                            resume_status_event = self._set_running_after_input(
+                                current_execution
+                            )
+                            if resume_status_event is not None:
+                                _ = yield resume_status_event
                         handled = self._process_tool_approval_response(
                             req,
                             response_step,
@@ -685,6 +745,7 @@ class Runner:
                         if tool_step is None:
                             continue
                         req.status = state.ToolCallReqStatus.COMPLETE
+                        req.handled_at = utcnow()
                         tool_step.is_final = True
                         status_event = RunEventReq(
                             kind=runner_proto.RunEventReqKind.STEP,
@@ -707,7 +768,7 @@ class Runner:
 
                 continue
 
-            # Node transition
+            # Node confirmation logic
             confirmation_mode = current_runtime_node.model.confirmation
             loop_current_node = False
 
@@ -729,6 +790,13 @@ class Runner:
                         message=prompt_message,
                     )
                     persisted_prompt = self._persist_step(prompt_step)
+
+                    waiting_event = self._set_status(
+                        state.RunnerStatus.WAITING_INPUT,
+                        current_execution=current_execution,
+                    )
+                    _ = yield waiting_event
+
                     req_event = RunEventReq(
                         kind=runner_proto.RunEventReqKind.STEP,
                         execution=self.execution,
@@ -754,6 +822,11 @@ class Runner:
                             _ = yield stop_event
                             return
 
+                    resume_status_event = self._set_running_after_input(
+                        current_execution
+                    )
+                    if resume_status_event is not None:
+                        _ = yield resume_status_event
                     if (
                         response_step is not None
                         and response_step.type == state.StepType.INPUT_MESSAGE
@@ -867,6 +940,7 @@ class Runner:
                 _ = yield status_event
                 return
 
+            # Node transition logic
             next_input_messages = self._build_next_input_messages(
                 current_execution,
                 current_runtime_node.model,

@@ -17,6 +17,7 @@ from vocode.tui.lib.components import markdown_component as tui_markdown_compone
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
 from vocode.tui.lib.components import select_list as tui_select_list
 from vocode.tui.components import tool_call_req as tool_call_req_component
+from vocode.tui.components import toolbar as toolbar_component
 from vocode.tui.lib.input import base as input_base
 from vocode.tui.lib.input import handler as input_handler_mod
 
@@ -87,9 +88,9 @@ class TUIState:
 
         self._terminal.append_component(header)
         self._terminal.append_component(input_component)
-
-        toolbar = tui_rich_text_component.RichTextComponent(
-            "", id="toolbar", component_style=tui_styles.TOOLBAR_COMPONENT_STYLE
+        toolbar = toolbar_component.ToolbarComponent(
+            id="toolbar",
+            component_style=tui_styles.TOOLBAR_COMPONENT_STYLE,
         )
         self._base_toolbar_component = toolbar
         self._toolbar_component = toolbar
@@ -566,14 +567,4 @@ class TUIState:
 
     def _update_toolbar_from_ui_state(self) -> None:
         toolbar = self._base_toolbar_component
-        ui_state = self._ui_state
-        text = ""
-        if ui_state is not None and ui_state.runners:
-            frame = ui_state.runners[-1]
-            workflow_name = frame.workflow_name
-            node_name = frame.node_name
-            if node_name:
-                text = f"{workflow_name}@{node_name}"
-            else:
-                text = workflow_name
-        toolbar.text = text
+        toolbar.set_state(self._ui_state)

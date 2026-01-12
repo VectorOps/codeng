@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 from typing import Final
 
@@ -10,26 +11,15 @@ from rich import table as rich_table
 from rich import text as rich_text
 
 from vocode import state as vocode_state
+from vocode.tui import styles as tui_styles
 from vocode.logger import logger
 from vocode.tui import lib as tui_terminal
 from vocode.tui.lib import base as tui_base
+from vocode.tui.lib import spinner as tui_spinner
 from vocode.tui.lib.components import renderable as renderable_component
 
 
 class ToolCallReqComponent(renderable_component.RenderableComponentBase):
-    _EXECUTING_FRAMES_UNICODE: Final[tuple[str, ...]] = (
-        " ⠋ ",
-        " ⠙ ",
-        " ⠹ ",
-        " ⠸ ",
-        " ⠼ ",
-        " ⠴ ",
-        " ⠦ ",
-        " ⠧ ",
-        " ⠇ ",
-        " ⠏ ",
-    )
-    _EXECUTING_FRAMES_FALLBACK: Final[tuple[str, ...]] = (" . ", ".. ", "...")
     _STATUS_ICON_EMOJI: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
         vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: ":question:",
         vocode_state.ToolCallReqStatus.PENDING_EXECUTION: ":hourglass_not_done:",
@@ -69,6 +59,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         message = step.message
         if message is None:
             return None
+
         parts: list[str] = []
         tool_calls = message.tool_call_requests
         if not tool_calls:
@@ -88,11 +79,13 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
             else:
                 status_value = statuses[0]
 
-        if status_value is vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
-            parts.append("Please confirm the tool call")
-
-        for tool_call in tool_calls:
+        if status_value == vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
+            parts.append("Please confirm the tool call:")
             parts.append("")
+
+        for i, tool_call in enumerate(tool_calls):
+            if i > 0:
+                parts.append("")
             parts.append(f"**Tool call:** `{tool_call.name}`")
             arguments = tool_call.arguments
             if arguments:
@@ -106,6 +99,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
 
         if not parts:
             return None
+
         return "\n".join(parts)
 
     def _compute_overall_status(
@@ -151,7 +145,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
     ) -> str:
         if status is vocode_state.ToolCallReqStatus.EXECUTING:
             # TODO: implement a real heuristic for emoji support instead of always using unicode frames.
-            frames = self._EXECUTING_FRAMES_UNICODE
+            frames = tui_spinner.SPINNER_FRAMES_UNICODE
             frame = frames[self._frame_index]
             self._frame_index = (self._frame_index + 1) % len(frames)
             return frame
@@ -165,6 +159,41 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         if icon is None:
             return "[ ]"
         return icon
+
+    def _compute_duration(self) -> datetime.timedelta | None:
+        message = self._step.message
+        if message is None:
+            return None
+
+        created_times: list[datetime.datetime] = []
+        handled_times: list[datetime.datetime] = []
+        for tool_call in message.tool_call_requests:
+            handled_at = tool_call.handled_at
+            if handled_at is None:
+                continue
+            created_at = tool_call.created_at
+            if handled_at < created_at:
+                continue
+            created_times.append(created_at)
+            handled_times.append(handled_at)
+
+        if not created_times or not handled_times:
+            return None
+
+        return max(handled_times) - min(created_times)
+
+    @staticmethod
+    def _format_duration(duration: datetime.timedelta) -> str:
+        total_seconds = int(duration.total_seconds())
+        if total_seconds < 1:
+            return "< 1s"
+        minutes, seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}h {minutes}m {seconds}s"
+        if minutes:
+            return f"{minutes}m {seconds}s"
+        return f"{seconds}s"
 
     def _build_renderable(
         self,
@@ -182,8 +211,20 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
 
         emoji_text = rich_markup.render(emoji)
         if markdown is not None:
-            body: tui_base.Renderable = rich_markdown.Markdown(markdown)
+            body = rich_markdown.Markdown(markdown)
         else:
             body = rich_text.Text("")
         table.add_row(emoji_text, body)
+
+        if status is vocode_state.ToolCallReqStatus.COMPLETE:
+            duration = self._compute_duration()
+            if duration is not None:
+                duration_str = self._format_duration(duration)
+                duration_text = rich_text.Text(
+                    f"Completed in {duration_str}",
+                    style=tui_styles.TOOL_CALL_DURATION_STYLE,
+                )
+                table.add_row("", duration_text)
+
+        logger.info("render", t=console.render_lines(table))
         return table

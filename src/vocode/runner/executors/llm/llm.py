@@ -160,9 +160,8 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         return base_step.model_copy(update=update)
 
-    async def _build_tools(self) -> Optional[List[Dict[str, Any]]]:
+    async def _build_tools(self, effective_specs) -> Optional[List[Dict[str, Any]]]:
         cfg = self.config
-        effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
         if not effective_specs:
             return None
 
@@ -191,7 +190,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         cfg = self.config
         conv = self.build_messages(inp)
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
-        tools = await self._build_tools()
+        tools = await self._build_tools(effective_specs)
         outcome_names = llm_helpers.get_outcome_names(cfg)
         if (
             len(outcome_names) > 1
