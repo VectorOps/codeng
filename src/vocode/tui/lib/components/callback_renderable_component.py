@@ -7,7 +7,7 @@ from rich import console as rich_console
 from vocode.tui.lib import base as tui_base
 
 
-class CallbackRenderableComponent(tui_base.Component):
+class RenderableComponent(tui_base.Component):
     def __init__(
         self,
         render_fn: typing.Callable[[rich_console.Console], tui_base.Renderable],
@@ -61,3 +61,6 @@ class CallbackRenderableComponent(tui_base.Component):
         terminal = self.terminal
         if terminal is not None:
             terminal.notify_component(self)
+
+
+CallbackRenderableComponent = RenderableComponent

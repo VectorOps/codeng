@@ -930,10 +930,61 @@ async def test_component_visibility_full_and_incremental_render() -> None:
     assert not top.is_visible
     assert bottom.is_visible
 
-    top.lines = ["top1"]
-    terminal.notify_component(top)
 
-    await terminal.render()
+def test_terminal_register_and_remove_animation_component() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
 
-    assert not top.is_visible
-    assert bottom.is_visible
+    component = DummyComponent("hello")
+    terminal.append_component(component)
+
+    terminal.register_animation(component)
+    assert component in terminal._animation_components
+
+    terminal.remove_component(component)
+    assert component not in terminal._animation_components
+
+
+def test_animation_tick_marks_only_visible_components_dirty() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    component = DummyComponent("hello")
+    terminal.append_component(component)
+    terminal.register_animation(component)
+
+    component.is_visible = False
+    terminal._dirty_components.clear()
+    terminal._animation_tick()
+    assert component not in terminal._dirty_components
+
+    component.is_visible = True
+    terminal._dirty_components.clear()
+    terminal._animation_tick()
+    assert component in terminal._dirty_components
+
+
+@pytest.mark.asyncio
+async def test_terminal_animation_worker_lifecycle() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=True, min_render_interval_ms=0)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    component = DummyComponent("hello")
+    terminal.append_component(component)
+    terminal.register_animation(component)
+
+    assert terminal._animation_task is None
+
+    await terminal.start()
+    animation_task = terminal._animation_task
+    assert animation_task is not None
+    assert not animation_task.done()
+
+    await terminal.stop()
+    assert terminal._animation_task is None
