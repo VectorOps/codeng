@@ -16,6 +16,9 @@
 ** [ ] Add a way for knowlt to return individual symbols from file by id. have compact ids, not uuids.
 ** [ ] Implement tool call formatters
 ** [ ] LLM usage stats
+*** [ ] Per-node reporting (current limits)
+*** [ ] Per-session accumulation
+*** [ ] Display in the toolbar
 ** [ ] Child runner support
 *** [ ] Base implementation
 *** [ ] Stopping child runner and resuming
@@ -37,20 +40,19 @@
 - on_history_up, on_history_down events
 - history in UIState
 - on_submit in UIState forwarded to app.py
-** [ ] Command handler
-- extend server to support commands
-** [ ] Auto-complete support
-** [ ] Add toolbar component under input
-*** [ ] Add execution status + animation
-** [ ] Add animation for different tool call statuses and indicators (approved, canceled, etc)
+** [X] Command handler
+** [X] Auto-complete support
+** [X] Add toolbar component under input
+*** [X] Add execution status + animation
+** [X] Add animation for different tool call statuses and indicators (approved, canceled, etc)
 ** [ ] Hide tool approved events 
 ** [ ] TUI library
 *** [X] Refactor apply_style
 *** [X] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences
 *** [X] Remove padding from SelectList
-*** [ ] Add animation support, potentially via Rich Live
+*** [X] Add animation support, potentially via Rich Live
 *** [ ] Add optimization to not re-render unchanged lines after top-level component if height did not change. Figure out generic algorithm.
-*** [ ] Fix up TUI tests - need to run Rich in non-terminal mode
+*** [X] Fix up TUI tests - need to run Rich in non-terminal mode
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided
 * [ ] Tools
