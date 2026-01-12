@@ -10,6 +10,7 @@ from rich import console as rich_console
 from rich import control as rich_control
 from rich import segment as rich_segment
 
+from vocode.logger import logger
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.input import base as input_base

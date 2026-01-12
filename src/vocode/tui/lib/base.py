@@ -125,3 +125,8 @@ class Component(ABC):
             )
 
         return current
+
+    def _mark_dirty(self) -> None:
+        terminal = self.terminal
+        if terminal is not None:
+            terminal.notify_component(self)

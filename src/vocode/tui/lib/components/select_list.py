@@ -252,11 +252,6 @@ class SelectListComponent(tui_base.Component):
             return item
         return SelectItem.model_validate(item)
 
-    def _mark_dirty(self) -> None:
-        terminal = self.terminal
-        if terminal is not None:
-            terminal.notify_component(self)
-
     def _sync_view_offset(self) -> None:
         if not self._items:
             self._view_offset = 0

@@ -285,11 +285,6 @@ class UIServer:
             status=self._status,
             runners=runners,
         )
-        logger.info(
-            "STATE",
-            status=self._status,
-            runners=runners,
-        )
         await self.send_packet(state_packet)
         return runner_proto.RunEventResp(
             resp_type=runner_proto.RunEventResponseType.NOOP,
