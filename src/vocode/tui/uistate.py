@@ -395,7 +395,6 @@ class TUIState:
         self.add_markdown(markdown)
 
     def handle_step(self, step: vocode_state.Step) -> None:
-        logger.info("uistep", step=step)
         mode = step.output_mode
         if mode == vocode_models.OutputMode.HIDE_ALL:
             if step.message is not None:
@@ -470,11 +469,7 @@ class TUIState:
             current_text = self._last_autocomplete_text
             current_row = self._last_autocomplete_row
             current_col = self._last_autocomplete_col
-            if (
-                current_text is None
-                or current_row is None
-                or current_col is None
-            ):
+            if current_text is None or current_row is None or current_col is None:
                 return
             await self._on_autocomplete_request(
                 current_text,
@@ -488,7 +483,6 @@ class TUIState:
         self,
         items: list[manager_proto.AutocompleteItem] | None,
     ) -> None:
-        logger.info("auto", items=items)
         if not items:
             self._pop_autocomplete()
             return

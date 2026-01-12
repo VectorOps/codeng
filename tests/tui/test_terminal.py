@@ -450,6 +450,31 @@ async def test_terminal_no_render_without_changes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminal_dirty_component_same_output_no_render() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+    )
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    component = DummyComponent("hello")
+
+    terminal.append_component(component)
+    await terminal.render()
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    terminal.notify_component(component)
+    await terminal.render()
+
+    output = buffer.getvalue()
+    assert output == ""
+
+
+@pytest.mark.asyncio
 async def test_terminal_incremental_render_updates_component() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)

@@ -39,7 +39,9 @@
 - extend server to support commands
 ** [ ] Auto-complete support
 ** [ ] Add toolbar component under input
-*** [ ] Better toolbar
+*** [ ] Add execution status + animation
+** [ ] Add animation for different tool call statuses and indicators (approved, canceled, etc)
+** [ ] Hide tool approved events 
 ** [ ] TUI library
 *** [X] Refactor apply_style
 *** [X] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences
@@ -54,3 +56,4 @@
 ** [ ] Simplify error reporting for v4a patch tool
 * [ ] Log management
 ** [ ] Store run sessions
+** [X] Store UI sessions?
