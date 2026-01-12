@@ -35,16 +35,11 @@ workflows:
   chat:
     description: "General chat assistant that can also browse and read repository files when needed."
     nodes:
-      - name: input
-        type: input
-        message: "How can I help you?"
-        output_mode: hide_final
-        outcomes:
-          - name: done
       - name: llm
         type: llm
         model: ${LLM_ARCHITECT_MODEL}
         reset_policy: keep
+        confirmation: loop
         tools:
           - summarize_files
           - read_files
@@ -53,5 +48,4 @@ workflows:
         outcomes:
           - name: done
     edges:
-      - input.done -> llm
-      - llm.done -> input
+      - llm.done -> llm

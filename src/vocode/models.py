@@ -24,6 +24,7 @@ class Confirmation(str, Enum):
     MANUAL = "manual"
     # Automatically approve everything
     AUTO = "auto"
+    LOOP = "loop"
 
 
 class StateResetPolicy(str, Enum):

@@ -24,6 +24,14 @@ class Runner:
         self.workflow = workflow
         self.project = project
         self.initial_message = initial_message
+        try:
+            self.need_input = bool(workflow.need_input)
+        except AttributeError:
+            self.need_input = False
+        try:
+            self.need_input_prompt = workflow.need_input_prompt
+        except AttributeError:
+            self.need_input_prompt = None
 
         self.status = state.RunnerStatus.IDLE
         self.graph = RuntimeGraph(workflow.graph)
@@ -472,6 +480,49 @@ class Runner:
             )
             _ = yield status_event
             return
+
+        if (
+            self.need_input
+            and self.initial_message is None
+            and not self.execution.steps
+            and current_execution is not None
+        ):
+            prompt_text = self.need_input_prompt or "What are we doing today?"
+            prompt_message = state.Message(
+                role=models.Role.ASSISTANT,
+                text=prompt_text,
+            )
+            prompt_step = state.Step(
+                execution=current_execution,
+                type=state.StepType.PROMPT,
+                message=prompt_message,
+                is_complete=True,
+            )
+            persisted_prompt = self._persist_step(prompt_step)
+            req = RunEventReq(
+                kind=runner_proto.RunEventReqKind.STEP,
+                execution=self.execution,
+                step=persisted_prompt,
+            )
+            resp = yield req
+            if self._maybe_handle_stop(current_execution):
+                stop_event = self._set_status(
+                    state.RunnerStatus.STOPPED,
+                    current_execution=current_execution,
+                )
+                _ = yield stop_event
+                return
+            response_step = self._handle_run_event_response(req, resp)
+            response_event = self._build_response_event(response_step)
+            if response_event is not None:
+                _ = yield response_event
+                if self._maybe_handle_stop(current_execution):
+                    stop_event = self._set_status(
+                        state.RunnerStatus.STOPPED,
+                        current_execution=current_execution,
+                    )
+                    _ = yield stop_event
+                    return
         status_event = self._set_status(
             state.RunnerStatus.RUNNING,
             current_execution=current_execution,
@@ -660,15 +711,21 @@ class Runner:
             confirmation_mode = current_runtime_node.model.confirmation
             loop_current_node = False
 
-            if confirmation_mode == models.Confirmation.MANUAL:
+            if confirmation_mode in (
+                models.Confirmation.MANUAL,
+                models.Confirmation.LOOP,
+            ):
                 while True:
                     prompt_message = state.Message(
                         role=models.Role.ASSISTANT,
                         text="",
                     )
+                    prompt_type = state.StepType.PROMPT_CONFIRM
+                    if confirmation_mode == models.Confirmation.LOOP:
+                        prompt_type = state.StepType.PROMPT
                     prompt_step = state.Step(
                         execution=current_execution,
-                        type=state.StepType.PROMPT_CONFIRM,
+                        type=prompt_type,
                         message=prompt_message,
                     )
                     persisted_prompt = self._persist_step(prompt_step)
@@ -701,17 +758,22 @@ class Runner:
                         response_step is not None
                         and response_step.type == state.StepType.INPUT_MESSAGE
                     ):
-                        if (
-                            response_step.message is not None
-                            and response_step.message.text.strip()
-                        ):
+                        if confirmation_mode == models.Confirmation.LOOP:
                             loop_current_node = True
+                        else:
+                            if (
+                                response_step.message is not None
+                                and response_step.message.text.strip()
+                            ):
+                                loop_current_node = True
                         break
 
                     if (
                         response_step is not None
                         and response_step.type == state.StepType.APPROVAL
                     ):
+                        if confirmation_mode == models.Confirmation.LOOP:
+                            loop_current_node = True
                         break
 
                     continue
