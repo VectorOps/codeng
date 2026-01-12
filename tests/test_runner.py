@@ -8,6 +8,7 @@ from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
 from vocode.runner.runner import Runner, RunEvent
 from vocode.runner.proto import RunEventResp, RunEventResponseType
+from vocode.runner import base as runner_base
 
 
 async def drive_runner(
@@ -226,6 +227,30 @@ class MultiCompleteExecutor(BaseExecutor):
         yield step2
 
 
+@ExecutorFactory.register("initial-input")
+class InitialInputEchoExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        execution = inp.execution
+        last_input: state.Message | None = None
+        for msg, step_type in runner_base.iter_execution_messages(execution):
+            if step_type == state.StepType.INPUT_MESSAGE:
+                last_input = msg
+        text = ""
+        if last_input is not None and last_input.text is not None:
+            text = last_input.text
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text=text,
+        )
+        step = state.Step(
+            execution=execution,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message=msg,
+            is_complete=True,
+        )
+        yield step
+
+
 @pytest.mark.asyncio
 async def test_runner_execution_flow():
     node1 = models.Node(
@@ -393,6 +418,102 @@ async def test_runner_execution_flow():
                 break
         assert last_complete_output is not None
         assert finals[0] is last_complete_output
+
+
+@pytest.mark.asyncio
+async def test_loop_confirmation_mode_repeats_node_without_transition():
+    node1 = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[models.OutcomeSlot(name="branch")],
+        confirmation=models.Confirmation.LOOP,
+    )
+    node2 = models.Node(
+        name="node2",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    edges = [
+        models.Edge(
+            source_node="node1",
+            source_outcome="branch",
+            target_node="node2",
+        ),
+    ]
+    graph = models.Graph(nodes=[node1, node2], edges=edges)
+    workflow = DummyWorkflow(name="wf-loop-confirmation", graph=graph)
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="hello",
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=initial_message,
+    )
+
+    agen = runner.run()
+    prompt_count = 0
+
+    def handler(event: RunEvent) -> RunEventResp:
+        nonlocal prompt_count
+        step = event.step
+        if step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        if step.type == state.StepType.PROMPT and step.execution.node == "node1":
+            prompt_count += 1
+            if prompt_count >= 3:
+                runner.stop()
+            user_message = state.Message(
+                role=models.Role.USER,
+                text=f"loop-{prompt_count}",
+            )
+            return RunEventResp(
+                resp_type=RunEventResponseType.MESSAGE,
+                message=user_message,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=True)
+
+    assert prompt_count >= 2
+    assert any(
+        e.step is not None
+        and e.step.type == state.StepType.PROMPT
+        and e.step.execution.node == "node1"
+        for e in events
+    )
+    assert not any(
+        e.step is not None
+        and e.step.type == state.StepType.PROMPT_CONFIRM
+        and e.step.execution.node == "node1"
+        for e in events
+    )
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    assert "node1" in node_execs_by_name
+    assert "node2" not in node_execs_by_name
+
+    node1_exec = node_execs_by_name["node1"]
+    node1_output_steps = [
+        s
+        for s in node1_exec.steps
+        if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None
+    ]
+    assert any("run1-final" in s.message.text for s in node1_output_steps)
+    assert any("run2-final" in s.message.text for s in node1_output_steps)
 
 
 @pytest.mark.asyncio
@@ -969,6 +1090,108 @@ async def test_input_node_prompts_and_returns_user_message_as_output():
         and e.step.execution.node == "input-node"
         and e.step.message is not None
         and e.step.message.text == "user-input-text"
+        for e in events
+    )
+
+
+class InitialInputWorkflow:
+    def __init__(self, name: str, graph: models.Graph):
+        self.name = name
+        self.graph = graph
+        self.need_input = True
+        self.need_input_prompt = None
+
+
+@pytest.mark.asyncio
+async def test_runner_requires_initial_input_and_forwards_to_first_node():
+    node = models.Node(
+        name="root",
+        type="initial-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = InitialInputWorkflow(name="wf-require-initial", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=object(),
+        initial_message=None,
+    )
+
+    agen = runner.run()
+    expected_text = "user-initial-message"
+
+    def handler(event: RunEvent) -> RunEventResp:
+        step = event.step
+        if step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        if step.type == state.StepType.PROMPT and step.execution.node == "root":
+            assert step.message is not None
+            assert step.message.text == "What are we doing today?"
+            user_message = state.Message(
+                role=models.Role.USER,
+                text=expected_text,
+            )
+            return RunEventResp(
+                resp_type=RunEventResponseType.MESSAGE,
+                message=user_message,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=True)
+
+    assert runner.status == state.RunnerStatus.FINISHED
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    assert set(node_execs_by_name.keys()) == {"root"}
+    root_exec = node_execs_by_name["root"]
+
+    prompt_steps = [s for s in root_exec.steps if s.type == state.StepType.PROMPT]
+    input_steps = [
+        s for s in root_exec.steps if s.type == state.StepType.INPUT_MESSAGE
+    ]
+    output_steps = [
+        s
+        for s in root_exec.steps
+        if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
+    ]
+
+    assert prompt_steps
+    assert prompt_steps[-1].message is not None
+    assert prompt_steps[-1].message.text == "What are we doing today?"
+
+    assert input_steps
+    assert input_steps[-1].message is not None
+    assert input_steps[-1].message.text == expected_text
+
+    assert output_steps
+    final_output = output_steps[-1]
+    assert final_output.message is not None
+    assert final_output.message.text == expected_text
+
+    assert any(
+        e.step is not None
+        and e.step.type == state.StepType.PROMPT
+        and e.step.execution.node == "root"
+        for e in events
+    )
+
+    assert any(
+        e.step is not None
+        and e.step.type == state.StepType.INPUT_MESSAGE
+        and e.step.execution.node == "root"
+        and e.step.message is not None
+        and e.step.message.text == expected_text
         for e in events
     )
 

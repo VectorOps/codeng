@@ -14,9 +14,17 @@ from vocode.runner import proto as runner_proto
 
 
 class Workflow:
-    def __init__(self, name: str, graph: models.Graph) -> None:
+    def __init__(
+        self,
+        name: str,
+        graph: models.Graph,
+        need_input: bool = False,
+        need_input_prompt: Optional[str] = None,
+    ) -> None:
         self.name = name
         self.graph = graph
+        self.need_input = need_input
+        self.need_input_prompt = need_input_prompt
 
 
 @dataclass
@@ -186,7 +194,12 @@ class BaseManager:
             raise KeyError(f"Unknown workflow '{workflow_name}'")
         name = wf.name or workflow_name
         graph = models.Graph(nodes=wf.nodes, edges=wf.edges)
-        return Workflow(name=name, graph=graph)
+        return Workflow(
+            name=name,
+            graph=graph,
+            need_input=wf.need_input,
+            need_input_prompt=wf.need_input_prompt,
+        )
 
     async def _run_runner_task(
         self,

@@ -51,6 +51,8 @@ class WorkflowConfig(BaseModel):
     name: Optional[str] = None
     # Human-readable purpose/summary for this workflow; used in tool descriptions.
     description: Optional[str] = None
+    need_input: bool = True
+    need_input_prompt: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
     nodes: List[models.Node] = Field(default_factory=list)
     edges: List[models.Edge] = Field(default_factory=list)
