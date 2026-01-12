@@ -51,6 +51,7 @@ class Terminal:
         self._components: typing.List[tui_base.Component] = []
         self._id_index: typing.Dict[str, tui_base.Component] = {}
         self._dirty_components: typing.Set[tui_base.Component] = set()
+        self._animation_components: typing.Set[tui_base.Component] = set()
         self._cache: typing.Dict[Component, Lines] = {}
         self._width: int | None = None
         self._force_full_render: bool = False
@@ -65,6 +66,7 @@ class Terminal:
         self._auto_render_suppressed: int = 0
         self._last_auto_render: float | None = None
         self._auto_render_task: asyncio.Task[None] | None = None
+        self._animation_task: asyncio.Task[None] | None = None
         self._started: bool = False
         if self._input_handler is not None:
             self._input_handler.subscribe(self._handle_input_event)
@@ -84,7 +86,7 @@ class Terminal:
             self._auto_render_suppressed -= 1
         if self._auto_render_suppressed == 0:
             self._auto_render_enabled = True
-            self._request_auto_render(force=True)
+            self._request_auto_render()
 
     def suspend_auto_render(self) -> typing.ContextManager[None]:
         return _SuspendAutoRender(self)
@@ -132,6 +134,8 @@ class Terminal:
         self._components.remove(component)
         if component in self._dirty_components:
             self._dirty_components.remove(component)
+        if component in self._animation_components:
+            self._animation_components.remove(component)
         if component in self._cache:
             del self._cache[component]
         for key, value in list(self._id_index.items()):
@@ -141,6 +145,15 @@ class Terminal:
             self.remove_focus(component)
         component.terminal = None
         self._force_full_render = True
+
+    def register_animation(self, component: tui_base.Component) -> None:
+        if component not in self._components:
+            return
+        self._animation_components.add(component)
+
+    def deregister_animation(self, component: tui_base.Component) -> None:
+        if component in self._animation_components:
+            self._animation_components.remove(component)
 
     def notify_component(self, component: tui_base.Component) -> None:
         if component in self._components:
@@ -216,6 +229,24 @@ class Terminal:
             task.cancel()
         self._auto_render_task = None
 
+    def _animation_tick(self) -> None:
+        if not self._animation_components:
+            return
+
+        with self.suspend_auto_render():
+            for component in self._animation_components:
+                if not component.is_visible:
+                    continue
+                self.notify_component(component)
+
+    async def _animation_worker(self) -> None:
+        try:
+            while self._started:
+                self._animation_tick()
+                await asyncio.sleep(0.1)
+        finally:
+            self._animation_task = None
+
     async def _auto_render_worker(self, *, force: bool) -> None:
         try:
             if not force:
@@ -258,6 +289,9 @@ class Terminal:
         )
         self._started = True
         self._request_auto_render(force=True)
+        loop = asyncio.get_running_loop()
+        if self._animation_task is None or self._animation_task.done():
+            self._animation_task = loop.create_task(self._animation_worker())
         if self._input_handler is None:
             return
         self._console.control(rich_control.Control.show_cursor(False))
@@ -270,6 +304,10 @@ class Terminal:
     async def stop(self) -> None:
         self._started = False
         self._cancel_auto_render_task()
+        animation_task = self._animation_task
+        if animation_task is not None and not animation_task.done():
+            animation_task.cancel()
+        self._animation_task = None
         task = self._input_task
         if task is None:
             return

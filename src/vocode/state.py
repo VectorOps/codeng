@@ -28,6 +28,7 @@ class ToolCallReqStatus(str, Enum):
     REQUIRES_CONFIRMATION = "requires_confirmation"
     PENDING_EXECUTION = "pending_execution"
     EXECUTING = "executing"
+    REJECTED = "rejected"
     COMPLETE = "complete"
 
 

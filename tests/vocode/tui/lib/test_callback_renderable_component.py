@@ -43,7 +43,7 @@ def test_callback_renderable_component_renders_rich_renderable() -> None:
     ) -> rich_text.Text:
         return rich_text.Text.from_markup("[bold green]Hello[/]")
 
-    component = components_callback_renderable_component.CallbackRenderableComponent(
+    component = components_callback_renderable_component.RenderableComponent(
         render_fn,
     )
     rendered_lines = _render_text(component, console)
@@ -67,7 +67,7 @@ def test_callback_renderable_component_marks_dirty_on_render_fn_change() -> None
     ) -> rich_text.Text:
         return rich_text.Text("two")
 
-    component = components_callback_renderable_component.CallbackRenderableComponent(
+    component = components_callback_renderable_component.RenderableComponent(
         render_one,
     )
     component.terminal = terminal
