@@ -387,10 +387,17 @@ class Terminal:
         self._cache[top_component] = top_new_lines
 
         top_mismatch = 0
+        top_changed = False
         for i, (x, y) in enumerate(zip_longest(top_old_lines, top_new_lines)):
             if x != y:
                 top_mismatch = i
+                top_changed = True
                 break
+
+        if not top_changed:
+            top_mismatch = len(top_new_lines)
+
+        any_changed = top_changed
 
         lines_to_output.extend(top_new_lines[top_mismatch:])
         row += top_mismatch
@@ -401,12 +408,20 @@ class Terminal:
 
         # Render remaining components
         for component in tail_components[1:]:
-            if component in changed_components or component not in self._cache:
+            cached_lines = self._cache.get(component)
+            if component in changed_components or cached_lines is None:
                 new_lines = component.render(options)
                 self._cache[component] = new_lines
+            else:
+                new_lines = cached_lines
 
-            lines = self._cache.get(component, [])
-            lines_to_output.extend(lines)
+            if cached_lines is None or new_lines != cached_lines:
+                any_changed = True
+
+            lines_to_output.extend(new_lines)
+
+        if not any_changed:
+            return True
         old_span = self._cursor_line - row
         if old_span < 0:
             old_span = 0
