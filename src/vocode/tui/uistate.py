@@ -382,6 +382,7 @@ class TUIState:
         markdown = self._format_tool_request_markdown(step)
         if markdown is None:
             return
+
         self._upsert_markdown_component(
             step,
             markdown,

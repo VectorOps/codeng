@@ -148,7 +148,7 @@ class Runner:
                     result={"message": rejection_text},
                 )
             )
-            req.status = state.ToolCallReqStatus.COMPLETE
+            req.status = state.ToolCallReqStatus.REJECTED
             return True
         return False
 
