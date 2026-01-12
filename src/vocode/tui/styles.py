@@ -25,3 +25,5 @@ OUTPUT_MESSAGE_STYLE = tui_terminal.ComponentStyle(
 )
 
 TOOLBAR_COMPONENT_STYLE = tui_terminal.ComponentStyle()
+
+TOOL_CALL_DURATION_STYLE = "dim grey50"

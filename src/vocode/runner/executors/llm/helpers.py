@@ -8,6 +8,7 @@ import json
 import litellm
 
 from vocode.state import Message
+from vocode.logger import logger
 from vocode.settings import ToolSpec  # type: ignore
 
 from .models import LLMNode

@@ -273,8 +273,11 @@ async def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> N
     )
 
     executor = LLMExecutor(config=node, project=project)
-
-    tools = await executor._build_tools()
+    effective_specs = llm_helpers.build_effective_tool_specs(
+        project,
+        node,
+    )
+    tools = await executor._build_tools(effective_specs)
     assert tools is not None
     assert len(tools) == 1
 
@@ -334,8 +337,11 @@ async def test_llm_executor_build_tools_respects_global_enabled_override() -> No
             return None
 
     project.tools["echo"] = EchoTool()
-
-    tools = await executor._build_tools()
+    effective_specs = llm_helpers.build_effective_tool_specs(
+        project,
+        node,
+    )
+    tools = await executor._build_tools(effective_specs)
     assert tools is None
 
 
