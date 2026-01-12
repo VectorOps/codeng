@@ -42,14 +42,12 @@ class InputComponent(tui_base.Component):
         self._single_line = single_line
         self._keymap = self._create_keymap()
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
-        self._cursor_event_subscribers: list[
-            typing.Callable[[int, int], None]
-        ] = []
+        self._cursor_event_subscribers: list[typing.Callable[[int, int], None]] = []
         self._prefix = prefix
         # box_style removed; styling should be applied via Component.apply_style
-        self._key_event_handler: typing.Callable[
-            [input_base.KeyEvent], bool
-        ] | None = None
+        self._key_event_handler: typing.Callable[[input_base.KeyEvent], bool] | None = (
+            None
+        )
 
     @property
     def text(self) -> str:
@@ -86,11 +84,6 @@ class InputComponent(tui_base.Component):
     def set_cursor_position(self, row: int, col: int) -> None:
         self._editor.set_cursor_position(row, col)
         self._mark_dirty()
-
-    def _mark_dirty(self) -> None:
-        terminal = self.terminal
-        if terminal is not None:
-            terminal.notify_component(self)
 
     def _handle_editor_cursor_event(self, row: int, col: int) -> None:
         for subscriber in list(self._cursor_event_subscribers):

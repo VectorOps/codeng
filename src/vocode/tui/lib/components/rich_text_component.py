@@ -48,8 +48,3 @@ class RichTextComponent(tui_base.Component):
             new_lines=False,
         )
         return typing.cast(tui_base.Lines, rendered)
-
-    def _mark_dirty(self) -> None:
-        terminal = self.terminal
-        if terminal is not None:
-            terminal.notify_component(self)

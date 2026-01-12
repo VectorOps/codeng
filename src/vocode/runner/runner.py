@@ -108,7 +108,7 @@ class Runner:
     ) -> state.Step:
         prompt_message = state.Message(
             role=models.Role.ASSISTANT,
-            text="Please approve the tool call",
+            text="",
             tool_call_requests=[req],
         )
         prompt_step = state.Step(

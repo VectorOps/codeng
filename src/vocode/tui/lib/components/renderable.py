@@ -31,11 +31,6 @@ class RenderableComponentBase(tui_base.Component):
         )
         return typing.cast(tui_base.Lines, rendered)
 
-    def _mark_dirty(self) -> None:
-        terminal = self.terminal
-        if terminal is not None:
-            terminal.notify_component(self)
-
 
 class CallbackComponent(RenderableComponentBase):
     def __init__(

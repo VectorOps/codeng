@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
-import json
 import typing
 from rich import console as rich_console
 from vocode import state as vocode_state
@@ -17,6 +16,7 @@ from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
 from vocode.tui.lib.components import select_list as tui_select_list
+from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.input import base as input_base
 from vocode.tui.lib.input import handler as input_handler_mod
 
@@ -267,31 +267,6 @@ class TUIState:
             return None
         return message.text
 
-    def _format_tool_request_markdown(self, step: vocode_state.Step) -> str | None:
-        message = step.message
-        if message is None:
-            return None
-        parts: list[str] = []
-        if message.text is not None:
-            parts.append(message.text)
-        tool_calls = message.tool_call_requests
-        if tool_calls:
-            for tool_call in tool_calls:
-                parts.append("")
-                parts.append(f"**Tool call:** `{tool_call.name}`")
-                arguments = tool_call.arguments
-                if arguments:
-                    try:
-                        args_str = json.dumps(arguments, indent=2, sort_keys=True)
-                    except TypeError:
-                        args_str = str(arguments)
-                    parts.append("```json")
-                    parts.append(args_str)
-                    parts.append("```")
-        if not parts:
-            return None
-        return "\n".join(parts)
-
     def _upsert_markdown_component(
         self,
         step: vocode_state.Step,
@@ -379,15 +354,20 @@ class TUIState:
         )
 
     def _handle_tool_request_step(self, step: vocode_state.Step) -> None:
-        markdown = self._format_tool_request_markdown(step)
-        if markdown is None:
-            return
-
-        self._upsert_markdown_component(
-            step,
-            markdown,
-            component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
-        )
+        step_id = str(step.id)
+        terminal = self._terminal
+        try:
+            component = typing.cast(
+                tool_call_req_component.ToolCallReqComponent,
+                terminal.get_component(step_id),
+            )
+            component.set_step(step)
+        except KeyError:
+            component = tool_call_req_component.ToolCallReqComponent(
+                step=step,
+                component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
+            )
+            terminal.insert_component(-2, component)
 
     def _handle_default_step(self, step: vocode_state.Step) -> None:
         markdown = self._format_message_markdown(step)

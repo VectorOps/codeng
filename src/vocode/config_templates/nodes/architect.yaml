@@ -69,6 +69,7 @@ system: |
     def foo(bar):
         pass
     ```
+  * Code snippets must include a file name above the code block.
 
   # Presenting your work
 
