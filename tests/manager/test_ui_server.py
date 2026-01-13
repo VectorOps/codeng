@@ -51,7 +51,7 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
         workflow_name="wf-ui-server",
         runner=DummyRunner(),
         initial_message=None,
-        task=dummy_task,
+        agen=None,
     )
 
     assert server.manager.project is project
@@ -104,7 +104,7 @@ async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
         workflow_name=execution.workflow_name,
         runner=runner,  # type: ignore[arg-type]
         initial_message=None,
-        task=dummy_task,
+        agen=None,
         last_stats=stats,
     )
     server.manager._runner_stack.append(frame)
@@ -211,7 +211,7 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
         workflow_name="wf-ui-server-user-input",
         runner=DummyRunner(),
         initial_message=None,
-        task=dummy_task,
+        agen=None,
     )
 
     assert server.manager.project is project
@@ -299,7 +299,7 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
         workflow_name="wf-ui-server-user-input-confirm",
         runner=DummyRunner(),
         initial_message=None,
-        task=dummy_task,
+        agen=None,
     )
 
     response_task = asyncio.create_task(server.on_runner_event(frame, event))
@@ -395,7 +395,7 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
         workflow_name=execution.workflow_name,
         runner=runner,  # type: ignore[arg-type]
         initial_message=None,
-        task=dummy_task,
+        agen=None,
         last_stats=stats,
     )
     server.manager._runner_stack.append(frame)

@@ -136,8 +136,7 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
         workflow_name="wf-manager-events",
         runner=runner,
         initial_message=initial_message,
-        agen=None,
-        send=None,
+        agen=runner.run(),
     )
     manager._runner_stack.append(frame)
 
@@ -220,8 +219,7 @@ async def test_manager_status_events_are_stored_and_not_forwarded() -> None:
         workflow_name="wf-manager-status",
         runner=runner,
         initial_message=initial_message,
-        agen=None,
-        send=None,
+        agen=runner.run(),
     )
     manager._runner_stack.append(frame)
 
@@ -290,8 +288,7 @@ async def test_manager_emits_final_status_on_runner_stop() -> None:
         workflow_name="wf-manager-stop-status",
         runner=runner,
         initial_message=initial_message,
-        agen=None,
-        send=None,
+        agen=runner.run(),
     )
     manager._runner_stack.append(frame)
 

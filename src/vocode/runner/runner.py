@@ -46,6 +46,10 @@ class Runner:
             for n in self.workflow.graph.nodes
         }
 
+    @property
+    def last_final_message(self) -> Optional[state.Message]:
+        return self._last_final_message
+
     # Tool calling
     def _get_tool_spec_for_request(
         self, req: state.ToolCallReq
@@ -914,8 +918,9 @@ class Runner:
 
             if loop_current_node:
                 continue
-
             last_complete_step.is_final = True
+            if last_complete_step.message is not None:
+                self._last_final_message = last_complete_step.message
 
             # Next node selection logic
             outcomes = current_runtime_node.model.outcomes
