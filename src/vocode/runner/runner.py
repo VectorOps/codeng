@@ -788,8 +788,8 @@ class Runner:
                             )
                             child_final = yield event
                             assert (
-                                child_final.kind
-                                == runner_proto.RunEventResponseType.MESSAGE
+                                child_final.resp_type
+                                == RunEventResponseType.MESSAGE
                             )
                             assert child_final.message is not None
                             tool_responses.append(
