@@ -2,6 +2,7 @@ from typing import Optional, Dict, AsyncIterator
 
 from vocode import models, state
 from vocode import settings as vocode_settings
+from vocode.tools import base as tools_base
 from vocode.lib.date import utcnow
 from vocode.logger import logger
 from vocode.project import Project
@@ -38,6 +39,7 @@ class Runner:
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
         self._stop_requested = False
+        self._last_final_message: Optional[state.Message] = None
 
         self._executors: Dict[str, BaseExecutor] = {
             n.name: ExecutorFactory.create_for_node(n, project=self.project)
@@ -68,39 +70,65 @@ class Runner:
             return True
         return False
 
-    async def _execute_tool_call(self, req: state.ToolCallReq) -> state.ToolCallResp:
+    async def _execute_tool_call(
+        self, req: state.ToolCallReq
+    ) -> runner_proto.ToolExecResult:
         spec = self._get_tool_spec_for_request(req)
         tools = self.project.tools
         tool = tools.get(req.name)
         if tool is None:
-            return state.ToolCallResp(
+            resp = state.ToolCallResp(
                 id=req.id,
                 status=state.ToolCallStatus.FAILED,
                 name=req.name,
                 result={"error": f"Tool '{req.name}' is not available."},
             )
+            return runner_proto.ToolExecResponse(response=resp)
         if spec is None:
             spec = vocode_settings.ToolSpec(name=req.name)
         try:
             raw_result = await tool.run(spec, req.arguments)
         except Exception as exc:
             # TODO: send exception back?
-            return state.ToolCallResp(
+            resp = state.ToolCallResp(
                 id=req.id,
                 status=state.ToolCallStatus.FAILED,
                 name=req.name,
                 result={"error": str(exc)},
             )
+            return runner_proto.ToolExecResponse(response=resp)
+
         if raw_result is None:
-            result_data = None
-        else:
-            result_data = raw_result.model_dump()
-        return state.ToolCallResp(
+            resp = state.ToolCallResp(
+                id=req.id,
+                status=state.ToolCallStatus.COMPLETED,
+                name=req.name,
+                result=None,
+            )
+            return runner_proto.ToolExecResponse(response=resp)
+
+        if raw_result.type == tools_base.ToolResponseType.start_workflow:
+            workflow_name = raw_result.workflow
+            initial_message = raw_result.initial_message
+            if initial_message is None and raw_result.initial_text is not None:
+                initial_message = state.Message(
+                    role=models.Role.USER,
+                    text=raw_result.initial_text,
+                )
+            return runner_proto.ToolExecStartWorkflow(
+                workflow_name=workflow_name,
+                initial_text=raw_result.initial_text,
+                initial_message=initial_message,
+            )
+
+        result_data = raw_result.model_dump()
+        resp = state.ToolCallResp(
             id=req.id,
             status=state.ToolCallStatus.COMPLETED,
             name=req.name,
             result=result_data,
         )
+        return runner_proto.ToolExecResponse(response=resp)
 
     def _create_tool_prompt_step(
         self,
@@ -156,12 +184,12 @@ class Runner:
     async def _execute_approved_tool_calls(
         self,
         approved: list[state.ToolCallReq],
-    ) -> list[state.ToolCallResp]:
-        responses: list[state.ToolCallResp] = []
+    ) -> list[runner_proto.ToolExecResult]:
+        results: list[runner_proto.ToolExecResult] = []
         for req in approved:
-            resp = await self._execute_tool_call(req)
-            responses.append(resp)
-        return responses
+            result = await self._execute_tool_call(req)
+            results.append(result)
+        return results
 
     def _create_tool_result_step(
         self,
@@ -737,8 +765,41 @@ class Runner:
                             _ = yield stop_event
                             return
 
-                    responses = await self._execute_approved_tool_calls(approved)
-                    tool_responses.extend(responses)
+                    exec_results = await self._execute_approved_tool_calls(approved)
+                    for exec_result in exec_results:
+                        if exec_result.kind == runner_proto.ToolExecResultKind.RESPONSE:
+                            tool_responses.append(exec_result.response)  # type: ignore[attr-defined]
+                        elif (
+                            exec_result.kind
+                            == runner_proto.ToolExecResultKind.START_WORKFLOW
+                        ):
+                            start_payload = runner_proto.RunEventStartWorkflow(
+                                workflow_name=exec_result.workflow_name,  # type: ignore[attr-defined]
+                                initial_message=exec_result.initial_message,  # type: ignore[attr-defined]
+                            )
+                            event = RunEventReq(
+                                kind=runner_proto.RunEventReqKind.START_WORKFLOW,
+                                execution=self.execution,
+                                start_workflow=start_payload,
+                            )
+                            child_final = yield event
+                            assert (
+                                child_final.kind
+                                == runner_proto.RunEventResponseType.MESSAGE
+                            )
+                            assert child_final.message is not None
+                            tool_responses.append(
+                                state.ToolCallResp(
+                                    id=req.id,
+                                    status=state.ToolCallStatus.COMPLETED,
+                                    name=req.name,
+                                    result={
+                                        "agent_name": start_payload.workflow_name,
+                                        "response": child_final.message.text,
+                                    },
+                                )
+                            )
+                            continue
 
                     for req in approved:
                         tool_step = tool_request_steps.get(id(req))
