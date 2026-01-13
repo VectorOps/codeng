@@ -291,6 +291,26 @@ class UIServer:
             message=None,
         )
 
+    async def _handle_runner_start_workflow_event(
+        self,
+        frame: RunnerFrame,
+        event: runner_proto.RunEventReq,
+    ):
+        payload = event.start_workflow
+        # TODO: Return error instead
+        if payload is None:
+            return runner_proto.RunEventResp(
+                resp_type=runner_proto.RunEventResponseType.NOOP,
+                message=None,
+            )
+        await self._manager.start_workflow(
+            payload.workflow_name,
+            initial_message=payload.initial_message,
+        )
+
+        # We don't expect anything to be passed to next iteration
+        return None
+
     async def on_runner_event(
         self,
         frame: RunnerFrame,
@@ -298,6 +318,10 @@ class UIServer:
     ) -> Optional[runner_proto.RunEventResp]:
         if event.kind == runner_proto.RunEventReqKind.STATUS:
             return await self._handle_runner_status_event(frame, event)
+
+        if event.kind == runner_proto.RunEventReqKind.START_WORKFLOW:
+            return await self._handle_runner_start_workflow_event(frame, event)
+
         return await self._handle_runner_step_event(frame, event)
 
     # UI packets handling
