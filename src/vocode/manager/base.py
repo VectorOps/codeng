@@ -126,6 +126,18 @@ class BaseManager:
             return
         frame = self._runner_stack[-1]
         frame.runner.stop()
+
+        task = self._driver_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except Exception:
+                pass
+            self._driver_task = None
+            if self._runner_stack:
+                self._ensure_driver_task()
+
         logger.debug("manager.stop_current_runner")
 
     async def continue_current_runner(self) -> Runner:
