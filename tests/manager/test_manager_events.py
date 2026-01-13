@@ -132,26 +132,18 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
         run_event_listener=run_event_listener,
     )
 
-    dummy_task = asyncio.create_task(asyncio.sleep(3600))
     frame = RunnerFrame(
         workflow_name="wf-manager-events",
         runner=runner,
         initial_message=initial_message,
-        task=dummy_task,
+        agen=None,
+        send=None,
     )
     manager._runner_stack.append(frame)
 
-    runner_task = asyncio.create_task(
-        manager._run_runner_task(
-            workflow_name="wf-manager-events",
-            runner=runner,
-        )
-    )
+    runner_task = asyncio.create_task(manager._run_runner_task())
 
     await runner_task
-    dummy_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await dummy_task
 
     assert runner.status == state.RunnerStatus.FINISHED
     assert manager.runner_stack == []
@@ -224,26 +216,18 @@ async def test_manager_status_events_are_stored_and_not_forwarded() -> None:
         run_event_listener=run_event_listener,
     )
 
-    dummy_task = asyncio.create_task(asyncio.sleep(3600))
     frame = RunnerFrame(
         workflow_name="wf-manager-status",
         runner=runner,
         initial_message=initial_message,
-        task=dummy_task,
+        agen=None,
+        send=None,
     )
     manager._runner_stack.append(frame)
 
-    runner_task = asyncio.create_task(
-        manager._run_runner_task(
-            workflow_name="wf-manager-status",
-            runner=runner,
-        )
-    )
+    runner_task = asyncio.create_task(manager._run_runner_task())
 
     await runner_task
-    dummy_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await dummy_task
 
     assert runner.status == state.RunnerStatus.FINISHED
     assert steps
@@ -306,22 +290,20 @@ async def test_manager_emits_final_status_on_runner_stop() -> None:
         workflow_name="wf-manager-stop-status",
         runner=runner,
         initial_message=initial_message,
-        task=None,
+        agen=None,
+        send=None,
     )
     manager._runner_stack.append(frame)
 
-    runner_task = asyncio.create_task(
-        manager._run_runner_task(
-            workflow_name="wf-manager-stop-status",
-            runner=runner,
-        )
-    )
-    frame.task = runner_task
+    runner_task = asyncio.create_task(manager._run_runner_task())
 
     while not status_events:
         await asyncio.sleep(0)
 
     await manager.stop_current_runner()
+
+    assert block_event is not None
+    block_event.set()
 
     await runner_task
 
