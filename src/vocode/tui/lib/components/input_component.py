@@ -44,10 +44,6 @@ class InputComponent(tui_base.Component):
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
         self._cursor_event_subscribers: list[typing.Callable[[int, int], None]] = []
         self._prefix = prefix
-        # box_style removed; styling should be applied via Component.apply_style
-        self._key_event_handler: typing.Callable[[input_base.KeyEvent], bool] | None = (
-            None
-        )
 
     @property
     def text(self) -> str:
@@ -88,11 +84,6 @@ class InputComponent(tui_base.Component):
     def _handle_editor_cursor_event(self, row: int, col: int) -> None:
         for subscriber in list(self._cursor_event_subscribers):
             subscriber(row, col)
-
-    def set_key_event_handler(
-        self, handler: typing.Callable[[input_base.KeyEvent], bool] | None
-    ) -> None:
-        self._key_event_handler = handler
 
     def _create_keymap(self) -> dict[KeyBinding, typing.Callable[[], None]]:
         keymap: dict[KeyBinding, typing.Callable[[], None]] = {
@@ -277,9 +268,6 @@ class InputComponent(tui_base.Component):
 
     def on_key_event(self, event: input_base.KeyEvent) -> None:
         if event.action != "down":
-            return
-        handler = self._key_event_handler
-        if handler is not None and handler(event):
             return
         binding = KeyBinding(
             key=event.key,
