@@ -7,12 +7,10 @@ from typing import Final
 from rich import console as rich_console
 from rich import markdown as rich_markdown
 from rich import markup as rich_markup
-from rich import table as rich_table
-from rich import text as rich_text
+ 
 
 from vocode import state as vocode_state
 from vocode.tui import styles as tui_styles
-from vocode.logger import logger
 from vocode.tui import lib as tui_terminal
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import spinner as tui_spinner
@@ -31,6 +29,12 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "...",
         vocode_state.ToolCallReqStatus.REJECTED: "[x]",
         vocode_state.ToolCallReqStatus.COMPLETE: "[+]",
+    }
+    _STATUS_TEXT: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
+        vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "Waiting for confirmation",
+        vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "Pending execution",
+        vocode_state.ToolCallReqStatus.EXECUTING: "Running",
+        vocode_state.ToolCallReqStatus.REJECTED: "Rejected",
     }
 
     def __init__(
@@ -202,29 +206,38 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         status = self._compute_overall_status()
         self._update_animation(status)
 
-        emoji = self._render_status_emoji(console, status)
         markdown = self.format_step_markdown(self._step)
+        renderables: list[rich_console.RenderableType] = []
 
-        table = rich_table.Table.grid(padding=(0, 0))
-        table.add_column(justify="center", width=3)
-        table.add_column(ratio=1)
-
-        emoji_text = rich_markup.render(emoji)
         if markdown is not None:
-            body = rich_markdown.Markdown(markdown)
-        else:
-            body = rich_text.Text("")
-        table.add_row(emoji_text, body)
+            renderables.append(rich_markdown.Markdown(markdown))
+
+        if status is None:
+            if not renderables:
+                return ""
+            if len(renderables) == 1:
+                return renderables[0]
+            return rich_console.Group(*renderables)
+
+        icon = self._render_status_emoji(console, status)
 
         if status is vocode_state.ToolCallReqStatus.COMPLETE:
             duration = self._compute_duration()
             if duration is not None:
                 duration_str = self._format_duration(duration)
-                duration_text = rich_text.Text(
-                    f"Completed in {duration_str}",
-                    style=tui_styles.TOOL_CALL_DURATION_STYLE,
-                )
-                table.add_row("", duration_text)
+                status_text = f"Completed in {duration_str}"
+            else:
+                status_text = "Completed"
+        else:
+            status_text = self._STATUS_TEXT.get(
+                status,
+                status.value.replace("_", " ").capitalize(),
+            )
 
-        logger.info("render", t=console.render_lines(table))
-        return table
+        style = tui_styles.TOOL_CALL_DURATION_STYLE
+        status_line = rich_markup.render(f"[{style}]{icon} {status_text}[/]")
+        renderables.append(status_line)
+
+        if len(renderables) == 1:
+            return renderables[0]
+        return rich_console.Group(*renderables)
