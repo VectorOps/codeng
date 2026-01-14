@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional, cast
 
+from vocode import settings as vocode_settings
 from vocode import state
-from vocode.logger import logger
+from vocode.logger import get_log_manager_internal, init_log_manager, logger
 from vocode.project import Project
 from vocode.runner import proto as runner_proto
 
@@ -37,6 +39,7 @@ class UIServer:
         self._started = False
         self._autocomplete = AutocompleteManager()
         self._commands = CommandManager()
+        self._log_manager = init_log_manager()
 
         self._router.register(
             manager_proto.BasePacketKind.USER_INPUT,
@@ -55,6 +58,35 @@ class UIServer:
         self._push_msg_id += 1
         return self._push_msg_id
 
+    def _apply_logging_settings(self) -> None:
+        project_settings = self._manager.project.settings
+        if project_settings is None:
+            return
+
+        logging_settings = project_settings.logging
+        if logging_settings is None:
+            return
+
+        level_map = {
+            vocode_settings.LogLevel.debug: logging.DEBUG,
+            vocode_settings.LogLevel.info: logging.INFO,
+            vocode_settings.LogLevel.warning: logging.WARNING,
+            vocode_settings.LogLevel.error: logging.ERROR,
+            vocode_settings.LogLevel.critical: logging.CRITICAL,
+        }
+
+        default_level = level_map.get(logging_settings.default_level, logging.INFO)
+
+        root_logger = logging.getLogger()
+        root_logger.setLevel(default_level)
+
+        for logger_name in ("vocode", "knowlt"):
+            logging.getLogger(logger_name).setLevel(default_level)
+
+        for logger_name, level in logging_settings.enabled_loggers.items():
+            override_level = level_map.get(level, default_level)
+            logging.getLogger(logger_name).setLevel(override_level)
+
     @property
     def manager(self) -> BaseManager:
         return self._manager
@@ -62,6 +94,13 @@ class UIServer:
     @property
     def commands(self) -> CommandManager:
         return self._commands
+
+    @property
+    def logs(self) -> list[object]:
+        manager = get_log_manager_internal()
+        if manager is None:
+            return []
+        return manager.get_logs()
 
     async def send_text_message(
         self,
@@ -86,6 +125,8 @@ class UIServer:
     async def start(self) -> None:
         if self._started:
             return
+
+        self._apply_logging_settings()
 
         await self._manager.start()
         self._status = manager_proto.UIServerStatus.RUNNING

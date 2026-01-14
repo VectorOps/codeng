@@ -15,12 +15,12 @@
 ** [ ] Fix knowlt summary documentation generation - it adds python docstring twice
 ** [ ] Add a way for knowlt to return individual symbols from file by id. have compact ids, not uuids.
 ** [ ] Implement tool call formatters
-** [ ] LLM usage stats
-*** [ ] Per-node reporting (current limits)
-*** [ ] Per-session accumulation
-*** [ ] Display in the toolbar
-** [ ] Child runner support
-*** [ ] Base implementation
+** [X] LLM usage stats
+*** [X] Per-node reporting (current limits)
+*** [X] Per-session accumulation
+*** [X] Display in the toolbar
+** [?] Child runner support
+*** [X] Base implementation
 *** [ ] Stopping child runner and resuming
 ** [ ] Add context compression? How?
 ** [ ] Continue after stop needs explicit separator.
