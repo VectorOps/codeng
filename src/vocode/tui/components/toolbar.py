@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from typing import Final
-
 from rich import console as rich_console
 from rich import text as rich_text
 
 from vocode import state as vocode_state
 from vocode.logger import logger
 from vocode.manager import proto as manager_proto
+from vocode.lib import formatting as lib_formatting
 from vocode.tui import lib as tui_terminal
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import spinner as tui_spinner
@@ -38,6 +38,8 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._status: vocode_state.RunnerStatus | None = None
         self._frame_index = 0
         self._animated = False
+        self._active_workflow_llm_usage: vocode_state.LLMUsageStats | None = None
+        self._project_llm_usage: vocode_state.LLMUsageStats | None = None
 
     @property
     def text(self) -> str:
@@ -55,17 +57,27 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         ui_state = self._ui_state
         workflow_label = ""
         status: vocode_state.RunnerStatus | None = None
-        if ui_state is not None and ui_state.runners:
-            frame = ui_state.runners[-1]
-            workflow_name = frame.workflow_name
-            node_name = frame.node_name
-            if node_name:
-                workflow_label = f"{workflow_name}@{node_name}"
-            else:
-                workflow_label = workflow_name
-            status = frame.status
+        active_usage: vocode_state.LLMUsageStats | None = None
+        project_usage: vocode_state.LLMUsageStats | None = None
+        if ui_state is not None:
+            if ui_state.runners:
+                labels: list[str] = []
+                for frame in ui_state.runners:
+                    workflow_name = frame.workflow_name
+                    node_name = frame.node_name
+                    if node_name:
+                        label = f"{workflow_name}@{node_name}"
+                    else:
+                        label = workflow_name
+                    labels.append(label)
+                workflow_label = " > ".join(labels)
+                status = ui_state.runners[-1].status
+            active_usage = ui_state.active_workflow_llm_usage
+            project_usage = ui_state.project_llm_usage
         self._workflow_label = workflow_label
         self._status = status
+        self._active_workflow_llm_usage = active_usage
+        self._project_llm_usage = project_usage
         self._update_animation()
 
     def _get_status_label(self) -> str:
@@ -125,5 +137,52 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         if suffix:
             parts.append(suffix)
 
-        full_text = " ".join(parts)
+        main_text = " ".join(parts)
+
+        workflow_usage = self._active_workflow_llm_usage
+        project_usage = self._project_llm_usage
+
+        input_tokens = 0
+        input_limit = 0
+        if workflow_usage is not None:
+            input_tokens = int(workflow_usage.prompt_tokens or 0)
+            if workflow_usage.input_token_limit is not None:
+                input_limit = int(workflow_usage.input_token_limit)
+
+        total_sent = 0
+        total_received = 0
+        total_cost = 0.0
+        if project_usage is not None:
+            total_sent = int(project_usage.prompt_tokens or 0)
+            total_received = int(project_usage.completion_tokens or 0)
+            total_cost = float(project_usage.cost_dollars or 0.0)
+
+        usage_parts: list[str] = []
+        input_tokens_str = lib_formatting.format_int_compact(input_tokens)
+        input_limit_str = lib_formatting.format_int_compact(input_limit)
+        usage_parts.append(f"{input_tokens_str}/{input_limit_str}")
+        sent_str = lib_formatting.format_int_compact(total_sent)
+        received_str = lib_formatting.format_int_compact(total_received)
+        cost_str = lib_formatting.format_cost_compact(total_cost)
+        usage_parts.append(f"ts: {sent_str} tr: {received_str} ${cost_str}")
+        usage_text = " | ".join(usage_parts)
+
+        if not usage_text:
+            return rich_text.Text(main_text)
+
+        if not main_text:
+            return rich_text.Text(usage_text)
+
+        width = console.width
+        left = main_text
+        right = usage_text
+        min_space = 1
+        if width <= len(left) + min_space + len(right):
+            full_text = f"{left} {right}"
+        else:
+            spaces = width - len(left) - len(right)
+            if spaces < min_space:
+                spaces = min_space
+            full_text = f"{left}{' ' * spaces}{right}"
+
         return rich_text.Text(full_text)

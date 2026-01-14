@@ -265,6 +265,7 @@ class UIServer:
 
         # Generate runner stack summary
         runners: list[manager_proto.RunnerStackFrame] = []
+        active_workflow_usage: Optional[state.LLMUsageStats] = None
         for runner_frame in self._manager.runner_stack:
             stats = runner_frame.last_stats
             if stats is None:
@@ -279,11 +280,15 @@ class UIServer:
                     status=stats.status,
                 )
             )
+            if execution.llm_usage is not None:
+                active_workflow_usage = execution.llm_usage
 
         # Send stack packet
         state_packet = manager_proto.UIServerStatePacket(
             status=self._status,
             runners=runners,
+            active_workflow_llm_usage=active_workflow_usage,
+            project_llm_usage=self._manager.project.llm_usage,
         )
         await self.send_packet(state_packet)
         return runner_proto.RunEventResp(
