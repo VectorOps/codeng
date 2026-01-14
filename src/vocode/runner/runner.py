@@ -506,6 +506,38 @@ class Runner:
             current_execution=current_execution,
         )
 
+    def _apply_llm_usage(self, usage: Optional[state.LLMUsageStats]) -> None:
+        if usage is None:
+            return
+        execution_usage = self.execution.llm_usage
+        if execution_usage is None:
+            self.execution.llm_usage = state.LLMUsageStats(
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                cost_dollars=usage.cost_dollars,
+                input_token_limit=usage.input_token_limit,
+                output_token_limit=usage.output_token_limit,
+            )
+        else:
+            execution_usage.prompt_tokens += usage.prompt_tokens
+            execution_usage.completion_tokens += usage.completion_tokens
+            execution_usage.cost_dollars += usage.cost_dollars
+            if (
+                execution_usage.input_token_limit is None
+                and usage.input_token_limit is not None
+            ):
+                execution_usage.input_token_limit = usage.input_token_limit
+            if (
+                execution_usage.output_token_limit is None
+                and usage.output_token_limit is not None
+            ):
+                execution_usage.output_token_limit = usage.output_token_limit
+        self.project.add_llm_usage(
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.cost_dollars,
+        )
+
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
         # Status verification
@@ -667,6 +699,9 @@ class Runner:
                 raise RuntimeError(
                     "Executor yielded more than one complete step for a single run."
                 )
+
+            self._apply_llm_usage(last_complete_step.llm_usage)
+
             if last_complete_step is not None and last_complete_step.type in (
                 state.StepType.PROMPT,
                 state.StepType.PROMPT_CONFIRM,
@@ -787,10 +822,7 @@ class Runner:
                                 start_workflow=start_payload,
                             )
                             child_final = yield event
-                            assert (
-                                child_final.resp_type
-                                == RunEventResponseType.MESSAGE
-                            )
+                            assert child_final.resp_type == RunEventResponseType.MESSAGE
                             assert child_final.message is not None
                             tool_responses.append(
                                 state.ToolCallResp(
@@ -918,6 +950,7 @@ class Runner:
 
             if loop_current_node:
                 continue
+
             last_complete_step.is_final = True
             if last_complete_step.message is not None:
                 self._last_final_message = last_complete_step.message
