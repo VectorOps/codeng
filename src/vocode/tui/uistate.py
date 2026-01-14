@@ -46,11 +46,13 @@ class TUIState:
         on_autocomplete_request: (
             typing.Callable[[str, int, int], typing.Awaitable[None]] | None
         ) = None,
+        on_open_logs: typing.Callable[[], typing.Awaitable[None]] | None = None,
         on_stop: typing.Callable[[], typing.Awaitable[None]] | None = None,
         on_eof: typing.Callable[[], typing.Awaitable[None]] | None = None,
     ) -> None:
         self._on_input = on_input
         self._on_autocomplete_request = on_autocomplete_request
+        self._on_open_logs = on_open_logs
         self._on_stop = on_stop
         self._on_eof = on_eof
         if input_handler is None:
@@ -139,6 +141,7 @@ class TUIState:
             tui_input_component.KeyBinding("n", ctrl=True): self._handle_history_down,
             tui_input_component.KeyBinding("c", ctrl=True): self._handle_stop,
             tui_input_component.KeyBinding("d", ctrl=True): self._handle_eof,
+            tui_input_component.KeyBinding("l", ctrl=True): self._handle_open_logs,
         }
 
     def _handle_input_key_event(self, event: input_base.KeyEvent) -> bool:
@@ -216,11 +219,20 @@ class TUIState:
         asyncio.create_task(self._on_eof())
         return True
 
+    def _handle_open_logs(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        if self._on_open_logs is None:
+            return False
+        asyncio.create_task(self._on_open_logs())
+        return True
+
     def _handle_input_event(self, event: input_base.InputEvent) -> None:
         if isinstance(event, input_base.KeyEvent):
-            handled = self._handle_input_key_event(event)
-            if handled:
-                return
+            terminal = self._terminal
+            if not terminal.has_screens:
+                handled = self._handle_input_key_event(event)
+                if handled:
+                    return
         self._terminal._handle_input_event(event)
 
     async def start(self) -> None:

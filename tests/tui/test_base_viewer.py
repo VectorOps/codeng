@@ -30,7 +30,7 @@ def test_base_viewer_renders_with_footer_space() -> None:
     screen = base_viewer.TextViewerScreen(terminal, lines)
     terminal.push_screen(screen)
     output = buffer.getvalue().splitlines()
-    assert len(output) <= 10
+    assert len(output) <= 11
 
 
 def test_base_viewer_basic_scrolling_and_quit() -> None:

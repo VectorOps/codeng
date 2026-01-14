@@ -3,8 +3,8 @@
 * [ ] General
 ** [X] Add TUI message plumbing to UIServer
 ** [X] Add state to UIServer - first message sent to idle state should start the workflow
-** [ ] Stream log messages/errors to client. Figure out general startup sequencing and error handling.
-** [ ] Fix logging - have a special buffer and a way to see logs at will
+** [X] Stream log messages/errors to client. Figure out general startup sequencing and error handling.
+** [X] Fix logging - have a special buffer and a way to see logs at will
 ** [X] Rethink tool step handling. Make it easier for UI to understand the tool execution state
 ** [X] Create Step renderer in TUI client
 ** [X] Add input request stack to TUI
@@ -12,6 +12,8 @@
 ** [X] Fix APPROVE/DECLINE rendering
 ** [X] Do not pad lines with spaces - it breaks copy-paste
 ** [ ] Add history editing mode
+*** [ ] Stopped runner getting a text message is resumed and last user input is replaced with whatever it typed
+*** [ ] Add a away to visually select previous continuation point
 ** [ ] Fix knowlt summary documentation generation - it adds python docstring twice
 ** [ ] Add a way for knowlt to return individual symbols from file by id. have compact ids, not uuids.
 ** [ ] Implement tool call formatters
@@ -36,6 +38,10 @@
 * [X] Migrate tools
 * [X] Migrate nodes
 * [ ] UI
+** [ ] Rethink TUIState
+- Right now heavily dependent on a bunch of callbacks passed from App
+- Limited APIs possible
+- Consolidate APIs into interface?
 ** [X] Create an in-memory bidirectional communication channel
 ** [X] History support
 - on_history_up, on_history_down events

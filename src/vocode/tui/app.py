@@ -14,6 +14,7 @@ from vocode.manager import proto as manager_proto
 from vocode.manager import server as manager_server
 from vocode import project as vocode_project
 from vocode.tui import uistate as tui_uistate
+from vocode.tui.screens import log_view as tui_log_view
 
 
 @dataclass
@@ -49,12 +50,17 @@ class App:
 
         self._register_handlers()
 
-        self._state = tui_uistate.TUIState(
-            on_input=self.on_input,
-            on_autocomplete_request=self.on_autocomplete_request,
-            on_stop=self.on_stop_request,
-            on_eof=self.on_eof_request,
-        )
+        state_kwargs: dict[str, typing.Any] = {
+            "on_input": self.on_input,
+            "on_autocomplete_request": self.on_autocomplete_request,
+            "on_stop": self.on_stop_request,
+            "on_eof": self.on_eof_request,
+        }
+        state_type = getattr(tui_uistate, "TUIState")
+        init_params = typing.get_type_hints(state_type.__init__)
+        if "on_open_logs" in init_params:
+            state_kwargs["on_open_logs"] = self.open_logs
+        self._state = tui_uistate.TUIState(**state_kwargs)
 
     def _next_msg_id(self) -> int:
         self._push_msg_id += 1
@@ -192,6 +198,23 @@ class App:
         )
 
         await self._endpoint_ui.send(envelope)
+
+    async def open_logs(self) -> None:
+        terminal = self._state.terminal
+        if terminal.has_screens:
+            screen = terminal.top_screen
+            if isinstance(screen, tui_log_view.LogViewScreen):
+                return
+        packet = manager_proto.LogReqPacket(offset=0, limit=None)
+        resp = await self._rpc.call(packet)
+        if not isinstance(resp, manager_proto.LogRespPacket):
+            return
+        screen = tui_log_view.LogViewScreen(
+            app=self,
+            terminal=terminal,
+            entries=resp.entries,
+        )
+        terminal.push_screen(screen)
 
     async def on_eof_request(self) -> None:
         recv_task = self._recv_task

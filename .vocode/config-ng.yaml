@@ -1,8 +1,6 @@
 # Default Vocode configuration
 logging:
-  default_level: info
-  enabled_loggers:
-    LiteLLM: warning
+  default_level: debug
 variables:
 # OpenAI
   LLM_DISCOVERY_MODEL: gpt-5-mini
