@@ -53,6 +53,10 @@ class UIServer:
             manager_proto.BasePacketKind.STOP_REQ,
             self._on_stop_packet,
         )
+        self._router.register(
+            manager_proto.BasePacketKind.LOG_REQ,
+            self._on_log_req_packet,
+        )
 
     def _next_packet_id(self) -> int:
         self._push_msg_id += 1
@@ -434,6 +438,63 @@ class UIServer:
             return None
         await self._manager.stop_current_runner()
         return None
+
+    async def _on_log_req_packet(
+        self,
+        envelope: manager_proto.BasePacketEnvelope,
+    ) -> Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if payload.kind != manager_proto.BasePacketKind.LOG_REQ:
+            return None
+        req = cast(manager_proto.LogReqPacket, payload)
+        manager = get_log_manager_internal()
+        if manager is None:
+            return manager_proto.LogRespPacket(offset=req.offset, total=0, entries=[])
+        records = manager.get_logs()
+        total = len(records)
+        if req.offset < 0:
+            offset = 0
+        else:
+            offset = req.offset
+        if offset > total:
+            offset = total
+        limit = req.limit
+        if limit is None:
+            end = total
+        else:
+            if limit < 0:
+                limit = 0
+            end = offset + limit
+        if end > total:
+            end = total
+        entries: list[manager_proto.LogEntry] = []
+        for index in range(offset, end):
+            record = records[index]
+            level = manager_proto.LogLevel.INFO
+            if record.level <= logging.DEBUG:
+                level = manager_proto.LogLevel.DEBUG
+            elif record.level <= logging.INFO:
+                level = manager_proto.LogLevel.INFO
+            elif record.level <= logging.WARNING:
+                level = manager_proto.LogLevel.WARNING
+            elif record.level <= logging.ERROR:
+                level = manager_proto.LogLevel.ERROR
+            else:
+                level = manager_proto.LogLevel.CRITICAL
+            entry = manager_proto.LogEntry(
+                index=index,
+                logger_name=record.logger_name,
+                level=level,
+                level_name=record.level_name,
+                message=record.message,
+                created=record.created,
+            )
+            entries.append(entry)
+        return manager_proto.LogRespPacket(
+            offset=offset,
+            total=total,
+            entries=entries,
+        )
 
     async def on_ui_packet(self, envelope: manager_proto.BasePacketEnvelope) -> bool:
         logger.debug("UIServer.on_ui_packet", pack=envelope)

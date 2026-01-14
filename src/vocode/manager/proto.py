@@ -19,6 +19,8 @@ class BasePacketKind(str, Enum):
     AUTOCOMPLETE_REQ = "autocomplete_req"
     AUTOCOMPLETE_RESP = "autocomplete_resp"
     TEXT_MESSAGE = "text_message"
+    LOG_REQ = "log_req"
+    LOG_RESP = "log_resp"
 
 
 class AckPacket(BaseModel):
@@ -114,6 +116,38 @@ class TextMessagePacket(BaseModel):
     format: TextMessageFormat = Field(default=TextMessageFormat.PLAIN)
 
 
+class LogLevel(str, Enum):
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+class LogEntry(BaseModel):
+    index: int
+    logger_name: str
+    level: LogLevel
+    level_name: str
+    message: str
+    created: float
+
+
+class LogReqPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.LOG_REQ] = Field(default=BasePacketKind.LOG_REQ)
+    offset: int = Field(default=0)
+    limit: Optional[int] = Field(default=None)
+
+
+class LogRespPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.LOG_RESP] = Field(
+        default=BasePacketKind.LOG_RESP
+    )
+    offset: int
+    total: int
+    entries: list[LogEntry] = Field(default_factory=list)
+
+
 BasePacket = Annotated[
     typing.Union[
         AckPacket,
@@ -125,6 +159,8 @@ BasePacket = Annotated[
         AutocompleteReqPacket,
         AutocompleteRespPacket,
         TextMessagePacket,
+        LogReqPacket,
+        LogRespPacket,
     ],
     Field(discriminator="kind"),
 ]

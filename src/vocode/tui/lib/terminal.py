@@ -82,6 +82,16 @@ class Terminal:
     def console(self) -> rich_console.Console:
         return self._console
 
+    @property
+    def has_screens(self) -> bool:
+        return bool(self._screens)
+
+    @property
+    def top_screen(self) -> BaseScreen | None:
+        if not self._screens:
+            return None
+        return self._screens[-1]
+
     def disable_auto_render(self) -> None:
         if self._auto_render_suppressed == 0:
             self._cancel_auto_render_task()
@@ -232,7 +242,11 @@ class Terminal:
 
     def _handle_resize_event(self, event: input_base.ResizeEvent) -> None:
         self._force_full_render = True
-        self._request_auto_render(force=True)
+        if self._screens:
+            top = self._screens[-1]
+            top.render()
+        else:
+            self._request_auto_render(force=True)
 
     def _set_cursor_line(self, line):
         height = self._console.size.height
@@ -356,6 +370,7 @@ class Terminal:
         was_empty = not self._screens
         self._screens.append(screen)
         if was_empty:
+            self.disable_auto_render()
             self._console.control(tui_controls.CustomControl.enter_alt_screen())
         screen.render()
 
@@ -365,6 +380,7 @@ class Terminal:
         screen = self._screens.pop()
         if not self._screens:
             self._console.control(tui_controls.CustomControl.exit_alt_screen())
+            self.enable_auto_render()
             self._force_full_render = True
             self._request_auto_render(force=True)
         else:
