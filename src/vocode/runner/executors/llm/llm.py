@@ -384,6 +384,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 )
             )
 
+        # Collect usage stats
         usage_obj = response.usage
         prompt_tokens = 0
         completion_tokens = 0
@@ -391,9 +392,23 @@ class LLMExecutor(runner_base.BaseExecutor):
             prompt_tokens = int(usage_obj.prompt_tokens or 0)
             completion_tokens = int(usage_obj.completion_tokens or 0)
 
+        round_cost = 0.0
+        try:
+            cost_val = litellm.completion_cost(
+                completion_response=response, model=cfg.model
+            )
+            if cost_val is not None:
+                round_cost = float(cost_val)
+        except Exception:
+            round_cost = 0.0
+
+        model_input_token_limit = llm_helpers.resolve_model_token_limit(cfg)
+
         usage_stats = state.LLMUsageStats(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cost_dollars=round_cost,
+            input_token_limit=model_input_token_limit,
         )
 
         final_outcome_name = outcome_name if len(outcome_names) > 1 else None
