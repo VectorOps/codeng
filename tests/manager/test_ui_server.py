@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -15,6 +16,38 @@ from vocode.manager import proto as manager_proto
 from vocode.runner import proto as runner_proto
 from tests.stub_project import StubProject
 from vocode.manager import autocomplete_providers as autocomplete_providers
+
+
+@pytest.mark.asyncio
+async def test_uiserver_applies_logging_settings() -> None:
+    project_settings = vocode_settings.Settings()
+    project_settings.logging = vocode_settings.LoggingSettings(
+        default_level=vocode_settings.LogLevel.error,
+        enabled_loggers={"custom.logger": vocode_settings.LogLevel.debug},
+    )
+
+    project = StubProject(settings=project_settings)
+    server_endpoint, _ = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    root_logger = logging.getLogger()
+    vocode_logger = logging.getLogger("vocode")
+    custom_logger = logging.getLogger("custom.logger")
+
+    orig_root_level = root_logger.level
+    orig_vocode_level = vocode_logger.level
+    orig_custom_level = custom_logger.level
+
+    try:
+        await server.start()
+
+        assert root_logger.level == logging.ERROR
+        assert vocode_logger.level == logging.ERROR
+        assert custom_logger.level == logging.DEBUG
+    finally:
+        root_logger.setLevel(orig_root_level)
+        vocode_logger.setLevel(orig_vocode_level)
+        custom_logger.setLevel(orig_custom_level)
 
 
 @pytest.mark.asyncio

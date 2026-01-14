@@ -1,6 +1,6 @@
 # Default Vocode configuration
 logging:
-  default_level: debug
+  default_level: info
   enabled_loggers:
     LiteLLM: warning
 variables:
