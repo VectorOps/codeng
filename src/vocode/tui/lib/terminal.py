@@ -10,7 +10,6 @@ from rich import console as rich_console
 from rich import control as rich_control
 from rich import segment as rich_segment
 
-from vocode.logger import logger
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.input import base as input_base
@@ -39,6 +38,12 @@ class TerminalSettings(BaseModel):
     incremental_mode: IncrementalRenderMode = IncrementalRenderMode.PADDING
 
 
+class BaseScreen(typing.Protocol):
+    def __init__(self, terminal: "Terminal") -> None: ...
+
+    def render(self) -> None: ...
+
+
 class Terminal:
     def __init__(
         self,
@@ -53,7 +58,7 @@ class Terminal:
         self._id_index: typing.Dict[str, tui_base.Component] = {}
         self._dirty_components: typing.Set[tui_base.Component] = set()
         self._animation_components: typing.Set[tui_base.Component] = set()
-        self._cache: typing.Dict[Component, Lines] = {}
+        self._cache: typing.Dict[tui_base.Component, tui_base.Lines] = {}
         self._width: int | None = None
         self._force_full_render: bool = False
         self._cursor_line: int = 0
@@ -69,6 +74,7 @@ class Terminal:
         self._auto_render_task: asyncio.Task[None] | None = None
         self._animation_task: asyncio.Task[None] | None = None
         self._started: bool = False
+        self._screens: list[BaseScreen] = []
         if self._input_handler is not None:
             self._input_handler.subscribe(self._handle_input_event)
 
@@ -207,6 +213,14 @@ class Terminal:
             self._handle_resize_event(event)
             return
 
+        if self._screens:
+            screen = self._screens[-1]
+            if isinstance(event, input_base.KeyEvent):
+                handler = getattr(screen, "on_key_event", None)
+                if handler is not None:
+                    handler(event)
+                    return
+
         if not self._focus_stack:
             return
 
@@ -268,7 +282,7 @@ class Terminal:
             return
         if not self._auto_render_enabled:
             return
-        if not self._components:
+        if not self._components and not self._screens:
             return
         if not self._dirty_components and not self._force_full_render:
             return
@@ -337,7 +351,39 @@ class Terminal:
 
         asyncio.run(_main())
 
+    # Screens
+    def push_screen(self, screen: BaseScreen) -> None:
+        was_empty = not self._screens
+        self._screens.append(screen)
+        if was_empty:
+            self._console.control(tui_controls.CustomControl.enter_alt_screen())
+        screen.render()
+
+    def pop_screen(self) -> BaseScreen | None:
+        if not self._screens:
+            return None
+        screen = self._screens.pop()
+        if not self._screens:
+            self._console.control(tui_controls.CustomControl.exit_alt_screen())
+            self._force_full_render = True
+            self._request_auto_render(force=True)
+        else:
+            top = self._screens[-1]
+            top.render()
+        return screen
+
     def _full_render(self) -> None:
+        if self._screens:
+            self._console.control(tui_controls.CustomControl.sync_update_start())
+            self._console.control(
+                tui_controls.CustomControl.erase_scrollback(),
+                rich_control.Control.clear(),
+                rich_control.Control.home(),
+            )
+            self._console.control(tui_controls.CustomControl.sync_update_end())
+            top = self._screens[-1]
+            top.render()
+            return
         options = self._console.options
 
         for component in self._dirty_components:
@@ -528,6 +574,13 @@ class Terminal:
         return True
 
     async def render(self) -> None:
+        if self._screens:
+            self._full_render()
+            self._width = self._console.size.width
+            self._force_full_render = False
+            self._dirty_components.clear()
+            return
+
         if not self._components:
             return
 

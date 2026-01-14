@@ -1,5 +1,5 @@
 from .base import ComponentStyle, Component, Lines
-from .terminal import IncrementalRenderMode, TerminalSettings, Terminal
+from .terminal import IncrementalRenderMode, TerminalSettings, Terminal, BaseScreen
 
 __all__ = [
     "ComponentStyle",
@@ -8,4 +8,5 @@ __all__ = [
     "IncrementalRenderMode",
     "TerminalSettings",
     "Terminal",
+    "BaseScreen",
 ]
