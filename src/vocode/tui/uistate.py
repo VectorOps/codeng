@@ -5,6 +5,7 @@ import dataclasses
 import enum
 import typing
 from rich import console as rich_console
+from rich import control as rich_control
 from vocode import state as vocode_state
 from vocode import models as vocode_models
 from vocode.logger import logger
@@ -54,10 +55,11 @@ class TUIState:
         self._on_eof = on_eof
         if input_handler is None:
             input_handler = input_handler_mod.PosixInputHandler()
+        self._input_handler = input_handler
+        self._input_task: asyncio.Task[None] | None = None
         settings = tui_terminal.TerminalSettings()
         self._terminal = tui_terminal.Terminal(
             console=console,
-            input_handler=input_handler,
             settings=settings,
         )
 
@@ -72,7 +74,6 @@ class TUIState:
         self._input_component = input_component
         self._history_manager = tui_history.HistoryManager()
         self._input_keymap = self._create_input_keymap()
-        self._input_component.set_key_event_handler(self._handle_input_key_event)
         self._step_components: dict[str, tui_markdown_component.MarkdownComponent] = {}
         self._step_handlers: dict[
             vocode_state.StepType, typing.Callable[[vocode_state.Step], None]
@@ -104,6 +105,9 @@ class TUIState:
 
         self._input_component.subscribe_submit(self._handle_submit)
         self._input_component.subscribe_cursor_event(self._handle_cursor_event)
+
+        if self._input_handler is not None:
+            self._input_handler.subscribe(self._handle_input_event)
 
         self._autocomplete_task: asyncio.Task[None] | None = None
         self._last_autocomplete_text: str | None = None
@@ -212,12 +216,32 @@ class TUIState:
         asyncio.create_task(self._on_eof())
         return True
 
+    def _handle_input_event(self, event: input_base.InputEvent) -> None:
+        if isinstance(event, input_base.KeyEvent):
+            handled = self._handle_input_key_event(event)
+            if handled:
+                return
+        self._terminal._handle_input_event(event)
+
     async def start(self) -> None:
         await self._terminal.start()
+        if self._input_handler is not None and self._input_task is None:
+            loop = asyncio.get_running_loop()
+            self._input_task = loop.create_task(self._input_handler.run())
+        self._terminal.console.control(rich_control.Control.show_cursor(False))
         await self._terminal.render()
 
     async def stop(self) -> None:
+        task = self._input_task
+        self._input_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await self._terminal.stop()
+        self._terminal.console.control(rich_control.Control.show_cursor(True))
 
     def add_markdown(
         self,

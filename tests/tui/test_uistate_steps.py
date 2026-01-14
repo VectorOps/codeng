@@ -265,7 +265,8 @@ async def test_tui_state_renders_approval_and_rejection_steps() -> None:
     assert "Rejected because of reasons." in output
 
 
-def test_tui_state_history_up_places_cursor_on_last_row() -> None:
+@pytest.mark.asyncio
+async def test_tui_state_history_up_places_cursor_on_last_row() -> None:
     async def on_input(_: str) -> None:
         return None
 
@@ -284,11 +285,12 @@ def test_tui_state_history_up_places_cursor_on_last_row() -> None:
     ui_state.history.add("first line\nsecond line")
     input_component = ui_state.terminal.components[-2]
     event = input_base.KeyEvent(action="down", key="up")
-    input_component.on_key_event(event)
+    ui_state._input_handler.publish(event)
     assert input_component.cursor_row == len(input_component.lines) - 1
 
 
-def test_tui_state_history_down_places_cursor_on_first_row() -> None:
+@pytest.mark.asyncio
+async def test_tui_state_history_down_places_cursor_on_first_row() -> None:
     async def on_input(_: str) -> None:
         return None
 
@@ -308,10 +310,10 @@ def test_tui_state_history_down_places_cursor_on_first_row() -> None:
     ui_state.history.add("alpha\nbeta")
     input_component = ui_state.terminal.components[-2]
     event_up = input_base.KeyEvent(action="down", key="up")
-    input_component.on_key_event(event_up)
-    input_component.on_key_event(event_up)
-    input_component.on_key_event(event_up)
+    ui_state._input_handler.publish(event_up)
+    ui_state._input_handler.publish(event_up)
+    ui_state._input_handler.publish(event_up)
     assert input_component.cursor_row == len(input_component.lines) - 1
     event_down = input_base.KeyEvent(action="down", key="down")
-    input_component.on_key_event(event_down)
+    ui_state._input_handler.publish(event_down)
     assert input_component.cursor_row == 0

@@ -413,20 +413,20 @@ async def test_tui_state_input_history_navigation() -> None:
     assert component.text == ""
 
     key_up = input_base.KeyEvent(action="down", key="up")
-    component.on_key_event(key_up)
+    handler.publish(key_up)
     assert component.text == "second"
 
-    component.on_key_event(key_up)
+    handler.publish(key_up)
     assert component.text == "first"
 
-    component.on_key_event(key_up)
+    handler.publish(key_up)
     assert component.text == "first"
 
     key_down = input_base.KeyEvent(action="down", key="down")
-    component.on_key_event(key_down)
+    handler.publish(key_down)
     assert component.text == "second"
 
-    component.on_key_event(key_down)
+    handler.publish(key_down)
     assert component.text == ""
 
 
@@ -863,9 +863,8 @@ async def test_tui_state_ctrl_c_triggers_on_stop() -> None:
         on_stop=on_stop,
         on_eof=None,
     )
-    input_component = ui_state.terminal.components[-2]
     event = input_base.KeyEvent(action="down", key="c", ctrl=True)
-    input_component.on_key_event(event)
+    ui_state._input_handler.publish(event)
     await asyncio.sleep(0)
     assert called
 
@@ -892,9 +891,8 @@ async def test_tui_state_ctrl_d_triggers_on_eof() -> None:
         on_stop=None,
         on_eof=on_eof,
     )
-    input_component = ui_state.terminal.components[-2]
     event = input_base.KeyEvent(action="down", key="d", ctrl=True)
-    input_component.on_key_event(event)
+    ui_state._input_handler.publish(event)
     await asyncio.sleep(0)
     assert called
 

@@ -20,6 +20,7 @@ async def test_tui_state_triggers_autocomplete_request_on_cursor_move() -> None:
 
     async def on_input(_: str) -> None:
         return None
+
     async def on_autocomplete(text: str, row: int, col: int) -> None:
         requests.append((text, row, col))
 
@@ -38,7 +39,7 @@ async def test_tui_state_triggers_autocomplete_request_on_cursor_move() -> None:
     component = ui_state.terminal.components[-2]
     component.text = "hello"
     left_event = input_base.KeyEvent(action="down", key="left")
-    component.on_key_event(left_event)
+    ui_state._input_handler.publish(left_event)
     await asyncio.sleep(tui_uistate.AUTOCOMPLETE_DEBOUNCE_MS / 1000.0 + 0.05)
     assert requests
 
