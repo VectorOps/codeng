@@ -6,7 +6,7 @@ from vocode import state, models
 from tests.stub_project import StubProject
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
-from vocode.runner.runner import Runner, RunEvent
+from vocode.runner.runner import Runner, RunEvent, RunnerStopped
 from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.runner import base as runner_base
 
@@ -31,7 +31,15 @@ async def drive_runner(
             send = RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
             continue
         events.append(event)
-        send = handler(event)
+        try:
+            send = handler(event)
+        except RunnerStopped:
+            try:
+                stop_event = await agen.athrow(RunnerStopped())
+                events.append(stop_event)
+            except StopAsyncIteration:
+                pass
+            break
     return events
 
 
@@ -469,7 +477,7 @@ async def test_loop_confirmation_mode_repeats_node_without_transition():
         if step.type == state.StepType.PROMPT and step.execution.node == "node1":
             prompt_count += 1
             if prompt_count >= 3:
-                runner.stop()
+                raise RunnerStopped()
             user_message = state.Message(
                 role=models.Role.USER,
                 text=f"loop-{prompt_count}",
@@ -817,23 +825,12 @@ async def test_runner_stop_stops_execution_loop():
     assert event.step.execution.node == "loop1"
     assert runner.status == state.RunnerStatus.RUNNING
 
-    runner.stop()
-    saw_step_after_stop = False
-    while True:
-        try:
-            event = await agen.asend(
-                RunEventResp(
-                    resp_type=RunEventResponseType.NOOP,
-                    message=None,
-                )
-            )
-        except StopAsyncIteration:
-            break
-        if event.step is not None:
-            saw_step_after_stop = True
-            break
-
-    assert not saw_step_after_stop
+    stop_event = await agen.athrow(RunnerStopped())
+    assert stop_event.step is None
+    assert stop_event.stats is not None
+    assert stop_event.stats.status == state.RunnerStatus.STOPPED
+    with pytest.raises(StopAsyncIteration):
+        await agen.__anext__()
 
     assert runner.status == state.RunnerStatus.STOPPED
 
@@ -1579,23 +1576,12 @@ async def test_runner_start_after_stop_resumes_execution():
     assert event1.step.execution.node == "node1"
     assert runner.status == state.RunnerStatus.RUNNING
 
-    runner.stop()
-    saw_step_after_stop = False
-    while True:
-        try:
-            event = await agen1.asend(
-                RunEventResp(
-                    resp_type=RunEventResponseType.NOOP,
-                    message=None,
-                )
-            )
-        except StopAsyncIteration:
-            break
-        if event.step is not None:
-            saw_step_after_stop = True
-            break
-
-    assert not saw_step_after_stop
+    stop_event = await agen1.athrow(RunnerStopped())
+    assert stop_event.step is None
+    assert stop_event.stats is not None
+    assert stop_event.stats.status == state.RunnerStatus.STOPPED
+    with pytest.raises(StopAsyncIteration):
+        await agen1.__anext__()
 
     assert runner.status == state.RunnerStatus.STOPPED
 
