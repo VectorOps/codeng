@@ -16,6 +16,10 @@ from . import proto as runner_proto
 RunEvent = RunEventReq
 
 
+class RunnerStopped(Exception):
+    pass
+
+
 class Runner:
     def __init__(
         self,
@@ -38,7 +42,7 @@ class Runner:
         self.status = state.RunnerStatus.IDLE
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
-        self._stop_requested = False
+        self._last_final_message: Optional[state.Message] = None
         self._last_final_message: Optional[state.Message] = None
 
         self._executors: Dict[str, BaseExecutor] = {
@@ -450,28 +454,479 @@ class Runner:
             step=response_step,
         )
 
-    def _maybe_handle_stop(
-        self, current_execution: Optional[state.NodeExecution]
-    ) -> bool:
-        if not self._stop_requested:
-            return False
-        if (
-            current_execution is not None
-            and current_execution.status == state.RunStatus.RUNNING
-        ):
-            current_execution.status = state.RunStatus.STOPPED
-        return True
+    # Main runner loop
+    async def run(self) -> AsyncIterator[RunEventReq]:
+        if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
+            raise RuntimeError(
+                f"run() not allowed when runner status is '{self.status}'. Allowed: 'idle', 'stopped'"
+            )
 
-    def stop(self) -> None:
-        if self.status in (
-            state.RunnerStatus.FINISHED,
-            state.RunnerStatus.STOPPED,
-        ):
+        current_execution: Optional[state.NodeExecution]
+
+        try:
+            (
+                runtime_node,
+                current_execution,
+                resume_step,
+                skip_executor,
+            ) = self._compute_resume_state()
+
+            if runtime_node is None:
+                status_event = self.set_status(
+                    state.RunnerStatus.FINISHED,
+                    current_execution=None,
+                )
+                _ = yield status_event
+                return
+
+            if (
+                self.need_input
+                and self.initial_message is None
+                and not self.execution.steps
+                and current_execution is not None
+            ):
+                waiting_event = self.set_status(
+                    state.RunnerStatus.WAITING_INPUT,
+                    current_execution=current_execution,
+                )
+                _ = yield waiting_event
+
+                prompt_text = self.need_input_prompt or "What are we doing today?"
+                prompt_message = state.Message(
+                    role=models.Role.ASSISTANT,
+                    text=prompt_text,
+                )
+                prompt_step = state.Step(
+                    execution=current_execution,
+                    type=state.StepType.PROMPT,
+                    message=prompt_message,
+                    is_complete=True,
+                )
+                persisted_prompt = self._persist_step(prompt_step)
+                req = RunEventReq(
+                    kind=runner_proto.RunEventReqKind.STEP,
+                    execution=self.execution,
+                    step=persisted_prompt,
+                )
+                resp = yield req
+                response_step = self._handle_run_event_response(req, resp)
+                response_event = self._build_response_event(response_step)
+                if response_event is not None:
+                    _ = yield response_event
+
+            status_event = self.set_status(
+                state.RunnerStatus.RUNNING,
+                current_execution=current_execution,
+            )
+            _ = yield status_event
+            current_runtime_node = runtime_node
+            use_resume_step = resume_step
+            skip_executor_for_current = skip_executor
+
+            tool_request_steps: dict[int, state.Step] = {}
+
+            while True:
+                executor = self._executors[current_runtime_node.name]
+                executor_input = ExecutorInput(
+                    execution=current_execution, run=self.execution
+                )
+
+                last_complete_step: Optional[state.Step] = None
+                complete_step_count = 0
+                if skip_executor_for_current and use_resume_step is not None:
+                    last_complete_step = use_resume_step
+                    complete_step_count = 1
+                    skip_executor_for_current = False
+                    use_resume_step = None
+                else:
+                    async for step in executor.run(executor_input):
+                        node_output_mode = current_runtime_node.model.output_mode
+                        if step.output_mode != node_output_mode:
+                            step.output_mode = node_output_mode
+                        persisted_step = self._persist_step(step)
+                        if step.type in (
+                            state.StepType.PROMPT,
+                            state.StepType.PROMPT_CONFIRM,
+                        ):
+                            waiting_event = self.set_status(
+                                state.RunnerStatus.WAITING_INPUT,
+                                current_execution=current_execution,
+                            )
+                            _ = yield waiting_event
+                        req = RunEventReq(
+                            kind=runner_proto.RunEventReqKind.STEP,
+                            execution=self.execution,
+                            step=persisted_step,
+                        )
+                        resp = yield req
+                        response_step = self._handle_run_event_response(req, resp)
+                        response_event = self._build_response_event(response_step)
+                        if response_event is not None:
+                            _ = yield response_event
+
+                        if persisted_step.type in (
+                            state.StepType.PROMPT,
+                            state.StepType.PROMPT_CONFIRM,
+                        ):
+                            resume_status_event = self._set_running_after_input(
+                                current_execution
+                            )
+                            if resume_status_event is not None:
+                                _ = yield resume_status_event
+                        if persisted_step.is_complete:
+                            complete_step_count += 1
+                            last_complete_step = persisted_step
+
+                if complete_step_count == 0:
+                    raise RuntimeError(
+                        "Executor finished without yielding a complete step for the node run."
+                    )
+                if complete_step_count > 1:
+                    raise RuntimeError(
+                        "Executor yielded more than one complete step for a single run."
+                    )
+
+                self._apply_llm_usage(last_complete_step.llm_usage)
+
+                if last_complete_step is not None and last_complete_step.type in (
+                    state.StepType.PROMPT,
+                    state.StepType.PROMPT_CONFIRM,
+                ):
+                    continue
+
+                # Tool call handling
+                msg = last_complete_step.message
+                if msg is not None and msg.tool_call_requests:
+                    approved: list[state.ToolCallReq] = []
+                    tool_responses: list[state.ToolCallResp] = []
+
+                    for req in msg.tool_call_requests:
+                        is_auto_approved = self._is_tool_call_auto_approved(req)
+                        if is_auto_approved:
+                            req.auto_approved = True
+                            req.status = state.ToolCallReqStatus.PENDING_EXECUTION
+                        else:
+                            req.status = state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+
+                        while True:
+                            persisted_prompt = self._create_tool_prompt_step(
+                                current_execution,
+                                req,
+                            )
+                            tool_request_steps[id(req)] = persisted_prompt
+
+                            if not is_auto_approved:
+                                waiting_event = self.set_status(
+                                    state.RunnerStatus.WAITING_INPUT,
+                                    current_execution=current_execution,
+                                )
+                                _ = yield waiting_event
+
+                            req_event = RunEventReq(
+                                kind=runner_proto.RunEventReqKind.STEP,
+                                execution=self.execution,
+                                step=persisted_prompt,
+                            )
+                            resp_event = yield req_event
+
+                            if is_auto_approved:
+                                approved.append(req)
+                                break
+
+                            response_step = self._handle_run_event_response(
+                                req_event, resp_event
+                            )
+                            response_event = self._build_response_event(response_step)
+                            if response_event is not None:
+                                _ = yield response_event
+
+                            before_len = len(approved)
+                            if not is_auto_approved:
+                                resume_status_event = self._set_running_after_input(
+                                    current_execution
+                                )
+                                if resume_status_event is not None:
+                                    _ = yield resume_status_event
+                            handled = self._process_tool_approval_response(
+                                req,
+                                response_step,
+                                approved,
+                                tool_responses,
+                            )
+                            if handled:
+                                if len(approved) > before_len:
+                                    break
+                                persisted_prompt.is_final = True
+                                break
+
+                    if approved:
+                        for req in approved:
+                            tool_step = tool_request_steps.get(id(req))
+                            if tool_step is None:
+                                continue
+                            req.status = state.ToolCallReqStatus.EXECUTING
+                            status_event = RunEventReq(
+                                kind=runner_proto.RunEventReqKind.STEP,
+                                execution=self.execution,
+                                step=tool_step,
+                            )
+                            _ = yield status_event
+
+                        exec_results = await self._execute_approved_tool_calls(approved)
+                        for exec_result in exec_results:
+                            if (
+                                exec_result.kind
+                                == runner_proto.ToolExecResultKind.RESPONSE
+                            ):
+                                tool_responses.append(exec_result.response)  # type: ignore[attr-defined]
+                            elif (
+                                exec_result.kind
+                                == runner_proto.ToolExecResultKind.START_WORKFLOW
+                            ):
+                                start_payload = runner_proto.RunEventStartWorkflow(
+                                    workflow_name=exec_result.workflow_name,  # type: ignore[attr-defined]
+                                    initial_message=exec_result.initial_message,  # type: ignore[attr-defined]
+                                )
+                                event = RunEventReq(
+                                    kind=runner_proto.RunEventReqKind.START_WORKFLOW,
+                                    execution=self.execution,
+                                    start_workflow=start_payload,
+                                )
+                                child_final = yield event
+                                assert (
+                                    child_final.resp_type
+                                    == RunEventResponseType.MESSAGE
+                                )
+                                assert child_final.message is not None
+                                tool_responses.append(
+                                    state.ToolCallResp(
+                                        id=req.id,
+                                        status=state.ToolCallStatus.COMPLETED,
+                                        name=req.name,
+                                        result={
+                                            "agent_name": start_payload.workflow_name,
+                                            "response": child_final.message.text,
+                                        },
+                                    )
+                                )
+                                continue
+
+                        for req in approved:
+                            tool_step = tool_request_steps.get(id(req))
+                            if tool_step is None:
+                                continue
+                            req.status = state.ToolCallReqStatus.COMPLETE
+                            req.handled_at = utcnow()
+                            tool_step.is_final = True
+                            status_event = RunEventReq(
+                                kind=runner_proto.RunEventReqKind.STEP,
+                                execution=self.execution,
+                                step=tool_step,
+                            )
+                            _ = yield status_event
+
+                    if tool_responses:
+                        self._create_tool_result_step(
+                            current_execution,
+                            tool_responses,
+                        )
+
+                    continue
+
+                # Node confirmation logic
+                confirmation_mode = current_runtime_node.model.confirmation
+                loop_current_node = False
+
+                if confirmation_mode in (
+                    models.Confirmation.MANUAL,
+                    models.Confirmation.LOOP,
+                ):
+                    while True:
+                        prompt_message = state.Message(
+                            role=models.Role.ASSISTANT,
+                            text="",
+                        )
+                        prompt_type = state.StepType.PROMPT_CONFIRM
+                        if confirmation_mode == models.Confirmation.LOOP:
+                            prompt_type = state.StepType.PROMPT
+                        prompt_step = state.Step(
+                            execution=current_execution,
+                            type=prompt_type,
+                            message=prompt_message,
+                        )
+                        persisted_prompt = self._persist_step(prompt_step)
+
+                        waiting_event = self.set_status(
+                            state.RunnerStatus.WAITING_INPUT,
+                            current_execution=current_execution,
+                        )
+                        _ = yield waiting_event
+
+                        req_event = RunEventReq(
+                            kind=runner_proto.RunEventReqKind.STEP,
+                            execution=self.execution,
+                            step=persisted_prompt,
+                        )
+                        resp_event = yield req_event
+                        response_step = self._handle_run_event_response(
+                            req_event, resp_event
+                        )
+                        response_event = self._build_response_event(response_step)
+                        if response_event is not None:
+                            _ = yield response_event
+
+                        resume_status_event = self._set_running_after_input(
+                            current_execution
+                        )
+                        if resume_status_event is not None:
+                            _ = yield resume_status_event
+                        if (
+                            response_step is not None
+                            and response_step.type == state.StepType.INPUT_MESSAGE
+                        ):
+                            if confirmation_mode == models.Confirmation.LOOP:
+                                loop_current_node = True
+                            else:
+                                if (
+                                    response_step.message is not None
+                                    and response_step.message.text.strip()
+                                ):
+                                    loop_current_node = True
+                            break
+
+                        if (
+                            response_step is not None
+                            and response_step.type == state.StepType.APPROVAL
+                        ):
+                            if confirmation_mode == models.Confirmation.LOOP:
+                                loop_current_node = True
+                            break
+
+                        continue
+
+                if loop_current_node:
+                    continue
+
+                last_complete_step.is_final = True
+                if last_complete_step.message is not None:
+                    self._last_final_message = last_complete_step.message
+
+                # Next node selection logic
+                outcomes = current_runtime_node.model.outcomes
+
+                if not outcomes:
+                    current_execution.status = state.RunStatus.FINISHED
+                    status_event = self.set_status(
+                        state.RunnerStatus.FINISHED,
+                        current_execution=current_execution,
+                    )
+                    _ = yield status_event
+                    return
+
+                next_runtime_node = None
+
+                if len(outcomes) == 1:
+                    children = current_runtime_node.children
+                    if children:
+                        next_runtime_node = children[0]
+                else:
+                    outcome_name = last_complete_step.outcome_name
+                    if not outcome_name:
+                        req_event = self._create_transition_error_event(
+                            current_execution,
+                            "Missing outcome_name for completion step on node with multiple outcomes",
+                        )
+                        resp_event = yield req_event
+                        response_step = self._handle_run_event_response(
+                            req_event, resp_event
+                        )
+                        response_event = self._build_response_event(response_step)
+                        if response_event is not None:
+                            _ = yield response_event
+                        current_execution.status = state.RunStatus.FINISHED
+                        status_event = self.set_status(
+                            state.RunnerStatus.FINISHED,
+                            current_execution=current_execution,
+                        )
+                        _ = yield status_event
+                        return
+
+                    next_runtime_node = current_runtime_node.get_child_by_outcome(
+                        outcome_name
+                    )
+                    if next_runtime_node is None:
+                        req_event = self._create_transition_error_event(
+                            current_execution,
+                            f"Unknown outcome '{outcome_name}' for node '{current_runtime_node.name}'",
+                        )
+                        resp_event = yield req_event
+                        response_step = self._handle_run_event_response(
+                            req_event, resp_event
+                        )
+                        response_event = self._build_response_event(response_step)
+                        if response_event is not None:
+                            _ = yield response_event
+                        current_execution.status = state.RunStatus.FINISHED
+                        status_event = self.set_status(
+                            state.RunnerStatus.FINISHED,
+                            current_execution=current_execution,
+                        )
+                        _ = yield status_event
+                        return
+
+                if next_runtime_node is None:
+                    current_execution.status = state.RunStatus.FINISHED
+                    status_event = self.set_status(
+                        state.RunnerStatus.FINISHED,
+                        current_execution=current_execution,
+                    )
+                    _ = yield status_event
+                    return
+
+                # Node transition logic
+                next_input_messages = self._build_next_input_messages(
+                    current_execution,
+                    current_runtime_node.model,
+                )
+
+                current_execution.status = state.RunStatus.FINISHED
+                current_runtime_node = next_runtime_node
+
+                previous_for_next: Optional[state.NodeExecution] = None
+                if (
+                    current_runtime_node.model.reset_policy
+                    == models.StateResetPolicy.KEEP
+                ):
+                    previous_for_next = self._find_node_execution(
+                        current_runtime_node.name
+                    )
+
+                current_execution = self._create_node_execution(
+                    current_runtime_node.name,
+                    input_messages=next_input_messages,
+                    previous_execution=previous_for_next,
+                )
+
+                status_event = self.set_status(
+                    self.status,
+                    current_execution=current_execution,
+                )
+                _ = yield status_event
+
+        except RunnerStopped:
+            if (
+                current_execution is not None
+                and current_execution.status == state.RunStatus.RUNNING
+            ):
+                current_execution.status = state.RunStatus.STOPPED
+            stop_event = self.set_status(
+                state.RunnerStatus.STOPPED,
+                current_execution=current_execution,
+            )
+            _ = yield stop_event
             return
-        self._stop_requested = True
-        self.status = state.RunnerStatus.STOPPED
 
-    def _set_status(
+    def set_status(
         self,
         status: state.RunnerStatus,
         current_execution: Optional[state.NodeExecution],
@@ -501,7 +956,7 @@ class Runner:
             return None
         if self.status != state.RunnerStatus.WAITING_INPUT:
             return None
-        return self._set_status(
+        return self.set_status(
             state.RunnerStatus.RUNNING,
             current_execution=current_execution,
         )
@@ -537,529 +992,3 @@ class Runner:
             usage.completion_tokens,
             usage.cost_dollars,
         )
-
-    # Main runner loop
-    async def run(self) -> AsyncIterator[RunEventReq]:
-        # Status verification
-        if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
-            raise RuntimeError(
-                f"run() not allowed when runner status is '{self.status}'. Allowed: 'idle', 'stopped'"
-            )
-
-        # Calculate resume state, if any
-        self._stop_requested = False
-
-        (
-            runtime_node,
-            current_execution,
-            resume_step,
-            skip_executor,
-        ) = self._compute_resume_state()
-
-        if runtime_node is None:
-            status_event = self._set_status(
-                state.RunnerStatus.FINISHED,
-                current_execution=None,
-            )
-            _ = yield status_event
-            return
-
-        # See if we need initial input
-        if (
-            self.need_input
-            and self.initial_message is None
-            and not self.execution.steps
-            and current_execution is not None
-        ):
-            waiting_event = self._set_status(
-                state.RunnerStatus.WAITING_INPUT,
-                current_execution=current_execution,
-            )
-            _ = yield waiting_event
-
-            prompt_text = self.need_input_prompt or "What are we doing today?"
-            prompt_message = state.Message(
-                role=models.Role.ASSISTANT,
-                text=prompt_text,
-            )
-            prompt_step = state.Step(
-                execution=current_execution,
-                type=state.StepType.PROMPT,
-                message=prompt_message,
-                is_complete=True,
-            )
-            persisted_prompt = self._persist_step(prompt_step)
-            req = RunEventReq(
-                kind=runner_proto.RunEventReqKind.STEP,
-                execution=self.execution,
-                step=persisted_prompt,
-            )
-            resp = yield req
-            if self._maybe_handle_stop(current_execution):
-                stop_event = self._set_status(
-                    state.RunnerStatus.STOPPED,
-                    current_execution=current_execution,
-                )
-                _ = yield stop_event
-                return
-            response_step = self._handle_run_event_response(req, resp)
-            response_event = self._build_response_event(response_step)
-            if response_event is not None:
-                _ = yield response_event
-                if self._maybe_handle_stop(current_execution):
-                    stop_event = self._set_status(
-                        state.RunnerStatus.STOPPED,
-                        current_execution=current_execution,
-                    )
-                    _ = yield stop_event
-                    return
-
-        # Initialize runner loop
-        status_event = self._set_status(
-            state.RunnerStatus.RUNNING,
-            current_execution=current_execution,
-        )
-        _ = yield status_event
-        current_runtime_node = runtime_node
-        use_resume_step = resume_step
-        skip_executor_for_current = skip_executor
-
-        tool_request_steps: dict[int, state.Step] = {}
-
-        while True:
-            executor = self._executors[current_runtime_node.name]
-            executor_input = ExecutorInput(
-                execution=current_execution, run=self.execution
-            )
-
-            last_complete_step: Optional[state.Step] = None
-            complete_step_count = 0
-            if skip_executor_for_current and use_resume_step is not None:
-                last_complete_step = use_resume_step
-                complete_step_count = 1
-                skip_executor_for_current = False
-                use_resume_step = None
-            else:
-                # Intermediate executor loop
-                async for step in executor.run(executor_input):
-                    node_output_mode = current_runtime_node.model.output_mode
-                    if step.output_mode != node_output_mode:
-                        step.output_mode = node_output_mode
-                    persisted_step = self._persist_step(step)
-                    if step.type in (
-                        state.StepType.PROMPT,
-                        state.StepType.PROMPT_CONFIRM,
-                    ):
-                        waiting_event = self._set_status(
-                            state.RunnerStatus.WAITING_INPUT,
-                            current_execution=current_execution,
-                        )
-                        _ = yield waiting_event
-                    req = RunEventReq(
-                        kind=runner_proto.RunEventReqKind.STEP,
-                        execution=self.execution,
-                        step=persisted_step,
-                    )
-                    resp = yield req
-                    if self._maybe_handle_stop(current_execution):
-                        stop_event = self._set_status(
-                            state.RunnerStatus.STOPPED, current_execution
-                        )
-                        _ = yield stop_event
-                        return
-                    response_step = self._handle_run_event_response(req, resp)
-                    response_event = self._build_response_event(response_step)
-                    if response_event is not None:
-                        _ = yield response_event
-                        if self._maybe_handle_stop(current_execution):
-                            stop_event = self._set_status(
-                                state.RunnerStatus.STOPPED, current_execution
-                            )
-                            _ = yield stop_event
-                            return
-
-                    if persisted_step.type in (
-                        state.StepType.PROMPT,
-                        state.StepType.PROMPT_CONFIRM,
-                    ):
-                        resume_status_event = self._set_running_after_input(
-                            current_execution
-                        )
-                        if resume_status_event is not None:
-                            _ = yield resume_status_event
-                    if persisted_step.is_complete:
-                        complete_step_count += 1
-                        last_complete_step = persisted_step
-
-            if complete_step_count == 0:
-                raise RuntimeError(
-                    "Executor finished without yielding a complete step for the node run."
-                )
-            if complete_step_count > 1:
-                raise RuntimeError(
-                    "Executor yielded more than one complete step for a single run."
-                )
-
-            self._apply_llm_usage(last_complete_step.llm_usage)
-
-            if last_complete_step is not None and last_complete_step.type in (
-                state.StepType.PROMPT,
-                state.StepType.PROMPT_CONFIRM,
-            ):
-                continue
-
-            # Tool call handling
-            msg = last_complete_step.message
-            if msg is not None and msg.tool_call_requests:
-                approved: list[state.ToolCallReq] = []
-                tool_responses: list[state.ToolCallResp] = []
-
-                for req in msg.tool_call_requests:
-                    is_auto_approved = self._is_tool_call_auto_approved(req)
-                    if is_auto_approved:
-                        req.auto_approved = True
-                        req.status = state.ToolCallReqStatus.PENDING_EXECUTION
-                    else:
-                        req.status = state.ToolCallReqStatus.REQUIRES_CONFIRMATION
-
-                    while True:
-                        persisted_prompt = self._create_tool_prompt_step(
-                            current_execution,
-                            req,
-                        )
-                        tool_request_steps[id(req)] = persisted_prompt
-
-                        if not is_auto_approved:
-                            waiting_event = self._set_status(
-                                state.RunnerStatus.WAITING_INPUT,
-                                current_execution=current_execution,
-                            )
-                            _ = yield waiting_event
-
-                        req_event = RunEventReq(
-                            kind=runner_proto.RunEventReqKind.STEP,
-                            execution=self.execution,
-                            step=persisted_prompt,
-                        )
-                        resp_event = yield req_event
-                        if self._maybe_handle_stop(current_execution):
-                            stop_event = self._set_status(
-                                state.RunnerStatus.STOPPED, current_execution
-                            )
-                            _ = yield stop_event
-                            return
-
-                        if is_auto_approved:
-                            approved.append(req)
-                            break
-
-                        response_step = self._handle_run_event_response(
-                            req_event, resp_event
-                        )
-                        response_event = self._build_response_event(response_step)
-                        if response_event is not None:
-                            _ = yield response_event
-                            if self._maybe_handle_stop(current_execution):
-                                stop_event = self._set_status(
-                                    state.RunnerStatus.STOPPED, current_execution
-                                )
-                                _ = yield stop_event
-                                return
-
-                        before_len = len(approved)
-                        if not is_auto_approved:
-                            resume_status_event = self._set_running_after_input(
-                                current_execution
-                            )
-                            if resume_status_event is not None:
-                                _ = yield resume_status_event
-                        handled = self._process_tool_approval_response(
-                            req,
-                            response_step,
-                            approved,
-                            tool_responses,
-                        )
-                        if handled:
-                            if len(approved) > before_len:
-                                break
-                            persisted_prompt.is_final = True
-                            break
-
-                if approved:
-                    for req in approved:
-                        tool_step = tool_request_steps.get(id(req))
-                        if tool_step is None:
-                            continue
-                        req.status = state.ToolCallReqStatus.EXECUTING
-                        status_event = RunEventReq(
-                            kind=runner_proto.RunEventReqKind.STEP,
-                            execution=self.execution,
-                            step=tool_step,
-                        )
-                        _ = yield status_event
-                        if self._maybe_handle_stop(current_execution):
-                            stop_event = self._set_status(
-                                state.RunnerStatus.STOPPED, current_execution
-                            )
-                            _ = yield stop_event
-                            return
-
-                    exec_results = await self._execute_approved_tool_calls(approved)
-                    for exec_result in exec_results:
-                        if exec_result.kind == runner_proto.ToolExecResultKind.RESPONSE:
-                            tool_responses.append(exec_result.response)  # type: ignore[attr-defined]
-                        elif (
-                            exec_result.kind
-                            == runner_proto.ToolExecResultKind.START_WORKFLOW
-                        ):
-                            start_payload = runner_proto.RunEventStartWorkflow(
-                                workflow_name=exec_result.workflow_name,  # type: ignore[attr-defined]
-                                initial_message=exec_result.initial_message,  # type: ignore[attr-defined]
-                            )
-                            event = RunEventReq(
-                                kind=runner_proto.RunEventReqKind.START_WORKFLOW,
-                                execution=self.execution,
-                                start_workflow=start_payload,
-                            )
-                            child_final = yield event
-                            assert child_final.resp_type == RunEventResponseType.MESSAGE
-                            assert child_final.message is not None
-                            tool_responses.append(
-                                state.ToolCallResp(
-                                    id=req.id,
-                                    status=state.ToolCallStatus.COMPLETED,
-                                    name=req.name,
-                                    result={
-                                        "agent_name": start_payload.workflow_name,
-                                        "response": child_final.message.text,
-                                    },
-                                )
-                            )
-                            continue
-
-                    for req in approved:
-                        tool_step = tool_request_steps.get(id(req))
-                        if tool_step is None:
-                            continue
-                        req.status = state.ToolCallReqStatus.COMPLETE
-                        req.handled_at = utcnow()
-                        tool_step.is_final = True
-                        status_event = RunEventReq(
-                            kind=runner_proto.RunEventReqKind.STEP,
-                            execution=self.execution,
-                            step=tool_step,
-                        )
-                        _ = yield status_event
-                        if self._maybe_handle_stop(current_execution):
-                            stop_event = self._set_status(
-                                state.RunnerStatus.STOPPED, current_execution
-                            )
-                            _ = yield stop_event
-                            return
-
-                if tool_responses:
-                    self._create_tool_result_step(
-                        current_execution,
-                        tool_responses,
-                    )
-
-                continue
-
-            # Node confirmation logic
-            confirmation_mode = current_runtime_node.model.confirmation
-            loop_current_node = False
-
-            if confirmation_mode in (
-                models.Confirmation.MANUAL,
-                models.Confirmation.LOOP,
-            ):
-                while True:
-                    prompt_message = state.Message(
-                        role=models.Role.ASSISTANT,
-                        text="",
-                    )
-                    prompt_type = state.StepType.PROMPT_CONFIRM
-                    if confirmation_mode == models.Confirmation.LOOP:
-                        prompt_type = state.StepType.PROMPT
-                    prompt_step = state.Step(
-                        execution=current_execution,
-                        type=prompt_type,
-                        message=prompt_message,
-                    )
-                    persisted_prompt = self._persist_step(prompt_step)
-
-                    waiting_event = self._set_status(
-                        state.RunnerStatus.WAITING_INPUT,
-                        current_execution=current_execution,
-                    )
-                    _ = yield waiting_event
-
-                    req_event = RunEventReq(
-                        kind=runner_proto.RunEventReqKind.STEP,
-                        execution=self.execution,
-                        step=persisted_prompt,
-                    )
-                    resp_event = yield req_event
-                    if self._maybe_handle_stop(current_execution):
-                        stop_event = self._set_status(
-                            state.RunnerStatus.STOPPED, current_execution
-                        )
-                        _ = yield stop_event
-                        return
-                    response_step = self._handle_run_event_response(
-                        req_event, resp_event
-                    )
-                    response_event = self._build_response_event(response_step)
-                    if response_event is not None:
-                        _ = yield response_event
-                        if self._maybe_handle_stop(current_execution):
-                            stop_event = self._set_status(
-                                state.RunnerStatus.STOPPED, current_execution
-                            )
-                            _ = yield stop_event
-                            return
-
-                    resume_status_event = self._set_running_after_input(
-                        current_execution
-                    )
-                    if resume_status_event is not None:
-                        _ = yield resume_status_event
-                    if (
-                        response_step is not None
-                        and response_step.type == state.StepType.INPUT_MESSAGE
-                    ):
-                        if confirmation_mode == models.Confirmation.LOOP:
-                            loop_current_node = True
-                        else:
-                            if (
-                                response_step.message is not None
-                                and response_step.message.text.strip()
-                            ):
-                                loop_current_node = True
-                        break
-
-                    if (
-                        response_step is not None
-                        and response_step.type == state.StepType.APPROVAL
-                    ):
-                        if confirmation_mode == models.Confirmation.LOOP:
-                            loop_current_node = True
-                        break
-
-                    continue
-
-            if loop_current_node:
-                continue
-
-            last_complete_step.is_final = True
-            if last_complete_step.message is not None:
-                self._last_final_message = last_complete_step.message
-
-            # Next node selection logic
-            outcomes = current_runtime_node.model.outcomes
-
-            if not outcomes:
-                current_execution.status = state.RunStatus.FINISHED
-                status_event = self._set_status(
-                    state.RunnerStatus.FINISHED,
-                    current_execution=current_execution,
-                )
-                _ = yield status_event
-                return
-
-            next_runtime_node = None
-
-            if len(outcomes) == 1:
-                children = current_runtime_node.children
-                if children:
-                    next_runtime_node = children[0]
-            else:
-                outcome_name = last_complete_step.outcome_name
-                if not outcome_name:
-                    req_event = self._create_transition_error_event(
-                        current_execution,
-                        "Missing outcome_name for completion step on node with multiple outcomes",
-                    )
-                    resp_event = yield req_event
-                    response_step = self._handle_run_event_response(
-                        req_event, resp_event
-                    )
-                    response_event = self._build_response_event(response_step)
-                    if response_event is not None:
-                        _ = yield response_event
-                        if self._maybe_handle_stop(current_execution):
-                            stop_event = self._set_status(
-                                state.RunnerStatus.STOPPED, current_execution
-                            )
-                            _ = yield stop_event
-                            return
-                    current_execution.status = state.RunStatus.FINISHED
-                    status_event = self._set_status(
-                        state.RunnerStatus.FINISHED,
-                        current_execution=current_execution,
-                    )
-                    _ = yield status_event
-                    return
-
-                next_runtime_node = current_runtime_node.get_child_by_outcome(
-                    outcome_name
-                )
-                if next_runtime_node is None:
-                    req_event = self._create_transition_error_event(
-                        current_execution,
-                        f"Unknown outcome '{outcome_name}' for node '{current_runtime_node.name}'",
-                    )
-                    resp_event = yield req_event
-                    response_step = self._handle_run_event_response(
-                        req_event, resp_event
-                    )
-                    response_event = self._build_response_event(response_step)
-                    if response_event is not None:
-                        _ = yield response_event
-                        if self._maybe_handle_stop(current_execution):
-                            stop_event = self._set_status(
-                                state.RunnerStatus.STOPPED, current_execution
-                            )
-                            _ = yield stop_event
-                            return
-                    current_execution.status = state.RunStatus.FINISHED
-                    status_event = self._set_status(
-                        state.RunnerStatus.FINISHED,
-                        current_execution=current_execution,
-                    )
-                    _ = yield status_event
-                    return
-
-            if next_runtime_node is None:
-                current_execution.status = state.RunStatus.FINISHED
-                status_event = self._set_status(
-                    state.RunnerStatus.FINISHED,
-                    current_execution=current_execution,
-                )
-                _ = yield status_event
-                return
-
-            # Node transition logic
-            next_input_messages = self._build_next_input_messages(
-                current_execution,
-                current_runtime_node.model,
-            )
-
-            current_execution.status = state.RunStatus.FINISHED
-            current_runtime_node = next_runtime_node
-
-            previous_for_next: Optional[state.NodeExecution] = None
-            if current_runtime_node.model.reset_policy == models.StateResetPolicy.KEEP:
-                previous_for_next = self._find_node_execution(current_runtime_node.name)
-
-            current_execution = self._create_node_execution(
-                current_runtime_node.name,
-                input_messages=next_input_messages,
-                previous_execution=previous_for_next,
-            )
-
-            status_event = self._set_status(
-                self.status,
-                current_execution=current_execution,
-            )
-            _ = yield status_event

@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, AsyncIterator
 from vocode import models, state
 from vocode.logger import logger
 from vocode.project import Project
-from vocode.runner.runner import Runner
+from vocode.runner.runner import Runner, RunnerStopped
 from vocode.runner.proto import RunEventReq, RunEventResp, RunEventResponseType
 from vocode.runner import proto as runner_proto
 
@@ -32,7 +32,7 @@ class RunnerFrame:
     workflow_name: str
     runner: Runner
     initial_message: Optional[state.Message]
-    agen: AsyncIterator[RunEventReq]
+    agen: Optional[AsyncIterator[RunEventReq]] = None
     last_stats: Optional[runner_proto.RunStats] = None
 
 
@@ -83,13 +83,27 @@ class BaseManager:
             await self.project.shutdown()
             self._started = False
 
+    async def _stop_runner_agen(self, agen) -> Optional[RunEventReq]:
+        if agen is None:
+            return None
+
+        try:
+            event = await agen.athrow(RunnerStopped())
+        except StopAsyncIteration:
+            return None
+
+        try:
+            await agen.__anext__()
+        except StopAsyncIteration:
+            pass
+
+        return event
+
     async def stop_all_runners(self) -> None:
         frames = list(self._runner_stack)
-        for frame in frames:
-            frame.runner.stop()
 
         task = self._driver_task
-        if task is not None:
+        if task is not None and not task.done():
             task.cancel()
             try:
                 await task
@@ -97,6 +111,11 @@ class BaseManager:
                 pass
 
         self._driver_task = None
+
+        for frame in frames:
+            await self._stop_runner_agen(frame.agen)
+            frame.agen = None
+
         self._runner_stack.clear()
         self.project.current_workflow = None
 
@@ -107,38 +126,26 @@ class BaseManager:
     ) -> Runner:
         workflow = self._build_workflow(workflow_name)
         runner = Runner(workflow, self.project, initial_message)
-        agen = runner.run()
         frame = RunnerFrame(
             workflow_name=workflow_name,
             runner=runner,
             initial_message=initial_message,
-            agen=agen,
         )
         self._runner_stack.append(frame)
         self.project.current_workflow = workflow_name
 
-        logger.debug("manager.start_workflow", workflow_name=workflow_name)
         self._ensure_driver_task()
         return runner
 
     async def stop_current_runner(self) -> None:
-        if not self._runner_stack:
-            return
-        frame = self._runner_stack[-1]
-        frame.runner.stop()
-
         task = self._driver_task
         if task is not None and not task.done():
             task.cancel()
             try:
                 await task
-            except Exception:
+            except Exception as ex:
                 pass
             self._driver_task = None
-            if self._runner_stack:
-                self._ensure_driver_task()
-
-        logger.debug("manager.stop_current_runner")
 
     async def continue_current_runner(self) -> Runner:
         if not self._runner_stack:
@@ -153,10 +160,6 @@ class BaseManager:
                 f"Cannot continue runner in status '{frame.runner.status}'"
             )
         self.project.current_workflow = frame.workflow_name
-
-        logger.debug(
-            "manager.continue_current_runner", workflow_name=frame.workflow_name
-        )
 
         self._ensure_driver_task()
         return frame.runner
@@ -205,7 +208,12 @@ class BaseManager:
         try:
             send: Optional[RunEventResp] = None
             while self._runner_stack:
+                # Get current runner from the stack and iterate on it
                 frame = self._runner_stack[-1]
+
+                if frame.agen is None:
+                    frame.agen = frame.runner.run()
+
                 agen = frame.agen
 
                 try:
@@ -214,7 +222,11 @@ class BaseManager:
                     else:
                         event = await agen.asend(send)
                 except StopAsyncIteration:
+                    # If runner generator finished, pop it from the stack
                     finished_frame = self._runner_stack.pop()
+                    finished_frame.agen = None
+
+                    # If we still have the runners in the stack, then pass back last final message
                     final_message = finished_frame.runner.last_final_message
 
                     if self._runner_stack:
@@ -233,11 +245,34 @@ class BaseManager:
                     else:
                         send = None
                         self.project.current_workflow = None
+
                     continue
 
                 send = await self._emit_run_event(frame, event)
         except asyncio.CancelledError:
-            pass
+            # Runner task was canceled, cleanup by canceling runner generator
+            if self._runner_stack:
+                frame = self._runner_stack[-1]
+
+                event = await self._stop_runner_agen(frame.agen)
+                if event is None:
+                    # Forcibly set status to stopped because generator did not exit cleanly
+                    event = frame.runner.set_status(
+                        state.RunnerStatus.STOPPED,
+                        current_execution=None,
+                    )
+
+                # Emit final event (would be the status)
+                try:
+                    send = await self._emit_run_event(frame, event)
+                except Exception as ex:
+                    logger.exception(
+                        "BaseManager._run_runner_task stop emit exception",
+                        exc=ex,
+                    )
+                    send = None
+
+                frame.agen = None
         except Exception as ex:
             logger.exception("BaseManager._run_runner_task exception", exc=ex)
             raise

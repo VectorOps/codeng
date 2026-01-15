@@ -292,17 +292,16 @@ async def test_manager_emits_final_status_on_runner_stop() -> None:
     )
     manager._runner_stack.append(frame)
 
-    runner_task = asyncio.create_task(manager._run_runner_task())
+    manager._driver_task = asyncio.create_task(manager._run_runner_task())
 
     while not status_events:
         await asyncio.sleep(0)
 
     await manager.stop_current_runner()
+    await asyncio.sleep(0)
 
     assert block_event is not None
     block_event.set()
-
-    await runner_task
 
     assert runner.status == state.RunnerStatus.STOPPED
     assert state.RunnerStatus.RUNNING in status_events
