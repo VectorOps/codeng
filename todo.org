@@ -28,6 +28,7 @@
 ** [ ] Continue after stop needs explicit separator.
 ** [ ] Show node transitions in the UI?
 ** [ ] Add node visible flag - some are technical and should be hidden from the UI/autocompletion
+** [ ] Add ctrl+r history search
 * [ ] Runner
 ** [X] Add is_complete to Step to differentiate between intermediate and final results
 ** [X] Add tool support by checking if complete step was received and it contains tool calls

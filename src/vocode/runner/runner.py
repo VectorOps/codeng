@@ -96,6 +96,8 @@ class Runner:
             spec = vocode_settings.ToolSpec(name=req.name)
         try:
             raw_result = await tool.run(spec, req.arguments)
+        except RunnerStopped:
+            raise
         except Exception as exc:
             # TODO: send exception back?
             resp = state.ToolCallResp(

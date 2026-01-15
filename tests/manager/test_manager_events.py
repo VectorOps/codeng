@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator, Dict
+from typing import AsyncIterator, Dict, Optional
 
 import pytest
 
@@ -9,7 +9,12 @@ from vocode import models, state
 from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.runner import Runner
-from vocode.runner.proto import RunEventReqKind, RunEventResp, RunEventResponseType
+from vocode.runner.proto import (
+    RunEventReq,
+    RunEventReqKind,
+    RunEventResp,
+    RunEventResponseType,
+)
 
 
 @ExecutorFactory.register("manager-test")
@@ -306,3 +311,232 @@ async def test_manager_emits_final_status_on_runner_stop() -> None:
     assert runner.status == state.RunnerStatus.STOPPED
     assert state.RunnerStatus.RUNNING in status_events
     assert state.RunnerStatus.STOPPED in status_events
+
+
+@pytest.mark.asyncio
+async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> None:
+    node = models.Node(
+        name="node-edit",
+        type="manager-test",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-manager-edit", graph=graph)
+
+    project = FakeProject()
+
+    initial_message = state.Message(
+        role=models.Role.USER,
+        text="initial",
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,  # type: ignore[arg-type]
+        initial_message=initial_message,
+    )
+
+    execution = runner.execution
+    node_execution = state.NodeExecution(
+        node="node-edit",
+        status=state.RunStatus.RUNNING,
+    )
+    execution.node_executions[node_execution.id] = node_execution
+
+    prompt_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="prompt",
+    )
+    prompt_step = state.Step(
+        execution=node_execution,
+        type=state.StepType.PROMPT,
+        message=prompt_message,
+        is_complete=True,
+    )
+    user_message = state.Message(
+        role=models.Role.USER,
+        text="old user input",
+    )
+    input_step = state.Step(
+        execution=node_execution,
+        type=state.StepType.INPUT_MESSAGE,
+        message=user_message,
+        is_complete=True,
+    )
+    output_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="after input",
+    )
+    output_step = state.Step(
+        execution=node_execution,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message=output_message,
+        is_complete=True,
+    )
+
+    node_execution.steps.extend([prompt_step, input_step, output_step])
+    execution.steps.extend([prompt_step, input_step, output_step])
+
+    runner.status = state.RunnerStatus.STOPPED
+
+    async def run_event_listener(
+        frame: RunnerFrame,
+        event,
+    ) -> RunEventResp | None:
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    manager = BaseManager(
+        project=project,  # type: ignore[arg-type]
+        run_event_listener=run_event_listener,
+    )
+
+    frame = RunnerFrame(
+        workflow_name="wf-manager-edit",
+        runner=runner,
+        initial_message=initial_message,
+        agen=None,
+    )
+    manager._runner_stack.append(frame)
+
+    edited = await manager.edit_history_with_text("new user input")
+    assert edited is True
+
+    all_steps = runner.execution.steps
+    assert all_steps
+    assert all_steps[-1].type == state.StepType.INPUT_MESSAGE
+    assert all_steps[-1].message is not None
+    assert all_steps[-1].message.text == "new user input"
+    assert all(
+        step.message is None or step.message.text != "old user input"
+        for step in all_steps
+    )
+
+
+@pytest.mark.asyncio
+async def test_manager_edit_history_stops_parent_runner_when_going_up_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = FakeProject()
+
+    parent_node = models.Node(
+        name="node-parent",
+        type="manager-test",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    child_node = models.Node(
+        name="node-child",
+        type="manager-test",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    parent_workflow = DummyWorkflow(
+        name="wf-parent",
+        graph=models.Graph(nodes=[parent_node], edges=[]),
+    )
+    child_workflow = DummyWorkflow(
+        name="wf-child",
+        graph=models.Graph(nodes=[child_node], edges=[]),
+    )
+
+    parent_runner = Runner(
+        workflow=parent_workflow,
+        project=project,  # type: ignore[arg-type]
+        initial_message=None,
+    )
+    child_runner = Runner(
+        workflow=child_workflow,
+        project=project,  # type: ignore[arg-type]
+        initial_message=None,
+    )
+
+    parent_execution = parent_runner.execution
+    parent_node_execution = state.NodeExecution(
+        node="node-parent",
+        status=state.RunStatus.RUNNING,
+    )
+    parent_execution.node_executions[parent_node_execution.id] = parent_node_execution
+
+    prompt_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="parent prompt",
+    )
+    prompt_step = state.Step(
+        execution=parent_node_execution,
+        type=state.StepType.PROMPT,
+        message=prompt_message,
+        is_complete=True,
+    )
+    user_message = state.Message(
+        role=models.Role.USER,
+        text="parent input",
+    )
+    input_step = state.Step(
+        execution=parent_node_execution,
+        type=state.StepType.INPUT_MESSAGE,
+        message=user_message,
+        is_complete=True,
+    )
+    parent_node_execution.steps.extend([prompt_step, input_step])
+    parent_execution.steps.extend([prompt_step, input_step])
+
+    parent_runner.status = state.RunnerStatus.RUNNING
+    child_runner.status = state.RunnerStatus.STOPPED
+
+    async def run_event_listener(
+        frame: RunnerFrame,
+        event,
+    ) -> RunEventResp | None:
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    manager = BaseManager(
+        project=project,  # type: ignore[arg-type]
+        run_event_listener=run_event_listener,
+    )
+
+    async def dummy_gen():
+        if False:
+            yield  # pragma: no cover
+
+    parent_agen = dummy_gen()
+
+    parent_frame = RunnerFrame(
+        workflow_name="wf-parent",
+        runner=parent_runner,
+        initial_message=None,
+        agen=parent_agen,
+    )
+    child_frame = RunnerFrame(
+        workflow_name="wf-child",
+        runner=child_runner,
+        initial_message=None,
+        agen=None,
+    )
+
+    manager._runner_stack.append(parent_frame)
+    manager._runner_stack.append(child_frame)
+
+    called: list[RunnerFrame] = []
+
+    async def fake_stop_runner_frame(frame: RunnerFrame) -> Optional[RunEventReq]:
+        called.append(frame)
+        frame.runner.status = state.RunnerStatus.STOPPED
+        return None
+
+    monkeypatch.setattr(manager, "_stop_runner_frame", fake_stop_runner_frame)
+
+    edited = await manager.edit_history_with_text("edited parent input")
+    assert edited is True
+
+    assert len(manager._runner_stack) == 1
+    assert manager._runner_stack[0] is parent_frame
+    assert called
+    assert called[-1] is parent_frame
