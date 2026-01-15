@@ -488,3 +488,106 @@ async def test_uiserver_handles_stop_request_packet(
 
     assert handled is True
     assert called
+
+
+@pytest.mark.asyncio
+async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    class DummyRunner:
+        def __init__(self) -> None:
+            self.status = state.RunnerStatus.STOPPED
+
+    runner = DummyRunner()
+    frame = RunnerFrame(
+        workflow_name="wf-user-input-edit",
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    called: list[str] = []
+
+    async def fake_edit_history_with_text(
+        self: BaseManager,
+        text: str,
+    ) -> bool:
+        called.append(text)
+        return True
+
+    monkeypatch.setattr(BaseManager, "edit_history_with_text", fake_edit_history_with_text)
+
+    user_message = state.Message(
+        role=models.Role.USER,
+        text="new input text",
+    )
+    packet = manager_proto.UserInputPacket(message=user_message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+    assert called == ["new input text"]
+
+
+@pytest.mark.asyncio
+async def test_uiserver_user_input_sends_error_when_edit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    class DummyRunner:
+        def __init__(self) -> None:
+            self.status = state.RunnerStatus.STOPPED
+
+    runner = DummyRunner()
+    frame = RunnerFrame(
+        workflow_name="wf-user-input-edit-fail",
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    async def fake_edit_history_with_text(
+        self: BaseManager,
+        text: str,
+    ) -> bool:
+        return False
+
+    monkeypatch.setattr(BaseManager, "edit_history_with_text", fake_edit_history_with_text)
+
+    messages: list[str] = []
+
+    async def fake_send_text_message(
+        text: str,
+        text_format: manager_proto.TextMessageFormat = manager_proto.TextMessageFormat.PLAIN,
+    ) -> None:
+        _ = text_format
+        messages.append(text)
+
+    monkeypatch.setattr(server, "send_text_message", fake_send_text_message)
+
+    user_message = state.Message(
+        role=models.Role.USER,
+        text="new input text",
+    )
+    packet = manager_proto.UserInputPacket(message=user_message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=2, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+    assert messages
+    assert "Unable to edit history" in messages[0]

@@ -99,6 +99,15 @@ class BaseManager:
 
         return event
 
+    async def _stop_runner_frame(self, frame) -> Optional[RunEventReq]:
+        res = await self._stop_runner_agen(frame.agen)
+
+        if res is None:
+            frame.runner.status = state.RunnerStatus.STOPPED
+
+        frame.agen = None
+        return res
+
     async def stop_all_runners(self) -> None:
         frames = list(self._runner_stack)
 
@@ -113,8 +122,7 @@ class BaseManager:
         self._driver_task = None
 
         for frame in frames:
-            await self._stop_runner_agen(frame.agen)
-            frame.agen = None
+            await self._stop_runner_frame(frame)
 
         self._runner_stack.clear()
         self.project.current_workflow = None
@@ -177,6 +185,78 @@ class BaseManager:
         )
         await self.stop_current_runner()
         return await self.start_workflow(workflow_name, message)
+
+    async def edit_history_with_text(self, text: str) -> bool:
+        if not self._runner_stack:
+            return False
+
+        target_index: Optional[int] = None
+        target_step: Optional[state.Step] = None
+
+        for frame_index in range(len(self._runner_stack) - 1, -1, -1):
+            frame = self._runner_stack[frame_index]
+            runner = frame.runner
+            for step in reversed(runner.execution.steps):
+                message = step.message
+                if (
+                    step.type == state.StepType.INPUT_MESSAGE
+                    and message is not None
+                    and message.role == models.Role.USER
+                ):
+                    target_index = frame_index
+                    target_step = step
+                    break
+            if target_step is not None:
+                break
+
+        if target_index is None or target_step is None:
+            return False
+
+        if target_index + 1 < len(self._runner_stack):
+            tail_frames = self._runner_stack[target_index + 1 :]
+            for frame in tail_frames:
+                await self._stop_runner_frame(frame)
+            del self._runner_stack[target_index + 1 :]
+
+        frame = self._runner_stack[target_index]
+        await self._stop_runner_frame(frame)
+
+        runner = frame.runner
+        execution = runner.execution
+
+        cut_index: Optional[int] = None
+        for i, step in enumerate(execution.steps):
+            if step.id == target_step.id:
+                cut_index = i
+                break
+
+        if cut_index is None:
+            return False
+
+        delete_ids = [step.id for step in execution.steps[cut_index:]]
+        if delete_ids:
+            execution.delete_steps(delete_ids)
+            execution.trim_empty_node_executions()
+
+        base_execution = execution.node_executions.get(
+            target_step.execution.id,
+            target_step.execution,
+        )
+
+        new_message = state.Message(
+            role=models.Role.USER,
+            text=text,
+        )
+        new_step = state.Step(
+            execution=base_execution,
+            type=state.StepType.INPUT_MESSAGE,
+            message=new_message,
+            is_complete=True,
+        )
+        runner._persist_step(new_step)
+
+        await self.continue_current_runner()
+        return True
 
     async def _emit_run_event(
         self,
@@ -254,7 +334,7 @@ class BaseManager:
             if self._runner_stack:
                 frame = self._runner_stack[-1]
 
-                event = await self._stop_runner_agen(frame.agen)
+                event = await self._stop_runner_frame(frame)
                 if event is None:
                     # Forcibly set status to stopped because generator did not exit cleanly
                     event = frame.runner.set_status(
@@ -271,8 +351,6 @@ class BaseManager:
                         exc=ex,
                     )
                     send = None
-
-                frame.agen = None
         except Exception as ex:
             logger.exception("BaseManager._run_runner_task exception", exc=ex)
             raise

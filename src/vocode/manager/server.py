@@ -396,7 +396,13 @@ class UIServer:
 
         waiter = self._pop_input_waiter()
         if waiter is None:
-            # TODO: No waiter needs input, send error message
+            runner = self._manager.current_runner
+            if runner is not None and runner.status == state.RunnerStatus.STOPPED:
+                edited = await self._manager.edit_history_with_text(text)
+                if not edited:
+                    await self.send_text_message(
+                        "Unable to edit history: no previous user input to replace."
+                    )
             return None
 
         if not waiter.done():
