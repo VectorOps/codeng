@@ -4,19 +4,19 @@ logging:
   enabled_loggers:
     LiteLLM: warning
 variables:
-  LLM_DISCOVERY_MODEL: gpt-5-mini
-  LLM_ARCHITECT_MODEL: gpt-5.1
-#  LLM_ARCHITECT_REASONING: high
-  LLM_ARCHITECT_REASONING: medium
-  LLM_CODER_MODEL: gpt-5-mini
+#  LLM_DISCOVERY_MODEL: gpt-5-mini
+#  LLM_ARCHITECT_MODEL: gpt-5.1
+  LLM_ARCHITECT_REASONING: high
+#  LLM_ARCHITECT_REASONING: medium
+#  LLM_CODER_MODEL: gpt-5-mini
 # OpenAI
-#  LLM_DISCOVERY_MODEL: openai/gpt-5-mini
-#  LLM_ARCHITECT_MODEL: openai/gpt-5
-#  LLM_CODER_MODEL: openai/gpt-5-mini
+  LLM_DISCOVERY_MODEL: openai/gpt-5-mini
+  LLM_ARCHITECT_MODEL: openai/gpt-5
+  LLM_CODER_MODEL: openai/gpt-5-mini
 # Gemini
-#  LLM_DISCOVERY_MODEL: gemini/gemini-2.5-flash
-#  LLM_ARCHITECT_MODEL: gemini/gemini-2.5-pro
-#  LLM_CODER_MODEL: gemini/gemini-2.5-flash
+#  LLM_DISCOVERY_MODEL: gemini/gemini-3-flash-preview
+#  LLM_ARCHITECT_MODEL: gemini/gemini-3-pro-preview
+#  LLM_CODER_MODEL: gemini/gemini-3-flash-preview
 #  LLM_DIFF_FORMAT: patch
 default_workflow: "architect"
 tools:
