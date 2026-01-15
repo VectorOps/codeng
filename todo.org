@@ -11,9 +11,9 @@
 ** [X] Set input header depending on the top of the input stack
 ** [X] Fix APPROVE/DECLINE rendering
 ** [X] Do not pad lines with spaces - it breaks copy-paste
-** [ ] Add history editing mode
-*** [ ] Stopped runner getting a text message is resumed and last user input is replaced with whatever it typed
-*** [ ] Add a away to visually select previous continuation point
+** [X] Add history editing mode
+*** [X] Stopped runner getting a text message is resumed and last user input is replaced with whatever it typed
+*** [X] Add a away to visually select previous continuation point
 ** [ ] Fix knowlt summary documentation generation - it adds python docstring twice
 ** [ ] Add a way for knowlt to return individual symbols from file by id. have compact ids, not uuids.
 ** [ ] Implement tool call formatters
@@ -21,14 +21,17 @@
 *** [X] Per-node reporting (current limits)
 *** [X] Per-session accumulation
 *** [X] Display in the toolbar
-** [?] Child runner support
+** [X] Child runner support
 *** [X] Base implementation
-*** [ ] Stopping child runner and resuming
+*** [X] Stopping child runner and resuming
 ** [ ] Add context compression? How?
 ** [ ] Continue after stop needs explicit separator.
 ** [ ] Show node transitions in the UI?
 ** [ ] Add node visible flag - some are technical and should be hidden from the UI/autocompletion
 ** [ ] Add ctrl+r history search
+** [ ] Gemini 3 support
+*** [ ] Store thought signatures for Gemini models
+*** [ ] Temperature control
 * [ ] Runner
 ** [X] Add is_complete to Step to differentiate between intermediate and final results
 ** [X] Add tool support by checking if complete step was received and it contains tool calls
@@ -69,3 +72,8 @@
 * [ ] Log management
 ** [ ] Store run sessions
 ** [X] Store UI sessions?
+* [ ] System prompts
+** [ ] Discovery
+*** [ ] Gemini does not really do a good job explaining tool calls
+*** [ ] Gemini does not use search
+*** [ ] Gemini plan for architect is too long
