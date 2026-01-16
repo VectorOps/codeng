@@ -240,8 +240,8 @@ class InitialInputEchoExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
         last_input: state.Message | None = None
-        for msg, step_type in runner_base.iter_execution_messages(execution):
-            if step_type == state.StepType.INPUT_MESSAGE:
+        for msg, step in runner_base.iter_execution_messages(execution):
+            if step is not None and step.type == state.StepType.INPUT_MESSAGE:
                 last_input = msg
         text = ""
         if last_input is not None and last_input.text is not None:
