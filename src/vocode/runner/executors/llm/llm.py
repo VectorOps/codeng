@@ -38,7 +38,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         execution = inp.execution
 
         collected_messages: List[state.Message] = []
-        message_step_types: Dict[str, Optional[state.StepType]] = {}
+        message_steps: Dict[str, Optional[state.Step]] = {}
 
         # Build synthetic system message (if any) as a Message, so preprocessors can modify it.
         system_parts: List[str] = []
@@ -66,7 +66,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                     text=system_prompt,
                 )
                 collected_messages.append(system_message)
-                message_step_types[str(system_message.id)] = None
+                message_steps[str(system_message.id)] = None
 
         def _append_tool_response(resp: state.ToolCallResp) -> None:
             tool_msg: Dict[str, Any] = {
@@ -81,8 +81,8 @@ class LLMExecutor(runner_base.BaseExecutor):
             serialized_messages.append(tool_msg)
 
         def _append_message(msg: state.Message) -> None:
-            step_type = message_step_types.get(str(msg.id))
-            if step_type == state.StepType.TOOL_RESULT:
+            step = message_steps.get(str(msg.id))
+            if step is not None and step.type == state.StepType.TOOL_RESULT:
                 if msg.tool_call_responses:
                     for resp in msg.tool_call_responses:
                         _append_tool_response(resp)
@@ -93,6 +93,14 @@ class LLMExecutor(runner_base.BaseExecutor):
                 "role": role_value,
                 "content": msg.text,
             }
+
+            if (
+                step is not None
+                and step.state is not None
+                and isinstance(step.state, LLMStepState)
+                and step.state.provider_state is not None
+            ):
+                base["provider_specific_fields"] = step.state.provider_state
 
             if msg.tool_call_requests:
                 tool_calls: List[Dict[str, Any]] = []
@@ -117,11 +125,11 @@ class LLMExecutor(runner_base.BaseExecutor):
                 for resp in msg.tool_call_responses:
                     _append_tool_response(resp)
 
-        for msg, step_type in runner_base.iter_execution_messages(execution):
-            if step_type is not None and step_type not in INCLUDED_STEP_TYPES:
+        for msg, step in runner_base.iter_execution_messages(execution):
+            if step is not None and step.type not in INCLUDED_STEP_TYPES:
                 continue
             collected_messages.append(msg)
-            message_step_types[str(msg.id)] = step_type
+            message_steps[str(msg.id)] = step
 
         if cfg.preprocessors:
             processed_messages = pre_base.apply_preprocessors(

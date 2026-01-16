@@ -5,6 +5,7 @@ from typing import (
     Any,
     Type,
     AsyncIterator,
+    Iterator,
 )
 from uuid import UUID
 from pydantic import BaseModel, Field
@@ -67,7 +68,7 @@ class BaseExecutor:
 
 def iter_execution_messages(
     execution: state.NodeExecution,
-):
+) -> Iterator[tuple[state.Message, Optional[state.Step]]]:
     chain: List[state.NodeExecution] = []
     current = execution
     while current is not None:
@@ -80,4 +81,4 @@ def iter_execution_messages(
         for step in exec_item.steps:
             if step.message is None:
                 continue
-            yield step.message, step.type
+            yield step.message, step

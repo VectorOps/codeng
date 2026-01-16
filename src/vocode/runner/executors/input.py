@@ -30,8 +30,8 @@ class InputExecutor(runner_base.BaseExecutor):
         execution = inp.execution
 
         input_message: Optional[state.Message] = None
-        for msg, step_type in runner_base.iter_execution_messages(execution):
-            if step_type == state.StepType.INPUT_MESSAGE:
+        for msg, step in runner_base.iter_execution_messages(execution):
+            if step is not None and step.type == state.StepType.INPUT_MESSAGE:
                 input_message = msg
 
         if input_message is None:

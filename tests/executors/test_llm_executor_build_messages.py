@@ -1,7 +1,7 @@
 from vocode import state, models
 from tests.stub_project import StubProject
 from vocode.runner.base import ExecutorInput
-from vocode.runner.executors.llm.llm import LLMExecutor, ToolCallProviderState
+from vocode.runner.executors.llm.llm import LLMExecutor, ToolCallProviderState, LLMStepState
 from vocode.runner.executors.llm.models import LLMNode
 
 
@@ -122,3 +122,43 @@ def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
     assert first["content"].startswith("prefix")
     assert "base system" in first["content"]
     assert "\n--\n" in first["content"]
+
+
+def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> None:
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    execution = state.NodeExecution(
+        node="llm-node",
+        input_messages=[],
+        steps=[],
+        status=state.RunStatus.RUNNING,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    run.node_executions[execution.id] = execution
+
+    assistant_msg = state.Message(role=models.Role.ASSISTANT, text="hello")
+    assistant_step = state.Step(
+        execution=execution,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message=assistant_msg,
+        state=LLMStepState(provider_state={"cache_control": {"type": "ephemeral"}}),
+        is_complete=True,
+    )
+    execution.steps.append(assistant_step)
+    run.steps.append(assistant_step)
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    inp = ExecutorInput(execution=execution, run=run)
+
+    conv = executor.build_messages(inp)
+
+    assert len(conv) == 1
+    first = conv[0]
+    assert first["role"] == "assistant"
+    assert first["content"] == "hello"
+    assert first["provider_specific_fields"] == {"cache_control": {"type": "ephemeral"}}
