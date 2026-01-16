@@ -18,7 +18,7 @@ class ToolCallReqDTO(BaseModel):
     arguments: Dict[str, Any]
     tool_spec: Optional[Dict[str, Any]] = None
     status: Optional[str] = None
-    auto_approved: Optional[None] = None
+    auto_approved: Optional[bool] = None
     created_at: datetime
     handled_at: Optional[datetime] = None
     state: Optional[ToolCallProviderStateDTO] = None

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import datetime
 from pathlib import Path
 from typing import Optional
+import shutil
 import uuid
+import re
 
 from vocode import state
 from vocode.logger import logger
@@ -38,18 +41,108 @@ class WorkflowStateManager:
         base_path: Path,
         session_id: str,
         save_interval_s: float = 120.0,
+        max_total_log_bytes: int = 1024 * 1024 * 1024,
     ) -> None:
         self._base_path = base_path
         self._session_id = session_id
         self._save_interval_s = float(save_interval_s)
+        self._max_total_log_bytes = int(max_total_log_bytes)
+        self._date_prefix = datetime.datetime.now().strftime("%Y_%m_%d")
+        self._session_dir_name: Optional[str] = None
         self._executions: dict[uuid.UUID, state.WorkflowExecution] = {}
         self._dirty: set[uuid.UUID] = set()
         self._listeners: list[WorkflowChangedListener] = []
         self._task: Optional[asyncio.Task[None]] = None
 
     @property
+    def sessions_root(self) -> Path:
+        return self._base_path / ".vocode" / "sessions"
+
+    @property
     def session_dir(self) -> Path:
-        return self._base_path / ".vocode" / "sessions" / self._session_id
+        if self._session_dir_name is None:
+            self._session_dir_name = self._compute_session_dir_name()
+        return self.sessions_root / self._session_dir_name
+
+    def _compute_session_dir_name(self) -> str:
+        root = self.sessions_root
+        if not root.exists():
+            seq = 1
+        else:
+            prefix = f"{self._date_prefix}_"
+            highest = 0
+            for d in root.iterdir():
+                if not d.is_dir():
+                    continue
+                name = d.name
+                if not name.startswith(prefix):
+                    continue
+                rest = name[len(prefix) :]
+                if "_" not in rest:
+                    continue
+                seq_str, _ = rest.split("_", 1)
+                if not re.fullmatch(r"\d+", seq_str):
+                    continue
+                highest = max(highest, int(seq_str))
+            seq = highest + 1
+        return f"{self._date_prefix}_{seq}_{self._session_id}"
+
+    def _session_size_bytes(self, session_dir: Path) -> int:
+        total = 0
+        for p in session_dir.rglob("*"):
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    continue
+        return total
+
+    def _enforce_retention(self) -> None:
+        if self._max_total_log_bytes <= 0:
+            return
+        root = self.sessions_root
+        if not root.exists():
+            return
+
+        sessions: list[tuple[float, str, Path, int]] = []
+        total = 0
+        for d in root.iterdir():
+            if not d.is_dir():
+                continue
+            try:
+                mtime = d.stat().st_mtime
+            except OSError:
+                continue
+            size = self._session_size_bytes(d)
+            total += size
+            sessions.append((mtime, d.name, d, size))
+
+        if total <= self._max_total_log_bytes:
+            return
+
+        candidates = [s for s in sessions if s[1] != (self._session_dir_name or "")]
+        candidates.sort(key=lambda x: x[0])
+        for _, session_id, d, size in candidates:
+            if total <= self._max_total_log_bytes:
+                return
+            try:
+                shutil.rmtree(d)
+                total -= size
+            except Exception as exc:
+                logger.exception(
+                    "WorkflowStateManager failed to delete old session",
+                    exc=exc,
+                    session_id=session_id,
+                    session_dir=str(d),
+                )
+
+        if total > self._max_total_log_bytes:
+            logger.warning(
+                "WorkflowStateManager log retention limit exceeded",
+                total_bytes=total,
+                limit_bytes=self._max_total_log_bytes,
+                current_session_id=self._session_id,
+            )
 
     def subscribe(self, listener: WorkflowChangedListener) -> None:
         self._listeners.append(listener)
@@ -72,7 +165,10 @@ class WorkflowStateManager:
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
             return
+        if self._session_dir_name is None:
+            self._session_dir_name = await asyncio.to_thread(self._compute_session_dir_name)
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(self._enforce_retention)
         self._task = asyncio.create_task(self._loop())
 
     async def shutdown(self) -> None:
@@ -120,3 +216,4 @@ class WorkflowStateManager:
             )
         if tasks:
             await asyncio.gather(*tasks)
+        await asyncio.to_thread(self._enforce_retention)

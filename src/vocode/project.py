@@ -79,12 +79,15 @@ class Project:
         self.current_workflow: Optional[str] = None
         self.session_id: str = uuid.uuid4().hex
         save_interval_s = 120.0
+        max_total_log_bytes = 1024 * 1024 * 1024
         if self.settings is not None and self.settings.persistence is not None:
             save_interval_s = float(self.settings.persistence.save_interval_s)
+            max_total_log_bytes = int(self.settings.persistence.max_total_log_bytes)
         self.state_manager = persistence_state_manager.WorkflowStateManager(
             base_path=self.base_path,
             session_id=self.session_id,
             save_interval_s=save_interval_s,
+            max_total_log_bytes=max_total_log_bytes,
         )
 
     @property
