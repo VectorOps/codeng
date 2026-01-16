@@ -14,11 +14,16 @@
 ** [X] Add history editing mode
 *** [X] Stopped runner getting a text message is resumed and last user input is replaced with whatever it typed
 *** [X] Add a away to visually select previous continuation point
+** [ ] Need to remove outline from input - it messes up copying
 ** [ ] Fix knowlt summary documentation generation - it adds python docstring twice
 ** [ ] Add a way for knowlt to return individual symbols from file by id. have compact ids, not uuids.
 ** [ ] Implement tool call formatters
-** [ ] Fix autocomplete logic for /run - shift+enter should submit instead of accepting auto-complete.
-- Don't show auto-complete if option exactly matches
+** [ ] Change auto-complete protocol to also send back cursor position with list of complete options
+*** [ ] Ensure that all auto-complete logic happens on backend
+- Rules should offer auto-completion, even if there's space. Such as for /run chat command
+*** [ ] This should remove /run hack from UIState
+*** [ ] Fix autocomplete logic for /run - shift+enter should submit instead of accepting auto-complete.
+*** [ ] Don't show auto-complete if option exactly matches
 ** [X] LLM usage stats
 *** [X] Per-node reporting (current limits)
 *** [X] Per-session accumulation
@@ -32,10 +37,10 @@
 ** [ ] Add node visible flag - some are technical and should be hidden from the UI/autocompletion
 ** [ ] Add ctrl+r history search
 ** [ ] Gemini 3 support
-*** [ ] Store thought signatures for Gemini models
+*** [X] Store thought signatures for Gemini models
 *** [ ] Temperature control
-*** [ ] Investigate why we're printing thinking process
-*** [ ] Store raw responses (or signatures) along with step state messages. Use stored responses when generating chat history over raw messages.
+*** [X] Investigate why we're printing thinking process
+*** [X] Store raw responses (or signatures) along with step state messages. Use stored responses when generating chat history over raw messages.
 * [ ] Runner
 ** [X] Add is_complete to Step to differentiate between intermediate and final results
 ** [X] Add tool support by checking if complete step was received and it contains tool calls
@@ -66,10 +71,11 @@
 *** [X] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences
 *** [X] Remove padding from SelectList
 *** [X] Add animation support, potentially via Rich Live
-*** [ ] Add optimization to not re-render unchanged lines after top-level component if height did not change. Figure out generic algorithm.
+*** [ ] Add optimization to not re-render unchanged lines after top-level component if height did not change. Figure out generic algorithm. Useful for animations.
 *** [X] Fix up TUI tests - need to run Rich in non-terminal mode
 * [ ] LLM Node
 ** [ ] Require outcome to be provided and loop until it is provided
+** [X] Internal state support
 * [ ] Tools
 ** [X] Refactor tool registration
 ** [ ] Simplify error reporting for v4a patch tool
@@ -78,6 +84,6 @@
 ** [X] Store UI sessions?
 * [ ] System prompts
 ** [ ] Discovery
-*** [ ] Gemini does not really do a good job explaining tool calls
+*** [X] Gemini does not really do a good job explaining tool calls
 *** [ ] Gemini does not use search
-*** [ ] Gemini plan for architect is too long
+*** [X] Gemini plan for architect is too long

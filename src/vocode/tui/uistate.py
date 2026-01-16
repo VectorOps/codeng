@@ -457,12 +457,10 @@ class TUIState:
         #    return
         asyncio.create_task(self._on_input(stripped))
 
-    def _handle_cursor_event(self, row: int, col: int) -> None:
-        if self._on_autocomplete_request is None:
-            return
+    def _capture_autocomplete_context(self, row: int, col: int) -> bool:
         lines = self._input_component.lines
         if row < 0 or row >= len(lines):
-            return
+            return False
         line = lines[row]
         if col < 0:
             col = 0
@@ -475,8 +473,21 @@ class TUIState:
         self._last_autocomplete_text = text
         self._last_autocomplete_row = row
         self._last_autocomplete_col = col
-        if self._autocomplete_task is not None and not self._autocomplete_task.done():
-            self._autocomplete_task.cancel()
+        return True
+
+    def _schedule_autocomplete_request(self) -> None:
+        if self._on_autocomplete_request is None:
+            return
+        if (
+            self._last_autocomplete_text is None
+            or self._last_autocomplete_row is None
+            or self._last_autocomplete_col is None
+        ):
+            return
+
+        request_task = self._autocomplete_task
+        if request_task is not None and not request_task.done():
+            return
         loop = asyncio.get_running_loop()
 
         async def _debounced() -> None:
@@ -496,6 +507,14 @@ class TUIState:
             )
 
         self._autocomplete_task = loop.create_task(_debounced())
+
+    def _handle_cursor_event(self, row: int, col: int) -> None:
+        if self._on_autocomplete_request is None:
+            return
+        ok = self._capture_autocomplete_context(row, col)
+        if not ok:
+            return
+        self._schedule_autocomplete_request()
 
     def handle_autocomplete_options(
         self,

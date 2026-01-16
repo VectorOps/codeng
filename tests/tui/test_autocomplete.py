@@ -44,6 +44,57 @@ async def test_tui_state_triggers_autocomplete_request_on_cursor_move() -> None:
     assert requests
 
 
+@pytest.mark.asyncio
+async def test_tui_state_autocomplete_debounce_does_not_cancel_active_task() -> None:
+    requests: list[tuple[str, int, int]] = []
+    got_request = asyncio.Event()
+
+    async def on_input(_: str) -> None:
+        return None
+
+    async def on_autocomplete(text: str, row: int, col: int) -> None:
+        requests.append((text, row, col))
+        got_request.set()
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=on_autocomplete,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    input_component = ui_state.terminal.components[-2]
+
+    input_component.text = "a"
+    input_component.set_cursor_position(0, 1)
+    ui_state._handle_cursor_event(0, 1)
+
+    await asyncio.sleep(0.05)
+    input_component.text = "ab"
+    input_component.set_cursor_position(0, 2)
+    ui_state._handle_cursor_event(0, 2)
+
+    await asyncio.sleep(0.05)
+    input_component.text = "abc"
+    input_component.set_cursor_position(0, 3)
+    ui_state._handle_cursor_event(0, 3)
+
+    await asyncio.sleep(0.05)
+    input_component.text = "abcd"
+    input_component.set_cursor_position(0, 4)
+    ui_state._handle_cursor_event(0, 4)
+
+    await asyncio.wait_for(got_request.wait(), timeout=0.35)
+    assert len(requests) == 1
+    assert requests[0] == ("abcd", 0, 4)
+
+
 def test_tui_state_autocomplete_stack_and_toolbar() -> None:
     async def on_input(_: str) -> None:
         return None
