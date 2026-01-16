@@ -16,6 +16,15 @@ from .models import (
 )
 
 
+# Workflow files discovered under .vocode/workflows
+WORKFLOW_FILE_GLOBS: Final[List[str]] = [
+    "*.yaml",
+    "*.yml",
+    "*.json",
+    "*.json5",
+    "*.jsonc",
+]
+
 # Configuration loading
 def _deep_merge_dicts(
     a: Dict[str, Any], b: Dict[str, Any], *, concat_lists: bool = False
@@ -462,14 +471,84 @@ def _load_raw_file(path: Path) -> Any:
     return data
 
 
+def _discover_workflow_files(config_path: Path) -> List[Path]:
+    config_path = config_path.resolve()
+    config_dir = config_path.parent
+
+    candidates: List[Path] = []
+    if config_dir.name == ".vocode":
+        candidates.append(config_dir / "workflows")
+    candidates.append(config_dir / ".vocode" / "workflows")
+
+    workflow_dir = next((d for d in candidates if d.is_dir()), None)
+    if workflow_dir is None:
+        return []
+
+    out: List[Path] = []
+    seen: Set[Path] = set()
+    for pat in WORKFLOW_FILE_GLOBS:
+        for p in sorted(workflow_dir.glob(pat)):
+            if not p.is_file():
+                continue
+            rp = p.resolve()
+            if rp in seen:
+                continue
+            seen.add(rp)
+            out.append(rp)
+    return out
+
+
+def _load_workflows_from_dir(config_path: Path) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    workflows: Dict[str, Any] = {}
+    vars_map: Dict[str, Any] = {}
+
+    for wf_path in _discover_workflow_files(config_path):
+        wf_any, wf_included_vars, wf_root_vars = _load_and_preprocess(wf_path)
+        if not isinstance(wf_any, dict):
+            raise ValueError(
+                f"Workflow file must be a mapping/object: {wf_path}",
+            )
+
+        wf_vars: Dict[str, Any] = {}
+        wf_vars.update(wf_included_vars)
+        wf_vars.update(wf_root_vars)
+        vars_map.update(wf_vars)
+
+        if "workflows" in wf_any:
+            wf_block = wf_any.get("workflows")
+            if not isinstance(wf_block, dict):
+                raise ValueError(
+                    f"Workflow file 'workflows' must be a mapping/object: {wf_path}",
+                )
+            for k, v in wf_block.items():
+                workflows[str(k)] = v
+        else:
+            workflows[wf_path.stem] = wf_any
+
+    return workflows, vars_map
+
+
+
 def load_settings(path: str) -> Settings:
-    data_any, included_vars, root_vars = _load_and_preprocess(path)
+    config_path = Path(path).resolve()
+    data_any, included_vars, root_vars = _load_and_preprocess(config_path)
     if not isinstance(data_any, dict):
         raise ValueError("Root configuration must be a mapping/object")
 
-    # Build final variable map: included defaults first, then root-level overrides
+    dir_workflows, dir_vars = _load_workflows_from_dir(config_path)
+    if dir_workflows:
+        existing_workflows = data_any.get("workflows", {}) or {}
+        if not isinstance(existing_workflows, dict):
+            raise ValueError("Root configuration 'workflows' must be a mapping/object")
+        merged_workflows = dict(dir_workflows)
+        merged_workflows.update(existing_workflows)
+        data_any = dict(data_any)
+        data_any["workflows"] = merged_workflows
+
+    # Build final variable map: included defaults first, then workflows-dir vars, then root-level overrides
     vars_map: Dict[str, Any] = {}
     vars_map.update(included_vars)
+    vars_map.update(dir_vars)
     vars_map.update(root_vars)
 
     # Resolve variable-to-variable references (e.g., a: ${b}) with cycle detection

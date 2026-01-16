@@ -1,0 +1,18 @@
+workflows:
+  chat:
+    description: "General chat assistant that can also browse and read repository files when needed."
+    nodes:
+      - name: llm
+        type: llm
+        model: ${LLM_ARCHITECT_MODEL}
+        reset_policy: keep
+        confirmation: loop
+        tools:
+          - summarize_files
+          - read_files
+          - search_project
+          - list_files
+        outcomes:
+          - name: done
+    edges:
+      - llm.done -> llm
