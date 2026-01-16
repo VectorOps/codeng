@@ -88,16 +88,17 @@ class LLMExecutor(runner_base.BaseExecutor):
             if msg.tool_call_requests:
                 tool_calls: List[Dict[str, Any]] = []
                 for req in msg.tool_call_requests:
-                    tool_calls.append(
-                        {
-                            "id": req.id,
-                            "type": req.type,
-                            "function": {
-                                "name": req.name,
-                                "arguments": json.dumps(req.arguments or {}),
-                            },
-                        }
-                    )
+                    tool_call: Dict[str, Any] = {
+                        "id": req.id,
+                        "type": req.type,
+                        "function": {
+                            "name": req.name,
+                            "arguments": json.dumps(req.arguments or {}),
+                        },
+                    }
+                    if req.state is not None and req.state.provider_state is not None:
+                        tool_call["provider_specific_fields"] = req.state.provider_state
+                    tool_calls.append(tool_call)
                 if tool_calls:
                     base["tool_calls"] = tool_calls
 
@@ -254,6 +255,8 @@ class LLMExecutor(runner_base.BaseExecutor):
                 assistant_partial = ""
 
                 async for chunk in stream:
+                    logger.info("LLM chunk", chunk=chunk)
+
                     chunks.append(chunk)
                     choice_list = chunk.choices
                     if not choice_list:
@@ -320,6 +323,8 @@ class LLMExecutor(runner_base.BaseExecutor):
             messages=conv,
         )
 
+        logger.info("LLM response", response=response)
+
         choices = response.choices
         if not choices:
             raise RuntimeError("LLM response missing choices")
@@ -374,6 +379,19 @@ class LLMExecutor(runner_base.BaseExecutor):
                 continue
 
             tool_spec = effective_specs.get(func_name)
+            provider_specific_fields: Optional[Dict[str, Any]] = None
+            if isinstance(tc, dict):
+                cand = tc.get("provider_specific_fields")
+                if isinstance(cand, dict):
+                    provider_specific_fields = cand
+            else:
+                try:
+                    cand = tc.provider_specific_fields
+                    if isinstance(cand, dict):
+                        provider_specific_fields = cand
+                except Exception:
+                    provider_specific_fields = None
+
             tool_call_reqs.append(
                 state.ToolCallReq(
                     id=tc_id,
@@ -381,6 +399,11 @@ class LLMExecutor(runner_base.BaseExecutor):
                     name=func_name,
                     arguments=arguments,
                     tool_spec=tool_spec,
+                    state=(
+                        state.ToolCallProviderState(provider_state=provider_specific_fields)
+                        if provider_specific_fields is not None
+                        else None
+                    ),
                 )
             )
 

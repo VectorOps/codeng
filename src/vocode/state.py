@@ -65,6 +65,10 @@ class LLMUsageStats(BaseModel):
     output_token_limit: Optional[int] = None
 
 
+class ToolCallProviderState(BaseModel):
+    provider_state: Optional[Dict[str, Any]] = None
+
+
 class ToolCallReq(BaseModel):
     """
     A single tool call request.
@@ -98,6 +102,10 @@ class ToolCallReq(BaseModel):
     handled_at: Optional[datetime] = Field(
         default=None,
         description="Timestamp when this tool call was handled, if applicable.",
+    )
+    state: Optional[ToolCallProviderState] = Field(
+        default=None,
+        description="Provider-specific state to preserve across turns (e.g. thought signatures).",
     )
 
 

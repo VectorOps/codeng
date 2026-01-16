@@ -26,6 +26,9 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         id="call-test-tool-req",
         name="test-tool",
         arguments={"x": 1},
+        state=state.ToolCallProviderState(
+            provider_state={"thought_signature": "sig-123"}
+        ),
     )
     assistant_msg = state.Message(
         role=models.Role.ASSISTANT,
@@ -72,6 +75,9 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
     assert first["role"] == "assistant"
     assert "tool_calls" in first
     assert first["tool_calls"][0]["function"]["name"] == "test-tool"
+    assert first["tool_calls"][0]["provider_specific_fields"] == {
+        "thought_signature": "sig-123"
+    }
 
     second = conv[1]
     assert second["role"] == "tool"
