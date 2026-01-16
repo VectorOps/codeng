@@ -590,6 +590,32 @@ class Runner:
 
                 self._apply_llm_usage(last_complete_step.llm_usage)
 
+                if (
+                    last_complete_step is not None
+                    and last_complete_step.type == state.StepType.WORKFLOW_REQUEST
+                ):
+                    workflow_name = getattr(current_runtime_node.model, "workflow", "")
+                    start_payload = runner_proto.RunEventStartWorkflow(
+                        workflow_name=workflow_name,
+                        initial_message=last_complete_step.message,
+                    )
+                    req = RunEventReq(
+                        kind=runner_proto.RunEventReqKind.START_WORKFLOW,
+                        execution=self.execution,
+                        start_workflow=start_payload,
+                    )
+                    resp = yield req
+
+                    if resp and resp.message:
+                        result_step = state.Step(
+                            execution=current_execution,
+                            type=state.StepType.WORKFLOW_RESULT,
+                            message=resp.message,
+                            is_complete=True,
+                        )
+                        self._persist_step(result_step)
+                        continue
+
                 if last_complete_step is not None and last_complete_step.type in (
                     state.StepType.PROMPT,
                     state.StepType.PROMPT_CONFIRM,

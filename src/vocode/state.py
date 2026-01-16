@@ -47,6 +47,8 @@ class StepType(str, Enum):
     PROMPT_CONFIRM = "prompt_confirm"
     TOOL_REQUEST = "tool_request"
     TOOL_RESULT = "tool_result"
+    WORKFLOW_REQUEST = "workflow_request"
+    WORKFLOW_RESULT = "workflow_result"
 
 
 class LLMUsageStats(BaseModel):
