@@ -9,12 +9,14 @@ from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.settings import Settings, WorkflowConfig, ToolSpec
 from vocode.tools import base as tools_base
+from vocode.persistence import state_manager as persistence_state_manager
 
 class NestedWorkflowTestProject:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.tools: dict[str, tools_base.BaseTool] = {}
         self.current_workflow: str | None = None
+        self.state_manager = persistence_state_manager.NullWorkflowStateManager()
 
     async def start(self) -> None:
         return None

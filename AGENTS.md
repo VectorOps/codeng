@@ -16,6 +16,7 @@ This repository implements a configurable, graph-driven workflow runner with LLM
 - src/vocode/know/ - VectorOps Know integration
 - srv/vocode/tools/ - Base tool definitions and tool implementations
 - tests/ — unit tests for core components and UI protocol.
+- src/vocode/persistence/ — workflow execution persistence (DTOs, gzip codec, state manager)
 
 ## High-level style and patterns
 - Pydantic v2 BaseModel is the canonical schema:
@@ -60,6 +61,7 @@ This repository implements a configurable, graph-driven workflow runner with LLM
   - Use `@field_validator(..., mode="after")` for derived checks (e.g., uniqueness).
 - Serialization:
   - JSON-safe types; `str` enums; explicit `Optional[...] = None`.
+  - When changing runtime state models in `src/vocode/state.py`, update persistence DTOs and conversion logic in `src/vocode/persistence/` accordingly.
 - API stability:
   - New fields should be backward compatible and optional.
   - Keep `kind` and enum values stable.

@@ -1,7 +1,7 @@
 from vocode import state, models
 from tests.stub_project import StubProject
 from vocode.runner.base import ExecutorInput
-from vocode.runner.executors.llm.llm import LLMExecutor
+from vocode.runner.executors.llm.llm import LLMExecutor, ToolCallProviderState
 from vocode.runner.executors.llm.models import LLMNode
 
 
@@ -26,9 +26,7 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         id="call-test-tool-req",
         name="test-tool",
         arguments={"x": 1},
-        state=state.ToolCallProviderState(
-            provider_state={"thought_signature": "sig-123"}
-        ),
+        state=ToolCallProviderState(provider_state={"thought_signature": "sig-123"}),
     )
     assistant_msg = state.Message(
         role=models.Role.ASSISTANT,

@@ -4,6 +4,7 @@ from typing import Final
 import asyncio
 import json
 import litellm
+from pydantic import BaseModel
 
 from vocode import state, models
 from vocode.logger import logger
@@ -17,6 +18,14 @@ INCLUDED_STEP_TYPES: Final = (
     state.StepType.INPUT_MESSAGE,
     state.StepType.TOOL_RESULT,
 )
+
+
+class ToolCallProviderState(BaseModel):
+    provider_state: Optional[Dict[str, Any]] = None
+
+
+class LLMStepState(BaseModel):
+    raw_model_response: Optional[BaseModel] = None
 
 
 @runner_base.ExecutorFactory.register("llm")
@@ -96,7 +105,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                             "arguments": json.dumps(req.arguments or {}),
                         },
                     }
-                    if req.state is not None and req.state.provider_state is not None:
+                    if req.state is not None:
                         tool_call["provider_specific_fields"] = req.state.provider_state
                     tool_calls.append(tool_call)
                 if tool_calls:
@@ -245,6 +254,8 @@ class LLMExecutor(runner_base.BaseExecutor):
                     args.setdefault("tools", tools)
                     args.setdefault("tool_choice", "auto")
 
+                logger.info("REQ", req=args)
+
                 completion_coro = litellm.acompletion(**args)
 
                 task_name = f"llm.acompletion:{cfg.name}"
@@ -380,17 +391,13 @@ class LLMExecutor(runner_base.BaseExecutor):
 
             tool_spec = effective_specs.get(func_name)
             provider_specific_fields: Optional[Dict[str, Any]] = None
-            if isinstance(tc, dict):
-                cand = tc.get("provider_specific_fields")
+
+            try:
+                cand = tc.provider_specific_fields
                 if isinstance(cand, dict):
                     provider_specific_fields = cand
-            else:
-                try:
-                    cand = tc.provider_specific_fields
-                    if isinstance(cand, dict):
-                        provider_specific_fields = cand
-                except Exception:
-                    provider_specific_fields = None
+            except AttributeError:
+                pass
 
             tool_call_reqs.append(
                 state.ToolCallReq(
@@ -400,7 +407,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                     arguments=arguments,
                     tool_spec=tool_spec,
                     state=(
-                        state.ToolCallProviderState(provider_state=provider_specific_fields)
+                        ToolCallProviderState(provider_state=provider_specific_fields)
                         if provider_specific_fields is not None
                         else None
                     ),

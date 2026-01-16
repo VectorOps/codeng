@@ -1,5 +1,10 @@
 from vocode.lib import message_helpers
 from vocode import state, models
+from pydantic import BaseModel
+
+
+class _ToolProviderState(BaseModel):
+    provider_state: dict[str, str]
 
 
 def test_concatenate_messages_combines_input_and_final() -> None:
@@ -45,9 +50,7 @@ def test_concatenate_messages_copies_tool_calls_from_final_only() -> None:
         id="call-t-req",
         name="t",
         arguments={},
-        state=state.ToolCallProviderState(
-            provider_state={"thought_signature": "sig-xyz"}
-        ),
+        state=_ToolProviderState(provider_state={"thought_signature": "sig-xyz"}),
     )
     tool_resp = state.ToolCallResp(
         id="call-t",

@@ -308,7 +308,7 @@ async def test_runner_execution_flow():
     )
 
     runner = Runner(
-        workflow=workflow, project=object(), initial_message=initial_message
+        workflow=workflow, project=StubProject(), initial_message=initial_message
     )
 
     agen = runner.run()
@@ -459,7 +459,7 @@ async def test_loop_confirmation_mode_repeats_node_without_transition():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=initial_message,
     )
 
@@ -541,7 +541,7 @@ async def test_runner_errors_when_executor_has_no_complete_step():
     )
 
     runner = Runner(
-        workflow=workflow, project=object(), initial_message=initial_message
+        workflow=workflow, project=StubProject(), initial_message=initial_message
     )
 
     agen = runner.run()
@@ -580,7 +580,7 @@ async def test_runner_errors_when_executor_has_multiple_complete_steps():
     )
 
     runner = Runner(
-        workflow=workflow, project=object(), initial_message=initial_message
+        workflow=workflow, project=StubProject(), initial_message=initial_message
     )
 
     agen = runner.run()
@@ -650,7 +650,7 @@ async def test_result_mode_final_response_forwards_final_message():
     )
 
     runner = Runner(
-        workflow=workflow, project=object(), initial_message=initial_message
+        workflow=workflow, project=StubProject(), initial_message=initial_message
     )
 
     agen = runner.run()
@@ -702,7 +702,7 @@ async def test_result_mode_all_messages_forwards_all_messages():
     )
 
     runner = Runner(
-        workflow=workflow, project=object(), initial_message=initial_message
+        workflow=workflow, project=StubProject(), initial_message=initial_message
     )
 
     agen = runner.run()
@@ -757,7 +757,7 @@ async def test_result_mode_concatenate_final_builds_single_message():
     )
 
     runner = Runner(
-        workflow=workflow, project=object(), initial_message=initial_message
+        workflow=workflow, project=StubProject(), initial_message=initial_message
     )
 
     agen = runner.run()
@@ -811,7 +811,7 @@ async def test_runner_stop_stops_execution_loop():
     )
 
     runner = Runner(
-        workflow=workflow, project=object(), initial_message=initial_message
+        workflow=workflow, project=StubProject(), initial_message=initial_message
     )
 
     agen = runner.run()
@@ -887,7 +887,7 @@ async def test_runner_resume_from_output_message_skips_executor_run():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=None,
     )
 
@@ -949,7 +949,7 @@ async def test_runner_resume_from_input_message_re_runs_executor():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=None,
     )
 
@@ -1015,7 +1015,7 @@ async def test_runner_emits_waiting_input_status_for_prompt_steps():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=None,
     )
 
@@ -1080,7 +1080,7 @@ async def test_runner_emits_waiting_input_status_for_initial_need_input():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=None,
     )
 
@@ -1215,7 +1215,7 @@ async def test_input_node_prompts_and_returns_user_message_as_output():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=None,
     )
 
@@ -1312,7 +1312,7 @@ async def test_runner_requires_initial_input_and_forwards_to_first_node():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=None,
     )
 
@@ -1406,7 +1406,7 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=None,
     )
 
@@ -1561,7 +1561,7 @@ async def test_runner_start_after_stop_resumes_execution():
 
     runner = Runner(
         workflow=workflow,
-        project=object(),
+        project=StubProject(),
         initial_message=initial_message,
     )
 

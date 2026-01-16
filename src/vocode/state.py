@@ -9,6 +9,11 @@ from .settings import ToolSpec  # type: ignore
 from .models import OutputMode, Role
 
 
+class OpaqueState(BaseModel):
+    model: Optional[str] = None
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+
 class RunnerStatus(str, Enum):
     IDLE = "idle"
     RUNNING = "running"
@@ -65,10 +70,6 @@ class LLMUsageStats(BaseModel):
     output_token_limit: Optional[int] = None
 
 
-class ToolCallProviderState(BaseModel):
-    provider_state: Optional[Dict[str, Any]] = None
-
-
 class ToolCallReq(BaseModel):
     """
     A single tool call request.
@@ -103,7 +104,7 @@ class ToolCallReq(BaseModel):
         default=None,
         description="Timestamp when this tool call was handled, if applicable.",
     )
-    state: Optional[ToolCallProviderState] = Field(
+    state: Optional[BaseModel] = Field(
         default=None,
         description="Provider-specific state to preserve across turns (e.g. thought signatures).",
     )
@@ -238,6 +239,10 @@ class WorkflowExecution(BaseModel):
         default=None, description="LLM usage stats for this step, if any."
     )
     created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+    def touch(self) -> None:
+        self.updated_at = utcnow()
 
     def delete_step(self, step_id: UUID) -> None:
         self.delete_steps([step_id])

@@ -7,6 +7,7 @@ import pytest
 
 from vocode import models, state
 from vocode.manager.base import BaseManager, RunnerFrame
+from vocode.persistence import state_manager as persistence_state_manager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.runner import Runner
 from vocode.runner.proto import (
@@ -75,6 +76,9 @@ class DummyWorkflow:
 class FakeProject:
     def __init__(self) -> None:
         self.current_workflow: str | None = None
+        self.settings = None
+        self.tools: dict[str, object] = {}
+        self.state_manager = persistence_state_manager.NullWorkflowStateManager()
 
     async def start(self) -> None:
         return None

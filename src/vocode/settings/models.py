@@ -181,6 +181,10 @@ class ToolSettings(BaseModel):
     exec_tool: Optional[ExecToolSettings] = None
 
 
+class PersistenceSettings(BaseModel):
+    save_interval_s: float = 120.0
+
+
 class Settings(BaseModel):
     workflows: Dict[str, WorkflowConfig] = Field(default_factory=dict)
     # Optional name of the workflow to auto-start in interactive UIs
@@ -190,6 +194,7 @@ class Settings(BaseModel):
     know: Optional[KnowProjectSettings] = Field(default=None)
     process: Optional[ProcessSettings] = Field(default=None)
     logging: Optional[LoggingSettings] = Field(default=None)
+    persistence: Optional[PersistenceSettings] = Field(default=None)
 
     @model_validator(mode="after")
     def _sync_workflow_names(self) -> "Settings":
