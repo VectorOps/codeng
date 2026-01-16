@@ -25,7 +25,7 @@ class ToolCallProviderState(BaseModel):
 
 
 class LLMStepState(BaseModel):
-    raw_model_response: Optional[BaseModel] = None
+    provider_state: Optional[Dict[str, Any]] = None
 
 
 @runner_base.ExecutorFactory.register("llm")

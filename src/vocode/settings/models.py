@@ -183,6 +183,7 @@ class ToolSettings(BaseModel):
 
 class PersistenceSettings(BaseModel):
     save_interval_s: float = 120.0
+    max_total_log_bytes: int = 1024 * 1024 * 1024
 
 
 class Settings(BaseModel):

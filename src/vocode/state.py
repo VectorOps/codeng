@@ -95,7 +95,7 @@ class ToolCallReq(BaseModel):
         default=None,
         description="Execution status for this tool call request.",
     )
-    auto_approved: Optional[None] = Field(
+    auto_approved: Optional[bool] = Field(
         default=None,
         description="Set to a truthy value at runtime when this tool call is auto-approved.",
     )
@@ -140,6 +140,10 @@ class Message(BaseModel):
     )
     role: Role = Field(..., description="Sender role")
     text: str = Field(..., description="Original message as received/emitted")
+    thinking_content: Optional[str] = Field(
+        default=None,
+        description="Optional model reasoning/thinking content (not shown as user-visible text).",
+    )
 
     tool_call_requests: List[ToolCallReq] = Field(
         default_factory=list,
