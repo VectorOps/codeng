@@ -116,6 +116,8 @@ class BaseManager:
             task.cancel()
             try:
                 await task
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
 
@@ -151,7 +153,9 @@ class BaseManager:
             task.cancel()
             try:
                 await task
-            except Exception as ex:
+            except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
             self._driver_task = None
 
@@ -237,6 +241,8 @@ class BaseManager:
         if delete_ids:
             execution.delete_steps(delete_ids)
             execution.trim_empty_node_executions()
+            execution.touch()
+            self.project.state_manager.notify_changed(execution)
 
         base_execution = execution.node_executions.get(
             target_step.execution.id,

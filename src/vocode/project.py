@@ -3,6 +3,7 @@ from typing import Optional, Union, Dict, Any, TYPE_CHECKING, List
 from enum import Enum
 from pydantic import BaseModel
 from asyncio import Queue
+import uuid
 
 if TYPE_CHECKING:
     from .tools import BaseTool
@@ -18,6 +19,7 @@ from .proc.manager import ProcessManager
 from .proc.base import EnvPolicy
 from .proc.shell import ShellManager
 from .skills import Skill, discover_skills
+from vocode.persistence import state_manager as persistence_state_manager
 
 
 class ProjectState:
@@ -75,6 +77,15 @@ class Project:
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
         self.current_workflow: Optional[str] = None
+        self.session_id: str = uuid.uuid4().hex
+        save_interval_s = 120.0
+        if self.settings is not None and self.settings.persistence is not None:
+            save_interval_s = float(self.settings.persistence.save_interval_s)
+        self.state_manager = persistence_state_manager.WorkflowStateManager(
+            base_path=self.base_path,
+            session_id=self.session_id,
+            save_interval_s=save_interval_s,
+        )
 
     @property
     def config_path(self) -> Path:
@@ -151,6 +162,7 @@ class Project:
         # Initialize knowlt manager before subsystems that might depend on it.
         if self.settings and self.settings.know:
             await self.know.start(self.settings.know)
+        await self.state_manager.start()
 
         # Initialize process manager (idempotent)
         if self.processes is None:
@@ -210,6 +222,7 @@ class Project:
             self.processes = None
         # Stop know
         await self.know.shutdown()
+        await self.state_manager.shutdown()
 
 
 def _find_project_root_with_config(start: Path, rel_config: Path) -> Optional[Path]:

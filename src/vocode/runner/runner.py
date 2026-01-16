@@ -49,6 +49,19 @@ class Runner:
             n.name: ExecutorFactory.create_for_node(n, project=self.project)
             for n in self.workflow.graph.nodes
         }
+        self.project.state_manager.track(self.execution)
+
+    def _touch_execution(self) -> None:
+        self.execution.touch()
+        self.project.state_manager.notify_changed(self.execution)
+
+    def _set_node_execution_status(
+        self,
+        execution: state.NodeExecution,
+        status: state.RunStatus,
+    ) -> None:
+        execution.status = status
+        self._touch_execution()
 
     @property
     def last_final_message(self) -> Optional[state.Message]:
@@ -269,7 +282,7 @@ class Runner:
             run_steps[existing_run_index] = step
         else:
             run_steps.append(step)
-
+        self._touch_execution()
         return step
 
     def _build_next_input_messages(
@@ -348,6 +361,7 @@ class Runner:
             status=state.RunStatus.RUNNING,
         )
         self.execution.node_executions[execution.id] = execution
+        self._touch_execution()
         return execution
 
     def _compute_resume_state(
@@ -360,7 +374,7 @@ class Runner:
     ]:
         resume_step: Optional[state.Step] = None
         skip_executor = False
-
+        changed = False
         if self.execution.steps:
             anchor_index: Optional[int] = None
             for i in range(len(self.execution.steps) - 1, -1, -1):
@@ -380,17 +394,21 @@ class Runner:
                 ids = [s.id for s in self.execution.steps]
                 if ids:
                     self.execution.delete_steps(ids)
+                    changed = True
                 resume_step = None
             else:
                 tail_ids = [s.id for s in self.execution.steps[anchor_index + 1 :]]
                 if tail_ids:
                     self.execution.delete_steps(tail_ids)
+                    changed = True
                 if (
                     resume_step is not None
                     and resume_step.type == state.StepType.OUTPUT_MESSAGE
                 ):
                     skip_executor = True
             self.execution.trim_empty_node_executions()
+            if changed:
+                self._touch_execution()
 
         if not self.execution.steps:
             runtime_node = self.graph.root
@@ -398,7 +416,9 @@ class Runner:
             if runtime_node is not None:
                 existing_execution = self._find_node_execution(runtime_node.name)
                 if existing_execution is not None:
-                    existing_execution.status = state.RunStatus.RUNNING
+                    self._set_node_execution_status(
+                        existing_execution, state.RunStatus.RUNNING
+                    )
                     current_execution = existing_execution
                 else:
                     initial_messages: list[state.Message] = []
@@ -417,7 +437,7 @@ class Runner:
         )
         runtime_node = self.graph.get_runtime_node_by_name(execution.node)
         if execution.status != state.RunStatus.RUNNING:
-            execution.status = state.RunStatus.RUNNING
+            self._set_node_execution_status(execution, state.RunStatus.RUNNING)
         return runtime_node, execution, resume_step, skip_executor
 
     def _handle_run_event_response(
@@ -843,7 +863,9 @@ class Runner:
                 outcomes = current_runtime_node.model.outcomes
 
                 if not outcomes:
-                    current_execution.status = state.RunStatus.FINISHED
+                    self._set_node_execution_status(
+                        current_execution, state.RunStatus.FINISHED
+                    )
                     status_event = self.set_status(
                         state.RunnerStatus.FINISHED,
                         current_execution=current_execution,
@@ -903,7 +925,9 @@ class Runner:
                         return
 
                 if next_runtime_node is None:
-                    current_execution.status = state.RunStatus.FINISHED
+                    self._set_node_execution_status(
+                        current_execution, state.RunStatus.FINISHED
+                    )
                     status_event = self.set_status(
                         state.RunnerStatus.FINISHED,
                         current_execution=current_execution,
@@ -917,7 +941,9 @@ class Runner:
                     current_runtime_node.model,
                 )
 
-                current_execution.status = state.RunStatus.FINISHED
+                self._set_node_execution_status(
+                    current_execution, state.RunStatus.FINISHED
+                )
                 current_runtime_node = next_runtime_node
 
                 previous_for_next: Optional[state.NodeExecution] = None
@@ -946,7 +972,9 @@ class Runner:
                 current_execution is not None
                 and current_execution.status == state.RunStatus.RUNNING
             ):
-                current_execution.status = state.RunStatus.STOPPED
+                self._set_node_execution_status(
+                    current_execution, state.RunStatus.STOPPED
+                )
             stop_event = self.set_status(
                 state.RunnerStatus.STOPPED,
                 current_execution=current_execution,
@@ -1020,3 +1048,4 @@ class Runner:
             usage.completion_tokens,
             usage.cost_dollars,
         )
+        self._touch_execution()

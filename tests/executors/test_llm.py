@@ -225,6 +225,7 @@ async def test_llm_executor_populates_tool_spec_on_tool_call(
     assert isinstance(req.tool_spec, vocode_settings.ToolSpec)
     assert req.tool_spec.config.get("x") == 2
 
+
 @pytest.mark.asyncio
 async def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> None:
     project = StubProject()
@@ -288,6 +289,7 @@ async def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> N
     assert params["x"] == 2
     assert params["local"] is True
     assert params["global"] is True
+
 
 @pytest.mark.asyncio
 async def test_llm_executor_build_tools_respects_global_enabled_override() -> None:
