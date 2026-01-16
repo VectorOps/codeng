@@ -17,6 +17,8 @@
 ** [ ] Fix knowlt summary documentation generation - it adds python docstring twice
 ** [ ] Add a way for knowlt to return individual symbols from file by id. have compact ids, not uuids.
 ** [ ] Implement tool call formatters
+** [ ] Fix autocomplete logic for /run - shift+enter should submit instead of accepting auto-complete.
+- Don't show auto-complete if option exactly matches
 ** [X] LLM usage stats
 *** [X] Per-node reporting (current limits)
 *** [X] Per-session accumulation

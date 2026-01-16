@@ -45,6 +45,9 @@ def test_concatenate_messages_copies_tool_calls_from_final_only() -> None:
         id="call-t-req",
         name="t",
         arguments={},
+        state=state.ToolCallProviderState(
+            provider_state={"thought_signature": "sig-xyz"}
+        ),
     )
     tool_resp = state.ToolCallResp(
         id="call-t",
@@ -66,3 +69,7 @@ def test_concatenate_messages_copies_tool_calls_from_final_only() -> None:
     assert combined is not None
     assert combined.tool_call_requests == final_msg.tool_call_requests
     assert combined.tool_call_responses == final_msg.tool_call_responses
+    assert combined.tool_call_requests[0].state is not None
+    assert combined.tool_call_requests[0].state.provider_state == {
+        "thought_signature": "sig-xyz"
+    }
