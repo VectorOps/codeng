@@ -66,6 +66,21 @@ class WorkflowConfig(BaseModel):
         return [models.Node.from_node(item) for item in v]
 
 
+class ToolCallFormatter(BaseModel):
+    """
+    Configures how to display a tool call in the terminal.
+    - title: what to display as the function name
+    - formatter: registered formatter implementation name (e.g. "generic")
+    - show_output: whether to show tool output details by default
+    - options: free-form formatter-specific configuration
+    """
+
+    title: str
+    formatter: str = "generic"
+    show_output: bool = False
+    options: Dict[str, Any] = Field(default_factory=dict)
+
+
 class ToolAutoApproveRule(BaseModel):
     """Rule for automatically approving a tool call based on its JSON arguments.
 
@@ -191,7 +206,10 @@ class Settings(BaseModel):
     # Optional name of the workflow to auto-start in interactive UIs
     default_workflow: Optional[str] = Field(default=None)
     tools: List[ToolSpec] = Field(default_factory=list)
+    # Tool settings
     tool_settings: Optional[ToolSettings] = Field(default=None)
+    # Mapping of tool name -> formatter configuration
+    tool_call_formatters: Dict[str, ToolCallFormatter] = Field(default_factory=dict)
     know: Optional[KnowProjectSettings] = Field(default=None)
     process: Optional[ProcessSettings] = Field(default=None)
     logging: Optional[LoggingSettings] = Field(default=None)

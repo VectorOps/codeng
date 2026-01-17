@@ -262,7 +262,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                     args.setdefault("tools", tools)
                     args.setdefault("tool_choice", "auto")
 
-                logger.info("REQ", req=args)
+                logger.debug("LLM request", args=args)
 
                 completion_coro = litellm.acompletion(**args)
 
@@ -274,8 +274,6 @@ class LLMExecutor(runner_base.BaseExecutor):
                 assistant_partial = ""
 
                 async for chunk in stream:
-                    logger.info("LLM chunk", chunk=chunk)
-
                     chunks.append(chunk)
                     choice_list = chunk.choices
                     if not choice_list:
@@ -342,7 +340,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             messages=conv,
         )
 
-        logger.info("LLM response", response=response)
+        logger.debug("LLM response", response=response)
 
         choices = response.choices
         if not choices:
