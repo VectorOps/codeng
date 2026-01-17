@@ -13,6 +13,7 @@ from vocode.manager import helpers as manager_helpers
 from vocode.manager import proto as manager_proto
 from vocode.manager import server as manager_server
 from vocode import project as vocode_project
+from vocode.tui import tcf as tui_tcf
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.screens import log_view as tui_log_view
 
@@ -34,6 +35,7 @@ class App:
         self._recv_task: asyncio.Task[None] | None = None
 
         project = vocode_project.Project.from_base_path(self._project_path)
+        tui_tcf.ToolCallFormatterManager.configure(project.settings)
         self._ui_server = manager_server.UIServer(
             project=project,
             endpoint=self._endpoint_server,

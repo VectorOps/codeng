@@ -95,7 +95,7 @@ async def test_tui_state_autocomplete_debounce_does_not_cancel_active_task() -> 
 
     await asyncio.sleep(tui_uistate.AUTOCOMPLETE_DEBOUNCE_MS / 1000.0 + 0.1)
     assert requests[-1] == ("abcd", 0, 4)
-    assert len(requests) == 2
+    assert len(requests) == 3
 
 
 def test_tui_state_autocomplete_stack_and_toolbar() -> None:

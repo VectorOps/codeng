@@ -5,13 +5,14 @@ import json
 from typing import Final
 
 from rich import console as rich_console
-from rich import markdown as rich_markdown
+from rich import text as rich_text
 from rich import markup as rich_markup
- 
+
 
 from vocode import state as vocode_state
 from vocode.tui import styles as tui_styles
 from vocode.tui import lib as tui_terminal
+from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import spinner as tui_spinner
 from vocode.tui.lib.components import renderable as renderable_component
@@ -57,54 +58,6 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
     def set_step(self, step: vocode_state.Step) -> None:
         self._step = step
         self._mark_dirty()
-
-    @staticmethod
-    def format_step_markdown(step: vocode_state.Step) -> str | None:
-        message = step.message
-        if message is None:
-            return None
-
-        parts: list[str] = []
-        tool_calls = message.tool_call_requests
-        if not tool_calls:
-            return None
-
-        statuses: list[vocode_state.ToolCallReqStatus] = []
-        for tool_call in tool_calls:
-            status = tool_call.status
-            if status is None:
-                continue
-            statuses.append(status)
-
-        status_value: vocode_state.ToolCallReqStatus | None = None
-        if statuses:
-            if vocode_state.ToolCallReqStatus.EXECUTING in statuses:
-                status_value = vocode_state.ToolCallReqStatus.EXECUTING
-            else:
-                status_value = statuses[0]
-
-        if status_value == vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
-            parts.append("Please confirm the tool call:")
-            parts.append("")
-
-        for i, tool_call in enumerate(tool_calls):
-            if i > 0:
-                parts.append("")
-            parts.append(f"**Tool call:** `{tool_call.name}`")
-            arguments = tool_call.arguments
-            if arguments:
-                try:
-                    args_str = json.dumps(arguments, indent=2, sort_keys=True)
-                except TypeError:
-                    args_str = str(arguments)
-                parts.append("```json")
-                parts.append(args_str)
-                parts.append("```")
-
-        if not parts:
-            return None
-
-        return "\n".join(parts)
 
     def _compute_overall_status(
         self,
@@ -206,11 +159,25 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         status = self._compute_overall_status()
         self._update_animation(status)
 
-        markdown = self.format_step_markdown(self._step)
         renderables: list[rich_console.RenderableType] = []
+        terminal = self.terminal
+        message = self._step.message
+        tool_calls: list[vocode_state.ToolCallReq] = []
+        if message is not None:
+            tool_calls = message.tool_call_requests
 
-        if markdown is not None:
-            renderables.append(rich_markdown.Markdown(markdown))
+        if (
+            tool_calls
+            and status is vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+        ):
+            renderables.append(rich_text.Text("Please confirm the tool call:"))
+
+        if tool_calls and terminal is not None:
+            manager = tui_tcf.ToolCallFormatterManager.instance()
+            for tool_call in tool_calls:
+                rendered = manager.format_request(terminal, tool_call)
+                if rendered is not None:
+                    renderables.append(rendered)
 
         if status is None:
             if not renderables:
