@@ -99,7 +99,9 @@ class AutocompleteRespPacket(BaseModel):
 
 class AutocompleteItem(BaseModel):
     title: str
-    value: Optional[str] = None
+    replace_start: int
+    replace_text: str
+    insert_text: str
 
 
 class TextMessageFormat(str, Enum):

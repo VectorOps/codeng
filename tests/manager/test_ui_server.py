@@ -207,7 +207,27 @@ async def test_run_autocomplete_provider_uses_workflow_name_values() -> None:
 
     assert items is not None
     assert [item.title for item in items] == ["/run wf-auto - workflow"]
-    assert [item.value for item in items] == [workflow_name]
+    assert [item.replace_start for item in items] == [0]
+    assert [item.replace_text for item in items] == ["/run "]
+    assert [item.insert_text for item in items] == [f"/run {workflow_name}"]
+
+
+@pytest.mark.asyncio
+async def test_run_autocomplete_provider_does_not_suggest_exact_match() -> None:
+    project = StubProject()
+    workflow_name = "wf-auto"
+    project.settings.workflows[workflow_name] = vocode_settings.WorkflowConfig()
+    server_endpoint, _ = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    items = await autocomplete_providers.run_autocomplete_provider(
+        server,
+        "/run wf-auto",
+        0,
+        len("/run wf-auto"),
+    )
+
+    assert items is None
 
 
 @pytest.mark.asyncio
@@ -520,7 +540,9 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
         called.append(text)
         return True
 
-    monkeypatch.setattr(BaseManager, "edit_history_with_text", fake_edit_history_with_text)
+    monkeypatch.setattr(
+        BaseManager, "edit_history_with_text", fake_edit_history_with_text
+    )
 
     user_message = state.Message(
         role=models.Role.USER,
@@ -564,7 +586,9 @@ async def test_uiserver_user_input_sends_error_when_edit_fails(
     ) -> bool:
         return False
 
-    monkeypatch.setattr(BaseManager, "edit_history_with_text", fake_edit_history_with_text)
+    monkeypatch.setattr(
+        BaseManager, "edit_history_with_text", fake_edit_history_with_text
+    )
 
     messages: list[str] = []
 
