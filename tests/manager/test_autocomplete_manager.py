@@ -27,7 +27,14 @@ async def test_autocomplete_manager_aggregates_results() -> None:
     ) -> list[AutocompleteItem] | None:
         _ = server, row, col
         if text:
-            return [AutocompleteItem(title="one")]
+            return [
+                AutocompleteItem(
+                    title="one",
+                    replace_start=0,
+                    replace_text="",
+                    insert_text="one",
+                )
+            ]
         return None
 
     async def provider_two(
@@ -38,7 +45,14 @@ async def test_autocomplete_manager_aggregates_results() -> None:
     ) -> list[AutocompleteItem] | None:
         _ = server, row, col
         if text:
-            return [AutocompleteItem(title="two", value="TWO")]
+            return [
+                AutocompleteItem(
+                    title="two",
+                    replace_start=0,
+                    replace_text="",
+                    insert_text="TWO",
+                )
+            ]
         return None
 
     async def provider_none(
@@ -57,4 +71,4 @@ async def test_autocomplete_manager_aggregates_results() -> None:
     server = object()
     items = await manager.get_completions(server, "x", 0, 1)
     assert [item.title for item in items] == ["one", "two"]
-    assert [item.value for item in items] == [None, "TWO"]
+    assert [item.insert_text for item in items] == ["one", "TWO"]

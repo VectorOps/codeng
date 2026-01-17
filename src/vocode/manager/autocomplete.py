@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 @dataclasses.dataclass
 class AutocompleteItem:
     title: str
-    value: str | None = None
+    replace_start: int
+    replace_text: str
+    insert_text: str
 
 
 AutocompleteProvider = Callable[

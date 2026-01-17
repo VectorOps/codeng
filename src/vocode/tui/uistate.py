@@ -23,7 +23,7 @@ from vocode.tui.lib.input import base as input_base
 from vocode.tui.lib.input import handler as input_handler_mod
 
 
-AUTOCOMPLETE_DEBOUNCE_MS: typing.Final[int] = 250
+AUTOCOMPLETE_DEBOUNCE_MS: typing.Final[int] = 100
 
 
 class ActionKind(str, enum.Enum):
@@ -115,6 +115,8 @@ class TUIState:
         self._last_autocomplete_text: str | None = None
         self._last_autocomplete_row: int | None = None
         self._last_autocomplete_col: int | None = None
+        self._autocomplete_pending: bool = False
+        self._autocomplete_items: list[manager_proto.AutocompleteItem] | None = None
         self._ui_state: manager_proto.UIServerStatePacket | None = None
 
     @property
@@ -485,28 +487,34 @@ class TUIState:
         ):
             return
 
+        self._autocomplete_pending = True
         request_task = self._autocomplete_task
         if request_task is not None and not request_task.done():
             return
+
         loop = asyncio.get_running_loop()
 
-        async def _debounced() -> None:
-            try:
-                await asyncio.sleep(AUTOCOMPLETE_DEBOUNCE_MS / 1000.0)
-            except asyncio.CancelledError:
-                return
-            current_text = self._last_autocomplete_text
-            current_row = self._last_autocomplete_row
-            current_col = self._last_autocomplete_col
-            if current_text is None or current_row is None or current_col is None:
-                return
-            await self._on_autocomplete_request(
-                current_text,
-                current_row,
-                current_col,
-            )
+        async def _throttled() -> None:
+            while True:
+                if not self._autocomplete_pending:
+                    return
+                self._autocomplete_pending = False
+                current_text = self._last_autocomplete_text
+                current_row = self._last_autocomplete_row
+                current_col = self._last_autocomplete_col
+                if current_text is None or current_row is None or current_col is None:
+                    return
+                await self._on_autocomplete_request(
+                    current_text,
+                    current_row,
+                    current_col,
+                )
+                try:
+                    await asyncio.sleep(AUTOCOMPLETE_DEBOUNCE_MS / 1000.0)
+                except asyncio.CancelledError:
+                    return
 
-        self._autocomplete_task = loop.create_task(_debounced())
+        self._autocomplete_task = loop.create_task(_throttled())
 
     def _handle_cursor_event(self, row: int, col: int) -> None:
         if self._on_autocomplete_request is None:
@@ -520,6 +528,7 @@ class TUIState:
         self,
         items: list[manager_proto.AutocompleteItem] | None,
     ) -> None:
+        self._autocomplete_items = items
         if not items:
             self._pop_autocomplete()
             return
@@ -531,7 +540,7 @@ class TUIState:
                     {
                         "id": str(index),
                         "text": item.title,
-                        "value": item.value,
+                        "value": str(index),
                     }
                     for index, item in enumerate(items)
                 ]
@@ -543,43 +552,51 @@ class TUIState:
             if item is None:
                 self._pop_autocomplete()
                 return
-            value = item.value if item.value is not None else item.text
+
+            items = self._autocomplete_items
+            if not items:
+                self._pop_autocomplete()
+                return
+
+            if item.value is None:
+                self._pop_autocomplete()
+                return
+            try:
+                selected_index = int(item.value)
+            except ValueError:
+                self._pop_autocomplete()
+                return
+            if selected_index < 0 or selected_index >= len(items):
+                self._pop_autocomplete()
+                return
+            selected = items[selected_index]
+
             lines = self._input_component.lines
             row = self._input_component.cursor_row
-            col = self._input_component.cursor_col
             if row < 0 or row >= len(lines):
                 self._pop_autocomplete()
                 return
             line = lines[row]
-            if col < 0:
-                col = 0
-            if col > len(line):
-                col = len(line)
-            start = col
-            while start > 0 and not line[start - 1].isspace():
-                start -= 1
-            end = col
-            while end < len(line) and not line[end].isspace():
-                end += 1
-            insert_value = value
-            if line.startswith("/run"):
-                prefix = "/run"
-                if (
-                    start == 0
-                    and end <= len(prefix)
-                    and (len(line) <= len(prefix) or line[len(prefix)] != " ")
-                ):
-                    insert_value = f"{prefix} {value}"
-            # If completing a command at the start of the line, append a space
-            if line.startswith("/") and start == 0 and value.startswith("/"):
-                if not value.endswith(" "):
-                    insert_value = value + " "
 
-            new_line = line[:start] + insert_value + line[end:]
+            start = selected.replace_start
+            if start < 0 or start > len(line):
+                self._pop_autocomplete()
+                return
+            end = start + len(selected.replace_text)
+            if end > len(line):
+                self._pop_autocomplete()
+                return
+            if line[start:end] != selected.replace_text:
+                self._pop_autocomplete()
+                return
+
+            new_line = line[:start] + selected.insert_text + line[end:]
             all_lines = list(lines)
             all_lines[row] = new_line
             self._input_component.text = "\n".join(all_lines)
-            self._input_component.set_cursor_position(row, start + len(insert_value))
+            self._input_component.set_cursor_position(
+                row, start + len(selected.insert_text)
+            )
             self._pop_autocomplete()
 
         select.subscribe_select(_on_select)
@@ -588,7 +605,7 @@ class TUIState:
                 {
                     "id": str(index),
                     "text": item.title,
-                    "value": item.value,
+                    "value": str(index),
                 }
                 for index, item in enumerate(items)
             ]

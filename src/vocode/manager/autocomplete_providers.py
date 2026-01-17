@@ -13,6 +13,43 @@ if TYPE_CHECKING:
 MIN_FILE_AUTOCOMPLETE_LEN = 2
 
 
+def _clamp_cursor(text: str, cursor: int) -> int:
+    if cursor < 0:
+        return 0
+    if cursor > len(text):
+        return len(text)
+    return cursor
+
+
+def _token_span(text: str, cursor: int) -> tuple[int, int]:
+    cursor = _clamp_cursor(text, cursor)
+    start = cursor
+    while start > 0 and not text[start - 1].isspace():
+        start -= 1
+    end = cursor
+    while end < len(text) and not text[end].isspace():
+        end += 1
+    return start, end
+
+
+def _filter_noop(text: str, items: list[AutocompleteItem]) -> list[AutocompleteItem]:
+    filtered: list[AutocompleteItem] = []
+    for item in items:
+        start = item.replace_start
+        if start < 0:
+            continue
+        end = start + len(item.replace_text)
+        if end > len(text):
+            continue
+        if text[start:end] != item.replace_text:
+            continue
+        new_text = text[:start] + item.insert_text + text[end:]
+        if new_text == text:
+            continue
+        filtered.append(item)
+    return filtered
+
+
 @AutocompleteManager.register_default
 async def file_autocomplete_provider(
     server: "UIServer",
@@ -24,19 +61,8 @@ async def file_autocomplete_provider(
     if not text:
         return None
 
-    cursor = col
-    if cursor < 0:
-        cursor = 0
-    if cursor > len(text):
-        cursor = len(text)
-
-    start = cursor
-    while start > 0 and not text[start - 1].isspace():
-        start -= 1
-    end = cursor
-    while end < len(text) and not text[end].isspace():
-        end += 1
-
+    cursor = _clamp_cursor(text, col)
+    start, end = _token_span(text, cursor)
     word = text[start:end]
     if not word or not word.startswith("@"):
         return None
@@ -55,7 +81,17 @@ async def file_autocomplete_provider(
             repo_ids=repo_ids,
             limit=limit,
         )
-        return [AutocompleteItem(title=f.path, value=f.path) for f in files if f.path]
+        items = [
+            AutocompleteItem(
+                title=f.path,
+                replace_start=start,
+                replace_text=word,
+                insert_text=f.path,
+            )
+            for f in files
+            if f.path
+        ]
+        return _filter_noop(text, items) or None
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.exception("file_autocomplete_provider error", exc=exc)
         return None
@@ -68,7 +104,6 @@ async def command_autocomplete_provider(
     row: int,
     col: int,
 ) -> list[AutocompleteItem] | None:
-    _ = col
     if not text:
         return None
 
@@ -78,19 +113,8 @@ async def command_autocomplete_provider(
     if not text.startswith("/"):
         return None
 
-    cursor = len(text)
-    if cursor < 0:
-        cursor = 0
-    if cursor > len(text):
-        cursor = len(text)
-
-    start = cursor
-    while start > 0 and not text[start - 1].isspace():
-        start -= 1
-    end = cursor
-    while end < len(text) and not text[end].isspace():
-        end += 1
-
+    cursor = _clamp_cursor(text, col)
+    start, end = _token_span(text, cursor)
     word = text[start:end]
     if not word or not word.startswith("/"):
         return None
@@ -108,9 +132,19 @@ async def command_autocomplete_provider(
         title = signature
         if description:
             title = f"{signature} - {description}"
-        items.append(AutocompleteItem(title=title, value=signature))
+        insert_text = signature
+        if not insert_text.endswith(" "):
+            insert_text += " "
+        items.append(
+            AutocompleteItem(
+                title=title,
+                replace_start=start,
+                replace_text=word,
+                insert_text=insert_text,
+            )
+        )
 
-    return items or None
+    return _filter_noop(text, items) or None
 
 
 @AutocompleteManager.register_default
@@ -127,20 +161,16 @@ async def run_autocomplete_provider(
     if row != 0:
         return None
 
-    if not text.startswith("/run"):
+    prefix = "/run"
+    if not text.startswith(prefix):
         return None
 
-    parts = text.split()
-    if not parts:
-        return None
-    if parts[0] != "/run":
-        return None
-    if len(parts) > 2:
+    if text != prefix and not text.startswith(prefix + " "):
         return None
 
     needle = ""
-    if len(parts) == 2:
-        needle = parts[1]
+    if text.startswith(prefix + " "):
+        needle = text[len(prefix) + 1 :]
 
     project = server.manager.project
     settings = project.settings
@@ -156,6 +186,13 @@ async def run_autocomplete_provider(
         if needle and not wf.startswith(needle):
             continue
         title = f"/run {wf} - workflow"
-        items.append(AutocompleteItem(title=title, value=wf))
+        items.append(
+            AutocompleteItem(
+                title=title,
+                replace_start=0,
+                replace_text=text,
+                insert_text=f"/run {wf}",
+            )
+        )
 
-    return items or None
+    return _filter_noop(text, items) or None

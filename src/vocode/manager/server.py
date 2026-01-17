@@ -428,7 +428,12 @@ class UIServer:
             req.col,
         )
         resp_items = [
-            manager_proto.AutocompleteItem(title=item.title, value=item.value)
+            manager_proto.AutocompleteItem(
+                title=item.title,
+                replace_start=item.replace_start,
+                replace_text=item.replace_text,
+                insert_text=item.insert_text,
+            )
             for item in items
         ]
         resp = manager_proto.AutocompleteRespPacket(items=resp_items)
