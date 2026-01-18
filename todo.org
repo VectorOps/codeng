@@ -5,7 +5,6 @@
 ** [ ] Measure and report time it took to run the step at the step bottom.
 - Figure out a way to add component under last message and skip it when adding a new step message
 ** [ ] Add /reset command
-** [ ] 
 ** [ ] Test multi-screen paste
 *** [ ] Handle paste without showing whole content
 ** [ ] Add a way for knowlt to return individual symbols from file by id.

@@ -61,3 +61,19 @@ async def register_workflow_commands(manager: CommandManager) -> None:
         continue_workflow,
         description="Continue the current stopped workflow",
     )
+
+    async def reset_workflow(server, args: list[str]) -> None:
+        if args:
+            raise CommandError("Usage: /reset")
+
+        workflow_name = server.manager.project.current_workflow
+        if workflow_name is None:
+            raise CommandError("No active workflow to reset.")
+
+        await run_workflow(server, [workflow_name])
+
+    await manager.register(
+        "reset",
+        reset_workflow,
+        description="Reset and restart the current workflow",
+    )
