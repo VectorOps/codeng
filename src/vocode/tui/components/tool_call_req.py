@@ -14,22 +14,16 @@ from vocode.tui import styles as tui_styles
 from vocode.tui import lib as tui_terminal
 from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib import base as tui_base
-from vocode.tui.lib import spinner as tui_spinner
+from vocode.tui.lib import unicode as tui_unicode
 from vocode.tui.lib.components import renderable as renderable_component
 
 
 class ToolCallReqComponent(renderable_component.RenderableComponentBase):
-    _STATUS_ICON_EMOJI: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
-        vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: ":question:",
-        vocode_state.ToolCallReqStatus.PENDING_EXECUTION: ":hourglass_not_done:",
-        vocode_state.ToolCallReqStatus.REJECTED: ":x:",
-        vocode_state.ToolCallReqStatus.COMPLETE: ":white_check_mark:",
-    }
-    _STATUS_ICON_FALLBACK: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
-        vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "[?]",
-        vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "...",
-        vocode_state.ToolCallReqStatus.REJECTED: "[x]",
-        vocode_state.ToolCallReqStatus.COMPLETE: "[+]",
+    _STATUS_ICON_NAME: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
+        vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "black_question_mark_ornament",
+        vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "hourglass_with_flowing_sand",
+        vocode_state.ToolCallReqStatus.REJECTED: "heavy_multiplication_x",
+        vocode_state.ToolCallReqStatus.COMPLETE: "heavy_check_mark",
     }
     _STATUS_TEXT: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
         vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "Waiting for confirmation",
@@ -100,22 +94,26 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         _: rich_console.Console,
         status: vocode_state.ToolCallReqStatus | None,
     ) -> str:
+        terminal = self.terminal
+        if terminal is None:
+            return ""
+        uni = terminal.unicode
         if status is vocode_state.ToolCallReqStatus.EXECUTING:
-            # TODO: implement a real heuristic for emoji support instead of always using unicode frames.
-            frames = tui_spinner.SPINNER_FRAMES_UNICODE
-            frame = frames[self._frame_index]
+            frame = uni.spinner_frame(
+                self._frame_index,
+                tui_unicode.SpinnerVariant.BRAILLE,
+            )
+            frames = uni.spinner_frames(tui_unicode.SpinnerVariant.BRAILLE)
             self._frame_index = (self._frame_index + 1) % len(frames)
             return frame
         if status is None:
             self._frame_index = 0
-            return "[ ]"
-        # TODO: implement a real heuristic for emoji support instead of always using emoji icons.
-        icons = self._STATUS_ICON_EMOJI
-        icon = icons.get(status)
+            return ""
+        icon_name = self._STATUS_ICON_NAME.get(status)
         self._frame_index = 0
-        if icon is None:
-            return "[ ]"
-        return icon
+        if icon_name is None:
+            return ""
+        return uni.glyph(icon_name)
 
     def _compute_duration(self) -> datetime.timedelta | None:
         message = self._step.message

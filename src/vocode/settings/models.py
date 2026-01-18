@@ -104,6 +104,13 @@ class ToolAutoApproveRule(BaseModel):
         return v
 
 
+
+
+class TUIOptions(BaseModel):
+    unicode: bool = True
+    ascii_fallback: bool = False
+
+
 class ToolSpec(BaseModel):
     """
     Tool specification usable both globally (Settings.tools) and per-node (LLMNode.tools).
@@ -214,6 +221,7 @@ class Settings(BaseModel):
     process: Optional[ProcessSettings] = Field(default=None)
     logging: Optional[LoggingSettings] = Field(default=None)
     persistence: Optional[PersistenceSettings] = Field(default=None)
+    tui: Optional[TUIOptions] = Field(default=None)
 
     @model_validator(mode="after")
     def _sync_workflow_names(self) -> "Settings":

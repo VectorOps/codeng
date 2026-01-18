@@ -10,7 +10,7 @@ from vocode.manager import proto as manager_proto
 from vocode.lib import formatting as lib_formatting
 from vocode.tui import lib as tui_terminal
 from vocode.tui.lib import base as tui_base
-from vocode.tui.lib import spinner as tui_spinner
+from vocode.tui.lib import unicode as tui_unicode
 from vocode.tui.lib.components import renderable as renderable_component
 
 
@@ -112,10 +112,16 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
 
         frame_text = ""
         if status is vocode_state.RunnerStatus.RUNNING:
-            frames = tui_spinner.SPINNER_FRAMES_UNICODE
-            frame = frames[self._frame_index]
-            self._frame_index = (self._frame_index + 1) % len(frames)
-            frame_text = frame.strip()
+            terminal = self.terminal
+            if terminal is not None:
+                uni = terminal.unicode
+                frame = uni.spinner_frame(
+                    self._frame_index,
+                    tui_unicode.SpinnerVariant.BRAILLE,
+                )
+                frames = uni.spinner_frames(tui_unicode.SpinnerVariant.BRAILLE)
+                self._frame_index = (self._frame_index + 1) % len(frames)
+                frame_text = frame.strip()
         else:
             self._frame_index = 0
 

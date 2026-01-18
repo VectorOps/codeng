@@ -12,8 +12,10 @@ from rich import segment as rich_segment
 
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import controls as tui_controls
+from vocode.tui.lib import unicode as tui_unicode
 from vocode.tui.lib.input import base as input_base
-from pydantic import BaseModel
+from vocode.settings.models import TUIOptions
+from pydantic import BaseModel, Field
 
 
 class IncrementalRenderMode(str, enum.Enum):
@@ -36,6 +38,7 @@ class TerminalSettings(BaseModel):
     auto_render: bool = True
     min_render_interval_ms: int = 50
     incremental_mode: IncrementalRenderMode = IncrementalRenderMode.PADDING
+    tui: TUIOptions = Field(default_factory=TUIOptions)
 
 
 class BaseScreen(typing.Protocol):
@@ -68,6 +71,7 @@ class Terminal:
         self._settings: TerminalSettings = (
             settings if settings is not None else TerminalSettings()
         )
+        self._unicode = tui_unicode.UnicodeManager(self._settings.tui)
         self._auto_render_enabled: bool = self._settings.auto_render
         self._auto_render_suppressed: int = 0
         self._last_auto_render: float | None = None
@@ -81,6 +85,15 @@ class Terminal:
     @property
     def console(self) -> rich_console.Console:
         return self._console
+
+
+    @property
+    def settings(self) -> TerminalSettings:
+        return self._settings
+
+    @property
+    def unicode(self) -> tui_unicode.UnicodeManager:
+        return self._unicode
 
     @property
     def has_screens(self) -> bool:
