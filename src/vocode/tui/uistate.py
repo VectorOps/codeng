@@ -17,9 +17,11 @@ from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
 from vocode.tui.lib.components import select_list as tui_select_list
+from vocode.tui.components import command_manager_help as command_manager_help_component
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.components import tool_call_resp as tool_call_resp_component
 from vocode.tui.components import toolbar as toolbar_component
+from vocode.tui import command_manager as tui_command_manager
 from vocode.tui.lib.input import base as input_base
 from vocode.tui.lib.input import handler as input_handler_mod
 
@@ -30,6 +32,7 @@ AUTOCOMPLETE_DEBOUNCE_MS: typing.Final[int] = 100
 class ActionKind(str, enum.Enum):
     DEFAULT = "default"
     AUTOCOMPLETE = "autocomplete"
+    COMMAND_MANAGER = "command_manager"
 
 
 @dataclasses.dataclass
@@ -125,16 +128,10 @@ class TUIState:
         self._progressive_count: int = 0
 
         self._progressive_keybindings: set[tui_input_component.KeyBinding] = {
-            tui_input_component.KeyBinding(".", ctrl=True),
-            tui_input_component.KeyBinding(",", ctrl=True),
-            tui_input_component.KeyBinding(".", ctrl=True, shift=True),
-            tui_input_component.KeyBinding(",", ctrl=True, shift=True),
-            tui_input_component.KeyBinding(">", ctrl=True, shift=True),
-            tui_input_component.KeyBinding("<", ctrl=True, shift=True),
-            tui_input_component.KeyBinding("e", ctrl=True),
-            tui_input_component.KeyBinding("w", ctrl=True),
-            tui_input_component.KeyBinding("e", ctrl=True, shift=True),
-            tui_input_component.KeyBinding("w", ctrl=True, shift=True),
+            tui_input_component.KeyBinding("e"),
+            tui_input_component.KeyBinding("c"),
+            tui_input_component.KeyBinding("e", shift=True),
+            tui_input_component.KeyBinding("c", shift=True),
         }
 
     @property
@@ -160,32 +157,10 @@ class TUIState:
             tui_input_component.KeyBinding("down"): self._handle_history_down,
             tui_input_component.KeyBinding("n", ctrl=True): self._handle_history_down,
             tui_input_component.KeyBinding(
-                ".", ctrl=True
-            ): self._handle_collapse_last_components,
-            tui_input_component.KeyBinding(
-                "e", ctrl=True
-            ): self._handle_collapse_last_components,
-            tui_input_component.KeyBinding(
-                ".", ctrl=True, shift=True
-            ): self._handle_collapse_last_tool_steps,
-            tui_input_component.KeyBinding(
-                ">", ctrl=True, shift=True
-            ): self._handle_collapse_last_tool_steps,
-            tui_input_component.KeyBinding(
-                ",", ctrl=True
-            ): self._handle_expand_last_components,
-            tui_input_component.KeyBinding(
-                "w", ctrl=True
-            ): self._handle_expand_last_components,
-            tui_input_component.KeyBinding(
-                ",", ctrl=True, shift=True
-            ): self._handle_expand_last_tool_steps,
-            tui_input_component.KeyBinding(
-                "<", ctrl=True, shift=True
-            ): self._handle_expand_last_tool_steps,
+                "x", ctrl=True
+            ): self._handle_open_command_manager,
             tui_input_component.KeyBinding("c", ctrl=True): self._handle_stop,
             tui_input_component.KeyBinding("d", ctrl=True): self._handle_eof,
-            tui_input_component.KeyBinding("l", ctrl=True): self._handle_open_logs,
         }
 
     def _handle_input_key_event(self, event: input_base.KeyEvent) -> bool:
@@ -206,6 +181,29 @@ class TUIState:
                     )
                     component.on_key_event(mapped_event)
                 return True
+        if top.kind is ActionKind.COMMAND_MANAGER:
+            if event.action != "down":
+                return True
+            if event.key == "x" and event.ctrl:
+                self._pop_action(ActionKind.COMMAND_MANAGER)
+                return True
+            if event.key in ("esc", "escape"):
+                self._pop_action(ActionKind.COMMAND_MANAGER)
+                return True
+
+            hotkeys = self._build_command_manager_hotkeys()
+            binding = tui_input_component.KeyBinding(
+                key=event.key,
+                ctrl=event.ctrl,
+                alt=event.alt,
+                shift=event.shift,
+            )
+            for hotkey in hotkeys:
+                if hotkey.mapping == binding:
+                    handled = hotkey.handler(event)
+                    self._pop_action(ActionKind.COMMAND_MANAGER)
+                    return handled
+            return True
         binding = tui_input_component.KeyBinding(
             key=event.key,
             ctrl=event.ctrl,
@@ -216,6 +214,58 @@ class TUIState:
         if handler is None:
             return False
         return handler(event)
+
+    def _handle_open_command_manager(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        if event.action != "down":
+            return True
+
+        top = self._action_stack[-1]
+        if top.kind is ActionKind.COMMAND_MANAGER:
+            self._pop_action(ActionKind.COMMAND_MANAGER)
+            return True
+
+        hotkeys = self._build_command_manager_hotkeys()
+        component = command_manager_help_component.CommandManagerHelpComponent(
+            hotkeys,
+            id="command_manager",
+        )
+        self._push_action(ActionKind.COMMAND_MANAGER, component)
+        return True
+
+    def _build_command_manager_hotkeys(self) -> list[tui_command_manager.Hotkey]:
+        return [
+            tui_command_manager.Hotkey(
+                name="Expand last messages",
+                category="Messages",
+                mapping=tui_input_component.KeyBinding("e"),
+                handler=self._handle_expand_last_components,
+            ),
+            tui_command_manager.Hotkey(
+                name="Collapse last messages",
+                category="Messages",
+                mapping=tui_input_component.KeyBinding("c"),
+                handler=self._handle_collapse_last_components,
+            ),
+            tui_command_manager.Hotkey(
+                name="Expand last tool steps",
+                category="Tools",
+                mapping=tui_input_component.KeyBinding("e", shift=True),
+                handler=self._handle_expand_last_tool_steps,
+            ),
+            tui_command_manager.Hotkey(
+                name="Collapse last tool steps",
+                category="Tools",
+                mapping=tui_input_component.KeyBinding("c", shift=True),
+                handler=self._handle_collapse_last_tool_steps,
+            ),
+            tui_command_manager.Hotkey(
+                name="Open logs",
+                category="Navigation",
+                mapping=tui_input_component.KeyBinding("l"),
+                handler=self._handle_open_logs,
+            ),
+        ]
 
     def _handle_history_up(self, event: input_base.KeyEvent) -> bool:
         component = self._input_component
@@ -263,8 +313,6 @@ class TUIState:
         include_tools: bool,
         include_non_tools: bool,
     ) -> bool:
-        logger.info("PROGRESSIVE", collapsed=collapsed)
-
         terminal = self._terminal
         components = terminal.components
         if len(components) <= 3:
@@ -372,8 +420,12 @@ class TUIState:
                     self._progressive_hotkey = binding
                     self._progressive_count = 1
             elif event.action == "down":
-                self._progressive_hotkey = None
-                self._progressive_count = 0
+                if not (
+                    (binding.key == "x" and binding.ctrl)
+                    or (binding.key in ("esc", "escape"))
+                ):
+                    self._progressive_hotkey = None
+                    self._progressive_count = 0
 
             terminal = self._terminal
             if not terminal.has_screens:
@@ -691,7 +743,7 @@ class TUIState:
     ) -> None:
         self._autocomplete_items = items
         if not items:
-            self._pop_autocomplete()
+            self._pop_action(ActionKind.AUTOCOMPLETE)
             return
         top = self._action_stack[-1]
         if top.kind is ActionKind.AUTOCOMPLETE:
@@ -711,44 +763,44 @@ class TUIState:
 
         def _on_select(item: tui_select_list.SelectItem | None) -> None:
             if item is None:
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
 
             items = self._autocomplete_items
             if not items:
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
 
             if item.value is None:
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
             try:
                 selected_index = int(item.value)
             except ValueError:
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
             if selected_index < 0 or selected_index >= len(items):
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
             selected = items[selected_index]
 
             lines = self._input_component.lines
             row = self._input_component.cursor_row
             if row < 0 or row >= len(lines):
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
             line = lines[row]
 
             start = selected.replace_start
             if start < 0 or start > len(line):
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
             end = start + len(selected.replace_text)
             if end > len(line):
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
             if line[start:end] != selected.replace_text:
-                self._pop_autocomplete()
+                self._pop_action(ActionKind.AUTOCOMPLETE)
                 return
 
             new_line = line[:start] + selected.insert_text + line[end:]
@@ -758,7 +810,7 @@ class TUIState:
             self._input_component.set_cursor_position(
                 row, start + len(selected.insert_text)
             )
-            self._pop_autocomplete()
+            self._pop_action(ActionKind.AUTOCOMPLETE)
 
         select.subscribe_select(_on_select)
         select.set_items(
@@ -783,11 +835,11 @@ class TUIState:
         self._action_stack.append(ActionItem(kind=kind, component=component))
         self._toolbar_component = component
 
-    def _pop_autocomplete(self) -> None:
+    def _pop_action(self, kind: ActionKind | None = None) -> None:
         if len(self._action_stack) <= 1:
             return
         top = self._action_stack[-1]
-        if top.kind is not ActionKind.AUTOCOMPLETE:
+        if kind is not None and top.kind is not kind:
             return
         terminal = self._terminal
         if terminal is not None:

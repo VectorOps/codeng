@@ -896,12 +896,17 @@ async def test_tui_state_ctrl_dot_collapses_last_messages_progressively() -> Non
     assert all(c.supports_collapse for c in last_ten)
     assert all(c.is_expanded for c in last_ten)
 
-    ctrl_o = input_base.KeyEvent(action="down", key="o", ctrl=True)
-    ui_state._input_handler.publish(ctrl_o)
+    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    collapse = input_base.KeyEvent(action="down", key="c")
+    ui_state._input_handler.publish(open_cmd)
+    ui_state._input_handler.publish(collapse)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
 
     assert all(c.is_collapsed for c in last_ten)
 
-    ui_state._input_handler.publish(ctrl_o)
+    ui_state._input_handler.publish(open_cmd)
+    ui_state._input_handler.publish(collapse)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
 
     last_twenty = message_components[-20:]
     assert last_twenty
@@ -935,26 +940,80 @@ async def test_tui_state_ctrl_comma_expands_last_messages_progressively_and_rese
     message_components = ui_state.terminal.components[1:-2]
     assert len(message_components) == 25
 
-    collapse = input_base.KeyEvent(action="down", key=".", ctrl=True)
-    expand = input_base.KeyEvent(action="down", key=",", ctrl=True)
+    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    collapse = input_base.KeyEvent(action="down", key="c")
+    expand = input_base.KeyEvent(action="down", key="e")
     other = input_base.KeyEvent(action="down", key="x", text="x")
 
+    ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
+    ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
 
     last_twenty = message_components[-20:]
     assert all(c.is_collapsed for c in last_twenty)
 
     ui_state._input_handler.publish(other)
+    ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(expand)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
 
     last_ten = message_components[-10:]
     ten_before = message_components[-20:-10]
     assert all(c.is_expanded for c in last_ten)
     assert all(c.is_collapsed for c in ten_before)
 
+    ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(expand)
     assert all(c.is_expanded for c in last_twenty)
+
+
+@pytest.mark.asyncio
+async def test_tui_state_ctrl_x_opens_command_manager_esc_closes_and_hotkey_executes() -> (
+    None
+):
+    async def on_input(_: str) -> None:
+        return
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return
+
+    called: list[object] = []
+
+    async def on_open_logs() -> None:
+        called.append(object())
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_open_logs=on_open_logs,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    esc = input_base.KeyEvent(action="down", key="esc")
+    ui_state._input_handler.publish(esc)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
+
+    ui_state._input_handler.publish(open_cmd)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.COMMAND_MANAGER
+
+    ui_state._input_handler.publish(open_cmd)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
+
+    ui_state._input_handler.publish(open_cmd)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.COMMAND_MANAGER
+
+    open_logs = input_base.KeyEvent(action="down", key="l")
+    ui_state._input_handler.publish(open_logs)
+    await asyncio.sleep(0)
+    assert called
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
 
 
 @pytest.mark.asyncio

@@ -201,8 +201,6 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         arguments: typing.Any,
         config: vocode_settings.ToolCallFormatter | None,
     ) -> tui_base.Renderable | None:
-        logger.info("FORMATTING")
-
         display_name = tool_name
         if config is not None and config.title:
             display_name = config.title
@@ -270,8 +268,6 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         max_width = self._max_width(terminal)
         if max_width > 0:
             text.truncate(max_width, overflow="ellipsis")
-
-        logger.info("print", text=text)
 
         return text
 
