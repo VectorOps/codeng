@@ -18,11 +18,11 @@ class Hotkey:
 def format_keybinding(binding: tui_input_component.KeyBinding) -> str:
     parts: list[str] = []
     if binding.ctrl:
-        parts.append("Ctrl")
+        parts.append("C")
     if binding.alt:
-        parts.append("Alt")
+        parts.append("A")
     if binding.shift:
-        parts.append("Shift")
+        parts.append("S")
 
     key = binding.key
     if len(key) == 1 and key.isalpha():
