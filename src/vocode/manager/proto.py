@@ -9,6 +9,11 @@ from vocode import state
 from vocode.runner import proto as runner_proto
 
 
+class RunnerReqDisplayOpts(BaseModel):
+    collapse: Optional[bool] = Field(default=None)
+    collapse_lines: Optional[int] = Field(default=None)
+
+
 class BasePacketKind(str, Enum):
     ACK = "ack"
     RUNNER_REQ = "runner_req"
@@ -36,6 +41,7 @@ class RunnerReqPacket(BaseModel):
     workflow_execution_id: str
     step: state.Step
     input_required: bool = Field(default=False)
+    display: Optional[RunnerReqDisplayOpts] = Field(default=None)
 
 
 class UserInputPacket(BaseModel):

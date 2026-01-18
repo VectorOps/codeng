@@ -129,7 +129,7 @@ class App:
         step = payload.step
         # Prompt presentation is driven by INPUT_PROMPT packets; ignore
         # any input_* fields on RunnerReq.
-        self._state.handle_step(step)
+        self._state.handle_step(step, display=payload.display)
         return None
 
     async def _handle_packet_ui_state(

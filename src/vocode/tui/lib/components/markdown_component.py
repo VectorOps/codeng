@@ -13,6 +13,7 @@ class MarkdownComponent(tui_base.Component):
         self,
         markdown: str = "",
         compact_lines: int = 10,
+        collapsed: bool | None = False,
         id: str | None = None,
         component_style: tui_base.ComponentStyle | None = None,
     ) -> None:
@@ -22,7 +23,7 @@ class MarkdownComponent(tui_base.Component):
         )
         self._markdown = markdown
         self.compact_lines = compact_lines
-        self._collapsed = False
+        self._collapsed = collapsed
 
     @property
     def markdown(self) -> str:

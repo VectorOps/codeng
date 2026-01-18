@@ -18,6 +18,7 @@
 *** [X] Icons by name, ASCII fallback vs unicode
 *** [X] Automatic detection of correct fonts (how? setting?)
 *** [X] Use icons from library instead of hard-coded values
+** [ ] Measure and report time it took to run the step at the step bottom.
 ** [ ] Add /reset command
 ** [ ] Test multi-screen paste
 *** [ ] Handle paste without showing whole content
@@ -32,7 +33,8 @@
 *** [X] Better list formatting (comma-separated without parenthesis)
 *** [X] Long list display
 ** [ ] Add collapse/expand for components
-*** [ ] Add leader key (ctrl+x) that shows submenu and intercepts second keypress
+*** [X] Add leader key (ctrl+x) that shows submenu and intercepts second keypress
+*** [ ] Add default setting into node for collapse status and lines.
 ** [ ] Add input shotcut manager
 *** [ ] Keybindings in configuration
 *** [ ] Mapping to commands

@@ -27,6 +27,7 @@ This repository implements a configurable, graph-driven workflow runner with LLM
 - Typing:
   - Prefer precise types (`dict[str, Any]`, `list[Message]`), `Final`, `ClassVar`, `Literal`.
   - Do not use getattr or hasattr, prefer strong typing and 
+  - Never use `X | None` composite type, use `Optional[X]`
 - Protocols and packets:
   - Include a stable `kind` field; treat enum values and field names as contracts.
 - Graph runtime:
