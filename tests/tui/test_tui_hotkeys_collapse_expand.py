@@ -90,12 +90,17 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
     assert non_tool_components
     assert all(c.is_expanded for c in non_tool_components if c.supports_collapse)
 
-    event = input_base.KeyEvent(action="down", key=".", ctrl=True, shift=True)
-    ui_state._input_handler.publish(event)
+    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    collapse = input_base.KeyEvent(action="down", key="c", shift=True)
+    ui_state._input_handler.publish(open_cmd)
+    ui_state._input_handler.publish(collapse)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     assert all(c.is_collapsed for c in tool_components[-10:])
     assert all(c.is_expanded for c in tool_components[:-10])
 
-    ui_state._input_handler.publish(event)
+    ui_state._input_handler.publish(open_cmd)
+    ui_state._input_handler.publish(collapse)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     assert all(c.is_collapsed for c in tool_components[-20:])
 
 
@@ -147,21 +152,28 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
     assert len(tool_components) == 25
     assert all(c.supports_collapse for c in tool_components)
 
-    collapse = input_base.KeyEvent(action="down", key=".", ctrl=True, shift=True)
-    expand = input_base.KeyEvent(action="down", key=",", ctrl=True, shift=True)
+    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    collapse = input_base.KeyEvent(action="down", key="c", shift=True)
+    expand = input_base.KeyEvent(action="down", key="e", shift=True)
     other = input_base.KeyEvent(action="down", key="x", text="x")
 
+    ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
+    ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     last_twenty = tool_components[-20:]
     assert all(c.is_collapsed for c in last_twenty)
 
     ui_state._input_handler.publish(other)
+    ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(expand)
+    assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     last_ten = tool_components[-10:]
     ten_before = tool_components[-20:-10]
     assert all(c.is_expanded for c in last_ten)
     assert all(c.is_collapsed for c in ten_before)
 
+    ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(expand)
     assert all(c.is_expanded for c in last_twenty)

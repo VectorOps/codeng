@@ -93,7 +93,6 @@ class ToolCallFormatterManager:
     ) -> tuple[BaseToolCallFormatter | None, vocode_settings.ToolCallFormatter | None]:
         config = self._tool_configs.get(tool_name)
         formatter_name = "generic"
-        logger.info("_resolve", formatters=self._registry, config=config)
         if config is not None and config.formatter:
             formatter_name = config.formatter
 
@@ -110,7 +109,6 @@ class ToolCallFormatterManager:
         req: vocode_state.ToolCallReq,
     ) -> tui_base.Renderable | None:
         formatter, config = self._resolve(req.name)
-        logger.info("format_req", formatter=formatter, config=config)
         if formatter is None:
             return None
         return formatter.format_input(

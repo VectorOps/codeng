@@ -18,6 +18,7 @@
 *** [X] Icons by name, ASCII fallback vs unicode
 *** [X] Automatic detection of correct fonts (how? setting?)
 *** [X] Use icons from library instead of hard-coded values
+** [ ] Add /reset command
 ** [ ] Test multi-screen paste
 *** [ ] Handle paste without showing whole content
 ** [ ] Need to remove outline from input - it messes up copying
