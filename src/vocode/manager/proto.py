@@ -12,6 +12,7 @@ from vocode.runner import proto as runner_proto
 class RunnerReqDisplayOpts(BaseModel):
     collapse: Optional[bool] = Field(default=None)
     collapse_lines: Optional[int] = Field(default=None)
+    visible: Optional[bool] = Field(default=None)
 
 
 class BasePacketKind(str, Enum):

@@ -167,6 +167,11 @@ class Node(BaseModel):
         description="Defines how executor state is handled.",
     )
 
+    visible: bool = Field(
+        default=True,
+        description="If false, suppresses UI output for this node's steps.",
+    )
+
     collapse: Optional[bool] = Field(
         default=None,
         description="If set, collapses this node's markdown output by default in the UI.",
