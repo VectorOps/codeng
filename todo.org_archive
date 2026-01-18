@@ -1,0 +1,446 @@
+#    -*- mode: org -*-
+
+
+Archived entries from file /Users/serge/work/codeng/todo.org
+
+
+* [X] Add TUI message plumbing to UIServer
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:06
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add state to UIServer - first message sent to idle state should start the workflow
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Stream log messages/errors to client. Figure out general startup sequencing and error handling.
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Fix logging - have a special buffer and a way to see logs at will
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Rethink tool step handling. Make it easier for UI to understand the tool execution state
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Create Step renderer in TUI client
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add input request stack to TUI
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Set input header depending on the top of the input stack
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Fix APPROVE/DECLINE rendering
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Do not pad lines with spaces - it breaks copy-paste
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add history editing mode
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+** [X] Stopped runner getting a text message is resumed and last user input is replaced with whatever it typed
+** [X] Add a away to visually select previous continuation point
+
+* [X] Create TUI library of special characters
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:07
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+** [X] Icons by name, ASCII fallback vs unicode
+** [X] Automatic detection of correct fonts (how? setting?)
+** [X] Use icons from library instead of hard-coded values
+
+* [X] Fix knowlt summary documentation generation - it adds python docstring twice
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Implement tool call formatters
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+** [X] Add visual identation for tool calls
+** [X] Get rid of emojis for statuses, use unicode or ascii symbols
+** [X] Generic formatter to have line-mode
+** [X] Better list formatting (comma-separated without parenthesis)
+** [X] Long list display
+
+* [X] Ensure that all auto-complete logic happens on backend
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General/Change auto-complete protocol to also send back cursor position with list of complete options
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+- Rules should offer auto-completion, even if there's space. Such as for /run chat command
+
+* [X] This should remove /run hack from UIState
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General/Change auto-complete protocol to also send back cursor position with list of complete options
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Fix autocomplete logic for /run - shift+enter should submit instead of accepting auto-complete.
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General/Change auto-complete protocol to also send back cursor position with list of complete options
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Don't show auto-complete if option exactly matches
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General/Change auto-complete protocol to also send back cursor position with list of complete options
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] LLM usage stats
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+** [X] Per-node reporting (current limits)
+** [X] Per-session accumulation
+** [X] Display in the toolbar
+
+* [X] Child runner support
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+** [X] Base implementation
+** [X] Stopping child runner and resuming
+
+* [X] Store thought signatures for Gemini models
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General/Gemini 3 support
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Investigate why we're printing thinking process
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General/Gemini 3 support
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Store raw responses (or signatures) along with step state messages. Use stored responses when generating chat history over raw messages.
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:08
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General/Gemini 3 support
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add tool support by checking if complete step was received and it contains tool calls
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: Runner
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Create a separate BaseModel for runner generator responses, do not use Step. Convert response to a step.
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: Runner
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Tool rejection might include a message - pass that as a tool response
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: Runner
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add is_complete to Step to differentiate between intermediate and final results
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: Runner
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Extend PROMPT Step to have mode (message, approval, etc)
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: Runner
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Migrate tools
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Migrate nodes
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] History support
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+- on_history_up, on_history_down events
+- history in UIState
+- on_submit in UIState forwarded to app.py
+
+* [X] Command handler
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Auto-complete support
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add toolbar component under input
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+** [X] Add execution status + animation
+
+* [X] Add animation for different tool call statuses and indicators (approved, canceled, etc)
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Create an in-memory bidirectional communication channel
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Refactor apply_style
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI/TUI library
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add on_cancel (esc) to SelectList event. Figure out how to handle esc, as it is conflicts with special sequences
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI/TUI library
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Remove padding from SelectList
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI/TUI library
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add animation support, potentially via Rich Live
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: UI/TUI library
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Internal state support
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: LLM Node
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Refactor tool registration
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: Tools
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Store UI sessions?
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: Log management
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Gemini does not really do a good job explaining tool calls
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: System prompts/Discovery
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Gemini plan for architect is too long
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: System prompts/Discovery
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Make knowlt have compact ids, not uuids.
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+
+* [X] Add leader key (ctrl+x) that shows submenu and intercepts second keypress
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 12:09
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General/Add collapse/expand for components
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:

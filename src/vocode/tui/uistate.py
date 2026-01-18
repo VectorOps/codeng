@@ -666,6 +666,8 @@ class TUIState:
         step: vocode_state.Step,
         display: manager_proto.RunnerReqDisplayOpts | None = None,
     ) -> None:
+        if display is not None and display.visible is False:
+            return
         mode = step.output_mode
         if mode == vocode_models.OutputMode.HIDE_ALL:
             if step.message is not None:

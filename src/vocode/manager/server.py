@@ -208,11 +208,14 @@ class UIServer:
         node_by_name = frame.runner.workflow.graph.node_by_name
         node = node_by_name.get(node_name)
         if node is not None and (
-            node.collapse is not None or node.collapse_lines is not None
+            node.collapse is not None
+            or node.collapse_lines is not None
+            or not node.visible
         ):
             display = manager_proto.RunnerReqDisplayOpts(
                 collapse=node.collapse,
                 collapse_lines=node.collapse_lines,
+                visible=node.visible,
             )
 
         input_title: Optional[str] = None

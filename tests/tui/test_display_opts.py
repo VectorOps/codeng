@@ -89,3 +89,71 @@ async def test_runner_req_display_opts_applied_to_markdown_component() -> None:
     assert step_component.compact_lines == 2
 
     await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_runner_req_display_opts_respects_node_visible_flag() -> None:
+    settings = vocode_settings.Settings()
+    settings.workflows["wf"] = vocode_settings.WorkflowConfig(
+        need_input=False,
+        nodes=[
+            {
+                "name": "n1",
+                "type": "noop",
+                "outcomes": [{"name": "done"}],
+                "visible": False,
+            },
+            {
+                "name": "end",
+                "type": "noop",
+                "outcomes": [],
+            },
+        ],
+        edges=[
+            {
+                "source_node": "n1",
+                "source_outcome": "done",
+                "target_node": "end",
+            },
+        ],
+    )
+    project = StubProject(settings=settings)
+
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    await server.start()
+    await server.manager.start_workflow("wf")
+
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    while True:
+        envelope = await asyncio.wait_for(client_endpoint.recv(), timeout=1.0)
+        if envelope.payload.kind == manager_proto.BasePacketKind.RUNNER_REQ:
+            break
+    payload = envelope.payload
+    assert payload.display is not None
+    assert payload.display.visible is False
+
+    ui_state.handle_step(payload.step, display=payload.display)
+    terminal = ui_state.terminal
+    components = terminal.components
+    assert len(components) == 3
+
+    await server.stop()
