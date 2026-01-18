@@ -33,3 +33,5 @@ TOOL_CALL_META_STYLE = "dim grey50"
 TOOL_CALL_KV_KEY_STYLE = "bright_yellow"
 TOOL_CALL_KV_EQ_STYLE = "dim grey50"
 TOOL_CALL_KV_VALUE_STYLE = "bright_green"
+
+TOOL_CALL_OUTPUT_BLOCK_STYLE = "on rgb(0,80,0)"

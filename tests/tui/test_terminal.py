@@ -870,6 +870,94 @@ async def test_tui_state_ctrl_c_triggers_on_stop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tui_state_ctrl_dot_collapses_last_messages_progressively() -> None:
+    async def on_input(_: str) -> None:
+        return
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    for i in range(12):
+        ui_state.add_rich_text(f"msg {i}")
+
+    message_components = ui_state.terminal.components[1:-2]
+    last_ten = message_components[-10:]
+    assert last_ten
+    assert all(c.supports_collapse for c in last_ten)
+    assert all(c.is_expanded for c in last_ten)
+
+    event = input_base.KeyEvent(action="down", key=".", ctrl=True)
+    ui_state._input_handler.publish(event)
+
+    assert all(c.is_collapsed for c in last_ten)
+
+    ui_state._input_handler.publish(event)
+
+    last_twenty = message_components[-20:]
+    assert last_twenty
+    assert all(c.supports_collapse for c in last_twenty)
+    assert all(c.is_collapsed for c in last_twenty)
+
+
+@pytest.mark.asyncio
+async def test_tui_state_ctrl_comma_expands_last_messages_progressively_and_resets_on_other_key() -> (
+    None
+):
+    async def on_input(_: str) -> None:
+        return
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    for i in range(25):
+        ui_state.add_rich_text(f"msg {i}")
+
+    message_components = ui_state.terminal.components[1:-2]
+    assert len(message_components) == 25
+
+    collapse = input_base.KeyEvent(action="down", key=".", ctrl=True)
+    expand = input_base.KeyEvent(action="down", key=",", ctrl=True)
+    other = input_base.KeyEvent(action="down", key="x", text="x")
+
+    ui_state._input_handler.publish(collapse)
+    ui_state._input_handler.publish(collapse)
+
+    last_twenty = message_components[-20:]
+    assert all(c.is_collapsed for c in last_twenty)
+
+    ui_state._input_handler.publish(other)
+    ui_state._input_handler.publish(expand)
+
+    last_ten = message_components[-10:]
+    ten_before = message_components[-20:-10]
+    assert all(c.is_expanded for c in last_ten)
+    assert all(c.is_collapsed for c in ten_before)
+
+    ui_state._input_handler.publish(expand)
+    assert all(c.is_expanded for c in last_twenty)
+
+
+@pytest.mark.asyncio
 async def test_tui_state_ctrl_d_triggers_on_eof() -> None:
     async def on_input(_: str) -> None:
         return

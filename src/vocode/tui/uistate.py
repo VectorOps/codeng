@@ -18,6 +18,7 @@ from vocode.tui.lib.components import markdown_component as tui_markdown_compone
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
 from vocode.tui.lib.components import select_list as tui_select_list
 from vocode.tui.components import tool_call_req as tool_call_req_component
+from vocode.tui.components import tool_call_resp as tool_call_resp_component
 from vocode.tui.components import toolbar as toolbar_component
 from vocode.tui.lib.input import base as input_base
 from vocode.tui.lib.input import handler as input_handler_mod
@@ -87,6 +88,7 @@ class TUIState:
             vocode_state.StepType.PROMPT: self._handle_prompt_step,
             vocode_state.StepType.PROMPT_CONFIRM: self._handle_prompt_step,
             vocode_state.StepType.TOOL_REQUEST: self._handle_tool_request_step,
+            vocode_state.StepType.TOOL_RESULT: self._handle_tool_result_step,
         }
 
         self._terminal.append_component(header)
@@ -119,6 +121,16 @@ class TUIState:
         self._autocomplete_items: list[manager_proto.AutocompleteItem] | None = None
         self._ui_state: manager_proto.UIServerStatePacket | None = None
 
+        self._progressive_hotkey: tui_input_component.KeyBinding | None = None
+        self._progressive_count: int = 0
+
+        self._progressive_keybindings: set[tui_input_component.KeyBinding] = {
+            tui_input_component.KeyBinding(".", ctrl=True),
+            tui_input_component.KeyBinding(",", ctrl=True),
+            tui_input_component.KeyBinding(".", ctrl=True, shift=True),
+            tui_input_component.KeyBinding(",", ctrl=True, shift=True),
+        }
+
     @property
     def terminal(self) -> tui_terminal.Terminal:
         return self._terminal
@@ -141,6 +153,18 @@ class TUIState:
             tui_input_component.KeyBinding("p", ctrl=True): self._handle_history_up,
             tui_input_component.KeyBinding("down"): self._handle_history_down,
             tui_input_component.KeyBinding("n", ctrl=True): self._handle_history_down,
+            tui_input_component.KeyBinding(
+                ".", ctrl=True
+            ): self._handle_collapse_last_components,
+            tui_input_component.KeyBinding(
+                ",", ctrl=True
+            ): self._handle_expand_last_components,
+            tui_input_component.KeyBinding(
+                ".", ctrl=True, shift=True
+            ): self._handle_collapse_last_tool_steps,
+            tui_input_component.KeyBinding(
+                ",", ctrl=True, shift=True
+            ): self._handle_expand_last_tool_steps,
             tui_input_component.KeyBinding("c", ctrl=True): self._handle_stop,
             tui_input_component.KeyBinding("d", ctrl=True): self._handle_eof,
             tui_input_component.KeyBinding("l", ctrl=True): self._handle_open_logs,
@@ -214,6 +238,93 @@ class TUIState:
         asyncio.create_task(self._on_stop())
         return True
 
+    def _apply_progressive_collapse(
+        self,
+        *,
+        collapsed: bool,
+        include_tools: bool,
+        include_non_tools: bool,
+    ) -> bool:
+        logger.info("PROGRESSIVE", collapsed=collapsed)
+
+        terminal = self._terminal
+        components = terminal.components
+        if len(components) <= 3:
+            return False
+
+        message_components = components[1:-2]
+        if not message_components:
+            return False
+
+        filtered: list[tui_terminal.Component] = []
+        for component in message_components:
+            is_tool = isinstance(
+                component,
+                (
+                    tool_call_req_component.ToolCallReqComponent,
+                    tool_call_resp_component.ToolCallRespComponent,
+                ),
+            )
+            if is_tool and not include_tools:
+                continue
+            if (not is_tool) and not include_non_tools:
+                continue
+            if not component.supports_collapse:
+                continue
+            filtered.append(component)
+
+        if not filtered:
+            return False
+
+        count = self._progressive_count
+        if count < 1:
+            count = 1
+        take = 10 * count
+        candidates = filtered[-take:]
+        if not candidates:
+            return False
+
+        for component in candidates:
+            component.set_collapsed(collapsed)
+
+        return True
+
+    def _handle_collapse_last_components(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        self._apply_progressive_collapse(
+            collapsed=True,
+            include_tools=False,
+            include_non_tools=True,
+        )
+        return True
+
+    def _handle_expand_last_components(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        self._apply_progressive_collapse(
+            collapsed=False,
+            include_tools=False,
+            include_non_tools=True,
+        )
+        return True
+
+    def _handle_collapse_last_tool_steps(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        self._apply_progressive_collapse(
+            collapsed=True,
+            include_tools=True,
+            include_non_tools=False,
+        )
+        return True
+
+    def _handle_expand_last_tool_steps(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        self._apply_progressive_collapse(
+            collapsed=False,
+            include_tools=True,
+            include_non_tools=False,
+        )
+        return True
+
     def _handle_eof(self, event: input_base.KeyEvent) -> bool:
         _ = event
         if self._on_eof is None:
@@ -230,6 +341,22 @@ class TUIState:
 
     def _handle_input_event(self, event: input_base.InputEvent) -> None:
         if isinstance(event, input_base.KeyEvent):
+            binding = tui_input_component.KeyBinding(
+                key=event.key,
+                ctrl=event.ctrl,
+                alt=event.alt,
+                shift=event.shift,
+            )
+            if event.action == "down" and binding in self._progressive_keybindings:
+                if self._progressive_hotkey == binding:
+                    self._progressive_count += 1
+                else:
+                    self._progressive_hotkey = binding
+                    self._progressive_count = 1
+            elif event.action == "down":
+                self._progressive_hotkey = None
+                self._progressive_count = 0
+
             terminal = self._terminal
             if not terminal.has_screens:
                 handled = self._handle_input_key_event(event)
@@ -403,6 +530,22 @@ class TUIState:
             component.set_step(step)
         except KeyError:
             component = tool_call_req_component.ToolCallReqComponent(
+                step=step,
+                component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
+            )
+            terminal.insert_component(-2, component)
+
+    def _handle_tool_result_step(self, step: vocode_state.Step) -> None:
+        step_id = str(step.id)
+        terminal = self._terminal
+        try:
+            component = typing.cast(
+                tool_call_resp_component.ToolCallRespComponent,
+                terminal.get_component(step_id),
+            )
+            component.set_step(step)
+        except KeyError:
+            component = tool_call_resp_component.ToolCallRespComponent(
                 step=step,
                 component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
             )

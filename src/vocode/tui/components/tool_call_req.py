@@ -14,11 +14,13 @@ from vocode.tui import styles as tui_styles
 from vocode.tui import lib as tui_terminal
 from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib import base as tui_base
+from vocode.tui.lib import compact as tui_compact
 from vocode.tui.lib import unicode as tui_unicode
 from vocode.tui.lib.components import renderable as renderable_component
 
 
 class ToolCallReqComponent(renderable_component.RenderableComponentBase):
+    _COMPACT_LINES: Final[int] = 10
     _STATUS_ICON_NAME: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
         vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "black_question_mark_ornament",
         vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "hourglass_with_flowing_sand",
@@ -44,6 +46,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         self._step = step
         self._frame_index = 0
         self._animated = False
+        self._collapsed = True
 
     @property
     def step(self) -> vocode_state.Step:
@@ -164,6 +167,30 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         if message is not None:
             tool_calls = message.tool_call_requests
 
+        if self.is_collapsed:
+            if not tool_calls:
+                return ""
+            if status is None:
+                return rich_text.Text(
+                    f"Tool call request ({len(tool_calls)})",
+                    style=tui_styles.TOOL_CALL_META_STYLE,
+                )
+            icon = self._render_status_emoji(console, status)
+            if status is vocode_state.ToolCallReqStatus.COMPLETE:
+                duration = self._compute_duration()
+                if duration is not None:
+                    duration_str = self._format_duration(duration)
+                    status_text = f"Completed in {duration_str}"
+                else:
+                    status_text = "Completed."
+            else:
+                status_text = self._STATUS_TEXT.get(
+                    status,
+                    status.value.replace("_", " ").capitalize(),
+                )
+            style = tui_styles.TOOL_CALL_DURATION_STYLE
+            return rich_markup.render(f"[{style}]{icon} {status_text}[/]")
+
         if (
             tool_calls
             and status is vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION
@@ -205,4 +232,23 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
 
         if len(renderables) == 1:
             return renderables[0]
+
         return rich_console.Group(*renderables)
+
+    def render(self, options: rich_console.ConsoleOptions) -> tui_base.Lines:
+        terminal = self.terminal
+        if terminal is None:
+            return []
+        console = terminal.console
+        renderable = self._build_renderable(console)
+        styled = self.apply_style(renderable)
+        rendered = console.render_lines(
+            styled,
+            options=options,
+            pad=False,
+            new_lines=False,
+        )
+        lines = typing.cast(tui_base.Lines, rendered)
+        if self.is_expanded:
+            return lines
+        return tui_compact.compact_rendered_lines(lines, self._COMPACT_LINES)

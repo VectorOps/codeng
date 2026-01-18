@@ -25,11 +25,16 @@
 ** [ ] Add a way for knowlt to return individual symbols from file by id.
 ** [X] Make knowlt have compact ids, not uuids.
 ** [ ] Implement tool call formatters
-*** [ ] Add visual identation for tool calls
-*** [ ] Get rid of emojis for statuses, use unicode or ascii symbols
-*** [ ] Generic formatter to have line-mode
-*** [ ] Better list formatting (comma-separated without parenthesis)
-*** [ ] Long list display
+*** [X] Add visual identation for tool calls
+*** [X] Get rid of emojis for statuses, use unicode or ascii symbols
+*** [X] Generic formatter to have line-mode
+*** [X] Better list formatting (comma-separated without parenthesis)
+*** [X] Long list display
+** [ ] Add collapse/expand
+*** [ ] ctrl+e to collapse/expand last 10 messages
+*** [ ] ctrl+shift+e to collapse/expand whole history
+*** [ ] ctrl+t to collapse/expand last 10 tool call requests/results
+*** [ ] per-project collapse default settings: tool, messages, etc.
 ** [ ] Change auto-complete protocol to also send back cursor position with list of complete options
 *** [X] Ensure that all auto-complete logic happens on backend
 - Rules should offer auto-completion, even if there's space. Such as for /run chat command
@@ -102,3 +107,7 @@
 *** [X] Gemini plan for architect is too long
 * [ ] Tools
 ** [ ] Delayed execution tool + executor
+* [ ] Session management
+** [ ] Branch current session from a specific message
+** [ ] Load session from the disk
+*** [ ] Figure out good naming convention
