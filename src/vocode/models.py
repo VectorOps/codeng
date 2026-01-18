@@ -167,6 +167,15 @@ class Node(BaseModel):
         description="Defines how executor state is handled.",
     )
 
+    collapse: Optional[bool] = Field(
+        default=None,
+        description="If set, collapses this node's markdown output by default in the UI.",
+    )
+    collapse_lines: Optional[int] = Field(
+        default=None,
+        description="If set, number of lines to show when this node's markdown output is collapsed.",
+    )
+
     # Registry keyed by the existing "type" field value
     _registry: ClassVar[Dict[str, Type["Node"]]] = {}
 

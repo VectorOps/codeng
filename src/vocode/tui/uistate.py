@@ -457,10 +457,19 @@ class TUIState:
     def add_markdown(
         self,
         markdown: str,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
         component_style: tui_terminal.ComponentStyle | None = None,
     ) -> None:
+        collapse_lines: int = 10
+        collapsed: bool | None = None
+        if display is not None:
+            if display.collapse_lines is not None:
+                collapse_lines = display.collapse_lines
+            collapsed = display.collapse
         component = tui_markdown_component.MarkdownComponent(
             markdown,
+            compact_lines=collapse_lines,
+            collapsed=collapsed,
             component_style=component_style,
         )
         self._terminal.insert_component(-2, component)
@@ -507,24 +516,43 @@ class TUIState:
         self,
         step: vocode_state.Step,
         markdown: str,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
         component_style: tui_terminal.ComponentStyle | None = None,
     ) -> None:
         step_id = str(step.id)
         existing = self._step_components.get(step_id)
         if existing is not None:
             existing.markdown = markdown
+            if display is not None:
+                if display.collapse_lines is not None:
+                    existing.compact_lines = display.collapse_lines
+                if display.collapse is not None:
+                    existing.set_collapsed(display.collapse)
             if component_style is not None:
                 existing.component_style = component_style
             return
+
+        collapse_lines: int = 10
+        collapsed: bool | None = None
+        if display is not None:
+            if display.collapse_lines is not None:
+                collapse_lines = display.collapse_lines
+            collapsed = display.collapse
         component = tui_markdown_component.MarkdownComponent(
             markdown,
+            compact_lines=collapse_lines,
+            collapsed=collapsed,
             id=step_id,
             component_style=component_style,
         )
         self._step_components[step_id] = component
         self._terminal.insert_component(-2, component)
 
-    def _handle_output_message_step(self, step: vocode_state.Step) -> None:
+    def _handle_output_message_step(
+        self,
+        step: vocode_state.Step,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
+    ) -> None:
         markdown = self._format_message_markdown(step)
         if markdown is None:
             return
@@ -532,6 +560,7 @@ class TUIState:
         self._upsert_markdown_component(
             step,
             trimmed,
+            display=display,
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )
 
@@ -560,13 +589,18 @@ class TUIState:
             component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
         )
 
-    def _handle_prompt_step(self, step: vocode_state.Step) -> None:
+    def _handle_prompt_step(
+        self,
+        step: vocode_state.Step,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
+    ) -> None:
         markdown = self._format_prompt_markdown(step)
         if markdown is None:
             return
         self._upsert_markdown_component(
             step,
             markdown,
+            display=display,
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )
 
@@ -627,7 +661,11 @@ class TUIState:
             return
         self.add_markdown(markdown)
 
-    def handle_step(self, step: vocode_state.Step) -> None:
+    def handle_step(
+        self,
+        step: vocode_state.Step,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
+    ) -> None:
         mode = step.output_mode
         if mode == vocode_models.OutputMode.HIDE_ALL:
             if step.message is not None:
@@ -635,6 +673,15 @@ class TUIState:
         elif mode == vocode_models.OutputMode.HIDE_FINAL:
             if step.is_final and step.message is not None:
                 return
+        if step.type == vocode_state.StepType.OUTPUT_MESSAGE:
+            self._handle_output_message_step(step, display=display)
+            return
+        if step.type in (
+            vocode_state.StepType.PROMPT,
+            vocode_state.StepType.PROMPT_CONFIRM,
+        ):
+            self._handle_prompt_step(step, display=display)
+            return
         handler = self._step_handlers.get(step.type)
         if handler is not None:
             handler(step)

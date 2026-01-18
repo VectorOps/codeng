@@ -16,6 +16,7 @@ from vocode.manager import proto as manager_proto
 from vocode.runner import proto as runner_proto
 from tests.stub_project import StubProject
 from vocode.manager import autocomplete_providers as autocomplete_providers
+from tests.manager.runner_stubs import DummyRunnerWithWorkflow
 
 
 @pytest.mark.asyncio
@@ -72,17 +73,14 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
         execution=execution,
         step=step,
     )
-
-    class DummyRunner:
-        pass
-
     async def dummy_coro() -> None:
         await asyncio.Event().wait()
 
     dummy_task = asyncio.create_task(dummy_coro())
+    runner = DummyRunnerWithWorkflow(["node1"])
     frame = RunnerFrame(
         workflow_name="wf-ui-server",
-        runner=DummyRunner(),
+        runner=runner,  # type: ignore[arg-type]
         initial_message=None,
         agen=None,
     )
@@ -252,17 +250,14 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
         execution=execution,
         step=step,
     )
-
-    class DummyRunner:
-        pass
-
     async def dummy_coro() -> None:
         await asyncio.Event().wait()
 
     dummy_task = asyncio.create_task(dummy_coro())
+    runner = DummyRunnerWithWorkflow(["node1"])
     frame = RunnerFrame(
         workflow_name="wf-ui-server-user-input",
-        runner=DummyRunner(),
+        runner=runner,  # type: ignore[arg-type]
         initial_message=None,
         agen=None,
     )
@@ -340,17 +335,14 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
         execution=execution,
         step=step,
     )
-
-    class DummyRunner:
-        pass
-
     async def dummy_coro() -> None:
         await asyncio.Event().wait()
 
     dummy_task = asyncio.create_task(dummy_coro())
+    runner = DummyRunnerWithWorkflow(["node1"])
     frame = RunnerFrame(
         workflow_name="wf-ui-server-user-input-confirm",
-        runner=DummyRunner(),
+        runner=runner,  # type: ignore[arg-type]
         initial_message=None,
         agen=None,
     )

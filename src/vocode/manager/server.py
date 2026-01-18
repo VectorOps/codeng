@@ -203,6 +203,18 @@ class UIServer:
 
         message = step.message
 
+        display: Optional[manager_proto.RunnerReqDisplayOpts] = None
+        node_name = step.execution.node
+        node_by_name = frame.runner.workflow.graph.node_by_name
+        node = node_by_name.get(node_name)
+        if node is not None and (
+            node.collapse is not None or node.collapse_lines is not None
+        ):
+            display = manager_proto.RunnerReqDisplayOpts(
+                collapse=node.collapse,
+                collapse_lines=node.collapse_lines,
+            )
+
         input_title: Optional[str] = None
         input_subtitle: Optional[str] = None
 
@@ -231,6 +243,7 @@ class UIServer:
             workflow_execution_id=str(execution.id),
             step=step,
             input_required=input_required,
+            display=display,
         )
         await self.send_packet(packet)
 

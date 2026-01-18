@@ -69,7 +69,7 @@ workflows:
       - name: test
         type: exec
         command: uv run pytest -q -rf ./tests/
-        timeout_s: 300
+        timeout_s: 30
         expected_return_code: 0
         message: "All changes were successfully applied. Unit test results are below:"
         confirmation: auto
