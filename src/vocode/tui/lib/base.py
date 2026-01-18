@@ -13,6 +13,8 @@ from rich import text as rich_text
 from rich import padding as rich_padding
 from rich import panel as rich_panel
 
+from . import compact as tui_compact
+
 
 Lines = typing.List[typing.List[rich_segment.Segment]]
 Renderable = str | rich_console.RenderableType
@@ -90,6 +92,38 @@ class Component(ABC):
         self.terminal: TerminalLike | None = None
         self.component_style = component_style
         self.is_visible: bool = False
+        self._collapsed: bool | None = None
+
+    @property
+    def supports_collapse(self) -> bool:
+        return self._collapsed is not None
+
+    @property
+    def is_collapsed(self) -> bool:
+        return self._collapsed is True
+
+    @property
+    def is_expanded(self) -> bool:
+        return not self.is_collapsed
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        if self._collapsed is None:
+            return
+        if self._collapsed == collapsed:
+            return
+        self._collapsed = collapsed
+        self._mark_dirty()
+
+    def toggle_collapsed(self) -> None:
+        if self._collapsed is None:
+            return
+        self._collapsed = not self._collapsed
+        self._mark_dirty()
+
+    def _maybe_compact_rendered_lines(self, lines: Lines, max_lines: int) -> Lines:
+        if self.is_expanded:
+            return lines
+        return tui_compact.compact_rendered_lines(lines, max_lines)
 
     @abstractmethod
     def render(self, options: rich_console.ConsoleOptions) -> Lines:

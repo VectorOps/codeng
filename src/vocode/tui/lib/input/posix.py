@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import signal
 
 from . import base as input_base
+from vocode.logger import logger
 
 
 @dataclass(frozen=True)
@@ -104,102 +105,210 @@ class PosixInputDecoder:
         self._paste_mode = False
         self._paste_buffer: bytes = b""
 
+    def _append_char_key(
+        self,
+        events: list[input_base.InputEvent],
+        ch: str,
+        *,
+        alt: bool = False,
+        ctrl: bool = False,
+        shift: bool = False,
+    ) -> None:
+        # Printable-key events normalize uppercase letters to lowercase key names.
+        alpha_shift = ch.isalpha() and ch.isupper()
+        key_name = ch.lower() if alpha_shift else ch
+        events.append(
+            input_base.KeyEvent(
+                action="down",
+                key=key_name,
+                ctrl=ctrl,
+                alt=alt,
+                shift=shift or alpha_shift,
+                text=ch,
+            )
+        )
+
+    def _try_consume_paste_mode(
+        self, events: list[input_base.InputEvent]
+    ) -> tuple[bool, bool]:
+        # In bracketed paste mode, buffer until the end marker and emit one PasteEvent.
+        if not self._paste_mode:
+            return False, False
+
+        end_index = self._buffer.find(self.PASTE_END)
+        if end_index == -1:
+            self._paste_buffer += self._buffer
+            self._buffer = b""
+            return True, True
+
+        self._paste_buffer += self._buffer[:end_index]
+        self._buffer = self._buffer[end_index + len(self.PASTE_END) :]
+        text = self._paste_buffer.decode(errors="replace")
+        self._paste_buffer = b""
+        self._paste_mode = False
+        events.append(input_base.PasteEvent(text=text))
+        return True, False
+
+    def _try_consume_csi_u(
+        self, events: list[input_base.InputEvent]
+    ) -> tuple[bool, bool]:
+        # Parse CSI-u (kitty keyboard protocol): ESC [ <codepoint> ; <mods> u
+        if not self._buffer.startswith(b"\x1b["):
+            return False, False
+
+        idx = 2
+        if idx >= len(self._buffer):
+            return False, True
+
+        if not (48 <= self._buffer[idx] <= 57):
+            return False, False
+
+        start_code = idx
+        while idx < len(self._buffer) and 48 <= self._buffer[idx] <= 57:
+            idx += 1
+        if idx >= len(self._buffer):
+            return False, True
+        code_str = self._buffer[start_code:idx].decode(errors="replace")
+
+        mod_str = None
+        if self._buffer[idx : idx + 1] == b";":
+            idx += 1
+            start_mod = idx
+            while idx < len(self._buffer) and 48 <= self._buffer[idx] <= 57:
+                idx += 1
+            if idx >= len(self._buffer):
+                return False, True
+            mod_str = self._buffer[start_mod:idx].decode(errors="replace")
+
+        if self._buffer[idx : idx + 1] != b"u":
+            return False, False
+
+        idx += 1
+        try:
+            codepoint = int(code_str)
+        except ValueError:
+            codepoint = -1
+        mods = 1
+        if mod_str is not None:
+            try:
+                mods = int(mod_str)
+            except ValueError:
+                mods = 1
+
+        if not (32 <= codepoint <= 126):
+            return False, False
+
+        ch = chr(codepoint)
+        ctrl = mods in (5, 6, 7, 8)
+        alt = mods in (3, 4, 7, 8)
+        shift = mods in (2, 4, 6, 8)
+        self._append_char_key(events, ch, ctrl=ctrl, alt=alt, shift=shift)
+        self._buffer = self._buffer[idx:]
+        return True, False
+
+    def _try_consume_paste_start(self) -> bool:
+        # Start bracketed paste mode when we see the CSI 200~ marker.
+        if not self._buffer.startswith(self.PASTE_START):
+            return False
+
+        self._buffer = self._buffer[len(self.PASTE_START) :]
+        self._paste_mode = True
+        self._paste_buffer = b""
+        return True
+
+    def _try_consume_mapped_sequence(self, events: list[input_base.InputEvent]) -> bool:
+        # Match fixed escape sequences (arrows, function keys, etc).
+        for seq in _KEY_SEQUENCES:
+            if not self._buffer.startswith(seq):
+                continue
+            mapping = _KEY_SEQUENCE_MAP[seq]
+            self._buffer = self._buffer[len(seq) :]
+            events.append(
+                input_base.KeyEvent(
+                    action="down",
+                    key=mapping.name,
+                    ctrl=mapping.ctrl,
+                    alt=mapping.alt,
+                    shift=mapping.shift,
+                    text=mapping.text,
+                )
+            )
+            return True
+        return False
+
+    def _try_consume_alt_modified(self, events: list[input_base.InputEvent]) -> bool:
+        # Treat ESC + <byte> as Alt-modified input when it is not a known sequence.
+        if not self._buffer or self._buffer[0] != 0x1B or len(self._buffer) < 2:
+            return False
+
+        head = self._buffer[:2]
+        if head in _KEY_PREFIXES or head in _KEY_SEQUENCE_MAP:
+            return False
+
+        second_byte = self._buffer[1]
+        self._buffer = self._buffer[2:]
+
+        base_seq = bytes([second_byte])
+        base_mapping = _KEY_SEQUENCE_MAP.get(base_seq)
+        if base_mapping is not None:
+            events.append(
+                input_base.KeyEvent(
+                    action="down",
+                    key=base_mapping.name,
+                    ctrl=base_mapping.ctrl,
+                    alt=True,
+                    shift=base_mapping.shift,
+                    text=base_mapping.text,
+                )
+            )
+            return True
+
+        ch = chr(second_byte)
+        if ch.isprintable():
+            self._append_char_key(events, ch, alt=True)
+        return True
+
+    def _consume_one_byte(self, events: list[input_base.InputEvent]) -> None:
+        # Fallback: consume one byte; emit a KeyEvent only for printable ASCII.
+        byte = self._buffer[0]
+        self._buffer = self._buffer[1:]
+        if 32 <= byte <= 126:
+            self._append_char_key(events, chr(byte))
+
     def feed(self, data: bytes) -> list[input_base.InputEvent]:
         if not data:
             return []
         self._buffer += data
         events: list[input_base.InputEvent] = []
+
+        # Parse as many events as possible from the accumulated byte buffer.
         while self._buffer:
-            if self._paste_mode:
-                end_index = self._buffer.find(self.PASTE_END)
-                if end_index == -1:
-                    self._paste_buffer += self._buffer
-                    self._buffer = b""
-                    break
-                self._paste_buffer += self._buffer[:end_index]
-                self._buffer = self._buffer[end_index + len(self.PASTE_END) :]
-                text = self._paste_buffer.decode(errors="replace")
-                self._paste_buffer = b""
-                self._paste_mode = False
-                events.append(input_base.PasteEvent(text=text))
+            consumed, need_more = self._try_consume_paste_mode(events)
+            if need_more:
+                break
+            if consumed:
                 continue
-            if self._buffer.startswith(self.PASTE_START):
-                self._buffer = self._buffer[len(self.PASTE_START) :]
-                self._paste_mode = True
-                self._paste_buffer = b""
+
+            consumed, need_more = self._try_consume_csi_u(events)
+            if need_more:
+                break
+            if consumed:
                 continue
-            mapping = None
-            seq_len = 0
-            for seq in _KEY_SEQUENCES:
-                if self._buffer.startswith(seq):
-                    mapping = _KEY_SEQUENCE_MAP[seq]
-                    seq_len = len(seq)
-                    break
-            if mapping is not None:
-                self._buffer = self._buffer[seq_len:]
-                events.append(
-                    input_base.KeyEvent(
-                        action="down",
-                        key=mapping.name,
-                        ctrl=mapping.ctrl,
-                        alt=mapping.alt,
-                        shift=mapping.shift,
-                        text=mapping.text,
-                    )
-                )
+
+            if self._try_consume_paste_start():
                 continue
+
+            if self._try_consume_mapped_sequence(events):
+                continue
+
+            # If we have an escape-sequence prefix, wait for more bytes.
             if self._buffer in _KEY_PREFIXES:
                 break
-            if self._buffer[0] == 0x1B and len(self._buffer) >= 2:
-                head = self._buffer[:2]
-                if head not in _KEY_PREFIXES and head not in _KEY_SEQUENCE_MAP:
-                    second_byte = self._buffer[1]
-                    self._buffer = self._buffer[2:]
-                    base_seq = bytes([second_byte])
-                    base_mapping = _KEY_SEQUENCE_MAP.get(base_seq)
-                    if base_mapping is not None:
-                        events.append(
-                            input_base.KeyEvent(
-                                action="down",
-                                key=base_mapping.name,
-                                ctrl=base_mapping.ctrl,
-                                alt=True,
-                                shift=base_mapping.shift,
-                                text=base_mapping.text,
-                            )
-                        )
-                        continue
-                    ch = chr(second_byte)
-                    if ch.isprintable():
-                        shift = ch.isalpha() and ch.isupper()
-                        key_name = ch.lower() if shift else ch
-                        events.append(
-                            input_base.KeyEvent(
-                                action="down",
-                                key=key_name,
-                                alt=True,
-                                shift=shift,
-                                text=ch,
-                            )
-                        )
-                        continue
-            if not self._buffer:
-                break
-            byte = self._buffer[0]
-            self._buffer = self._buffer[1:]
-            if 32 <= byte <= 126:
-                ch = chr(byte)
-                shift = ch.isalpha() and ch.isupper()
-                key_name = ch.lower() if shift else ch
-                events.append(
-                    input_base.KeyEvent(
-                        action="down",
-                        key=key_name,
-                        shift=shift,
-                        text=ch,
-                    )
-                )
+
+            if self._try_consume_alt_modified(events):
                 continue
+
+            self._consume_one_byte(events)
         return events
 
 

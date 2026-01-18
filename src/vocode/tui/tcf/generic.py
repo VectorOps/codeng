@@ -212,8 +212,7 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         min_value_chars = options.min_value_chars
 
         text = rich_text.Text(no_wrap=True)
-        text.append("*", style=tui_styles.TOOL_CALL_BULLET_STYLE)
-        text.append(" ", style=tui_styles.TOOL_CALL_BULLET_STYLE)
+        text.append("<<< ", style=tui_styles.TOOL_CALL_BULLET_STYLE)
         text.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
         if options_error is not None:
             text.append(" ", style=tui_styles.TOOL_CALL_META_STYLE)
@@ -241,7 +240,7 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
 
         joiner = ", "
         max_width = self._max_width(terminal)
-        prefix_len = _cell_len(" * ")
+        prefix_len = _cell_len("<<< ")
         fitted_pairs, need_ellipsis = _fit_kv_pairs_to_width(
             max_width=max_width,
             prefix_len=prefix_len,
@@ -299,8 +298,7 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
             rendered = rendered[: max_value_chars - 3] + "..."
 
         text = rich_text.Text(no_wrap=True)
-        text.append("*", style=tui_styles.TOOL_CALL_BULLET_STYLE)
-        text.append(" ", style=tui_styles.TOOL_CALL_BULLET_STYLE)
+        text.append(">>> ", style=tui_styles.TOOL_CALL_BULLET_STYLE)
         text.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
         if options_error is not None:
             text.append(" ", style=tui_styles.TOOL_CALL_META_STYLE)

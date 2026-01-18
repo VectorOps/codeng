@@ -86,7 +86,6 @@ class Terminal:
     def console(self) -> rich_console.Console:
         return self._console
 
-
     @property
     def settings(self) -> TerminalSettings:
         return self._settings
@@ -405,9 +404,7 @@ class Terminal:
         if self._screens:
             self._console.control(tui_controls.CustomControl.sync_update_start())
             self._console.control(
-                tui_controls.CustomControl.erase_scrollback(),
-                rich_control.Control.clear(),
-                rich_control.Control.home(),
+                tui_controls.CustomControl.full_clear(),
             )
             self._console.control(tui_controls.CustomControl.sync_update_end())
             top = self._screens[-1]
@@ -438,9 +435,7 @@ class Terminal:
 
         self._console.control(tui_controls.CustomControl.sync_update_start())
         self._console.control(
-            tui_controls.CustomControl.erase_scrollback(),
-            rich_control.Control.clear(),
-            rich_control.Control.home(),
+            tui_controls.CustomControl.full_clear(),
         )
         self._print_lines(all_lines)
         self._set_cursor_line(len(all_lines))

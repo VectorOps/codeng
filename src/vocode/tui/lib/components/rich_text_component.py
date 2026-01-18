@@ -11,6 +11,7 @@ class RichTextComponent(tui_base.Component):
     def __init__(
         self,
         text: str = "",
+        compact_lines: int = 10,
         id: str | None = None,
         component_style: tui_base.ComponentStyle | None = None,
     ) -> None:
@@ -19,6 +20,8 @@ class RichTextComponent(tui_base.Component):
             component_style=component_style,
         )
         self._text = text
+        self.compact_lines = compact_lines
+        self._collapsed = False
 
     @property
     def text(self) -> str:
@@ -47,4 +50,5 @@ class RichTextComponent(tui_base.Component):
             pad=False,
             new_lines=False,
         )
-        return typing.cast(tui_base.Lines, rendered)
+        lines = typing.cast(tui_base.Lines, rendered)
+        return self._maybe_compact_rendered_lines(lines, self.compact_lines)
