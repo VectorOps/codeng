@@ -4,6 +4,7 @@ import typing
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
+from vocode.logger import logger
 from vocode import settings as vocode_settings
 from vocode import state as vocode_state
 from vocode.tui import lib as tui_terminal
@@ -64,7 +65,9 @@ class ToolCallFormatterManager:
         name: str,
         formatter_cls: type[BaseToolCallFormatter] | None = None,
     ):
-        def _do_register(inner: type[BaseToolCallFormatter]) -> type[BaseToolCallFormatter]:
+        def _do_register(
+            inner: type[BaseToolCallFormatter],
+        ) -> type[BaseToolCallFormatter]:
             if name in cls._registry:
                 raise ValueError(f"Tool call formatter '{name}' already registered.")
             cls._registry[name] = inner
@@ -90,6 +93,7 @@ class ToolCallFormatterManager:
     ) -> tuple[BaseToolCallFormatter | None, vocode_settings.ToolCallFormatter | None]:
         config = self._tool_configs.get(tool_name)
         formatter_name = "generic"
+        logger.info("_resolve", formatters=self._registry, config=config)
         if config is not None and config.formatter:
             formatter_name = config.formatter
 
@@ -106,6 +110,7 @@ class ToolCallFormatterManager:
         req: vocode_state.ToolCallReq,
     ) -> tui_base.Renderable | None:
         formatter, config = self._resolve(req.name)
+        logger.info("format_req", formatter=formatter, config=config)
         if formatter is None:
             return None
         return formatter.format_input(

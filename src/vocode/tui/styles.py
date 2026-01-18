@@ -28,6 +28,7 @@ TOOLBAR_COMPONENT_STYLE = tui_terminal.ComponentStyle()
 
 TOOL_CALL_DURATION_STYLE = "dim grey50"
 TOOL_CALL_NAME_STYLE = "bright_cyan"
+TOOL_CALL_BULLET_STYLE = "dim grey50"
 TOOL_CALL_META_STYLE = "dim grey50"
 TOOL_CALL_KV_KEY_STYLE = "bright_yellow"
 TOOL_CALL_KV_EQ_STYLE = "dim grey50"
