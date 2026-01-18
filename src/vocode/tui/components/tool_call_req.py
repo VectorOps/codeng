@@ -194,7 +194,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
                 duration_str = self._format_duration(duration)
                 status_text = f"Completed in {duration_str}"
             else:
-                status_text = "Completed"
+                status_text = "Completed."
         else:
             status_text = self._STATUS_TEXT.get(
                 status,

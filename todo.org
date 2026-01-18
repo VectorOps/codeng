@@ -14,6 +14,10 @@
 ** [X] Add history editing mode
 *** [X] Stopped runner getting a text message is resumed and last user input is replaced with whatever it typed
 *** [X] Add a away to visually select previous continuation point
+** [ ] Create TUI library of special characters
+*** [ ] Icons by name, ASCII fallback vs unicode
+*** [ ] Automatic detection of correct fonts (how? setting?)
+*** [ ] Use icons from library instead of hard-coded values
 ** [ ] Test multi-screen paste
 *** [ ] Handle paste without showing whole content
 ** [ ] Need to remove outline from input - it messes up copying
@@ -21,6 +25,11 @@
 ** [ ] Add a way for knowlt to return individual symbols from file by id.
 ** [X] Make knowlt have compact ids, not uuids.
 ** [ ] Implement tool call formatters
+*** [ ] Add visual identation for tool calls
+*** [ ] Get rid of emojis for statuses, use unicode or ascii symbols
+*** [ ] Generic formatter to have line-mode
+*** [ ] Better list formatting (comma-separated without parenthesis)
+*** [ ] Long list display
 ** [ ] Change auto-complete protocol to also send back cursor position with list of complete options
 *** [X] Ensure that all auto-complete logic happens on backend
 - Rules should offer auto-completion, even if there's space. Such as for /run chat command
@@ -91,3 +100,5 @@
 *** [X] Gemini does not really do a good job explaining tool calls
 *** [ ] Gemini does not use search
 *** [X] Gemini plan for architect is too long
+* [ ] Tools
+** [ ] Delayed execution tool + executor
