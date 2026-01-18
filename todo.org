@@ -1,6 +1,9 @@
 #+title: Todo
 
 * [ ] General
+** [ ] Collapse/expand to work with visible components first, then continue going backwards. Keep track of updated components to resume from.
+** [ ] Add sync exception handler and send it to the log
+** [ ] Add session log renderer as a separate screen + shortcut
 ** [ ] Need to remove outline from input - it messes up copying
 ** [ ] Measure and report time it took to run the step at the step bottom.
 - Figure out a way to add component under last message and skip it when adding a new step message
