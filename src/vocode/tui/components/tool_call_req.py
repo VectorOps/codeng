@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import typing
 from typing import Final
 
 from rich import console as rich_console
@@ -166,30 +167,6 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         tool_calls: list[vocode_state.ToolCallReq] = []
         if message is not None:
             tool_calls = message.tool_call_requests
-
-        if self.is_collapsed:
-            if not tool_calls:
-                return ""
-            if status is None:
-                return rich_text.Text(
-                    f"Tool call request ({len(tool_calls)})",
-                    style=tui_styles.TOOL_CALL_META_STYLE,
-                )
-            icon = self._render_status_emoji(console, status)
-            if status is vocode_state.ToolCallReqStatus.COMPLETE:
-                duration = self._compute_duration()
-                if duration is not None:
-                    duration_str = self._format_duration(duration)
-                    status_text = f"Completed in {duration_str}"
-                else:
-                    status_text = "Completed."
-            else:
-                status_text = self._STATUS_TEXT.get(
-                    status,
-                    status.value.replace("_", " ").capitalize(),
-                )
-            style = tui_styles.TOOL_CALL_DURATION_STYLE
-            return rich_markup.render(f"[{style}]{icon} {status_text}[/]")
 
         if (
             tool_calls

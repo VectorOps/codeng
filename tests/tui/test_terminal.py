@@ -896,12 +896,12 @@ async def test_tui_state_ctrl_dot_collapses_last_messages_progressively() -> Non
     assert all(c.supports_collapse for c in last_ten)
     assert all(c.is_expanded for c in last_ten)
 
-    event = input_base.KeyEvent(action="down", key=".", ctrl=True)
-    ui_state._input_handler.publish(event)
+    ctrl_o = input_base.KeyEvent(action="down", key="o", ctrl=True)
+    ui_state._input_handler.publish(ctrl_o)
 
     assert all(c.is_collapsed for c in last_ten)
 
-    ui_state._input_handler.publish(event)
+    ui_state._input_handler.publish(ctrl_o)
 
     last_twenty = message_components[-20:]
     assert last_twenty

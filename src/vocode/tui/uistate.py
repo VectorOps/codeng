@@ -129,6 +129,12 @@ class TUIState:
             tui_input_component.KeyBinding(",", ctrl=True),
             tui_input_component.KeyBinding(".", ctrl=True, shift=True),
             tui_input_component.KeyBinding(",", ctrl=True, shift=True),
+            tui_input_component.KeyBinding(">", ctrl=True, shift=True),
+            tui_input_component.KeyBinding("<", ctrl=True, shift=True),
+            tui_input_component.KeyBinding("o", ctrl=True),
+            tui_input_component.KeyBinding("y", ctrl=True),
+            tui_input_component.KeyBinding("o", ctrl=True, shift=True),
+            tui_input_component.KeyBinding("y", ctrl=True, shift=True),
         }
 
     @property
@@ -157,13 +163,25 @@ class TUIState:
                 ".", ctrl=True
             ): self._handle_collapse_last_components,
             tui_input_component.KeyBinding(
-                ",", ctrl=True
-            ): self._handle_expand_last_components,
+                "o", ctrl=True
+            ): self._handle_collapse_last_components,
             tui_input_component.KeyBinding(
                 ".", ctrl=True, shift=True
             ): self._handle_collapse_last_tool_steps,
             tui_input_component.KeyBinding(
+                ">", ctrl=True, shift=True
+            ): self._handle_collapse_last_tool_steps,
+            tui_input_component.KeyBinding(
+                ",", ctrl=True
+            ): self._handle_expand_last_components,
+            tui_input_component.KeyBinding(
+                "w", ctrl=True
+            ): self._handle_expand_last_components,
+            tui_input_component.KeyBinding(
                 ",", ctrl=True, shift=True
+            ): self._handle_expand_last_tool_steps,
+            tui_input_component.KeyBinding(
+                "<", ctrl=True, shift=True
             ): self._handle_expand_last_tool_steps,
             tui_input_component.KeyBinding("c", ctrl=True): self._handle_stop,
             tui_input_component.KeyBinding("d", ctrl=True): self._handle_eof,
