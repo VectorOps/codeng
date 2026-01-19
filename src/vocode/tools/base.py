@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Type, Dict, TYPE_CHECKING, Optional, Annotated, Union, ClassVar
 from enum import Enum
 from pydantic import BaseModel, Field
-from vocode.state import Message
+from vocode.state import Message, WorkflowExecution
 from vocode.settings import ToolSpec
 
 if TYPE_CHECKING:
@@ -33,6 +33,11 @@ ToolResponse = Annotated[
     Union[ToolTextResponse, ToolStartWorkflowResponse],
     Field(discriminator="type"),
 ]
+
+
+class ToolReq(BaseModel):
+    execution: WorkflowExecution
+    spec: ToolSpec
 
 # Global registry of tool name -> tool instance
 _registry: Dict[str, Type["BaseTool"]] = {}
@@ -94,7 +99,7 @@ class BaseTool(ABC):
         self.prj = prj
 
     @abstractmethod
-    async def run(self, spec: ToolSpec, args: Any) -> Optional[ToolResponse]:
+    async def run(self, req: ToolReq, args: Any) -> Optional[ToolResponse]:
         """
         Execute this tool within the context of the given Project.
         Args:

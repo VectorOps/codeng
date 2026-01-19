@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from vocode.tools import ToolFactory
+from vocode.tools import ToolFactory, base as tools_base
+from vocode import state as vocode_state
 from vocode.settings import ToolSpec
 from tests.stub_project import StubProject
 
@@ -43,7 +44,9 @@ async def test_apply_patch_tool_success(tmp_path: Path):
 
     # Act: format comes from tool config, not args
     spec = ToolSpec(name="apply_patch", config={"format": "v4a"})
-    resp = await tool.run(spec, {"text": patch_text})
+    execution = vocode_state.WorkflowExecution(workflow_name="test")
+    tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+    resp = await tool.run(tool_req, {"text": patch_text})
     # Allow background refresh task to run
     await asyncio.sleep(0)
 
@@ -71,7 +74,9 @@ async def test_apply_patch_tool_unsupported_format(tmp_path: Path):
 
     # Format provided via tool config; args only include text
     spec = ToolSpec(name="apply_patch", config={"format": "unknown"})
-    resp = await tool.run(spec, {"text": "*** Begin Patch\n*** End Patch"})
+    execution = vocode_state.WorkflowExecution(workflow_name="test")
+    tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+    resp = await tool.run(tool_req, {"text": "*** Begin Patch\n*** End Patch"})
     assert resp is not None
     assert resp.type.value == "text"
     assert "Unsupported patch format" in (resp.text or "")

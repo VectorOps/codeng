@@ -5,7 +5,7 @@ from typing import Any, Optional, TYPE_CHECKING, Union
 from pydantic import BaseModel
 
 from knowlt.tools.base import BaseTool as KnowBaseTool, ToolRegistry as KnowToolRegistry
-from ..tools import BaseTool, ToolTextResponse
+from ..tools import BaseTool, ToolTextResponse, ToolReq
 from ..settings import ToolSpec
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ class _KnowToolWrapper(BaseTool):
     async def openapi_spec(self, spec: ToolSpec) -> dict[str, Any]:
         return await self._know_tool.get_openai_schema()
 
-    async def run(self, spec: ToolSpec, args: Any) -> ToolTextResponse:
+    async def run(self, req: ToolReq, args: Any) -> ToolTextResponse:
         try:
             # Execute the knowlt tool directly (async).
             result = await self._know_tool.execute(args)

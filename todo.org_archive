@@ -444,3 +444,13 @@ Archived entries from file /Users/serge/work/codeng/todo.org
 :ARCHIVE_CATEGORY: todo
 :ARCHIVE_TODO: [X]
 :END:
+
+* [X] Optimize Terminal renderer
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-01-18 Sun 19:27
+:ARCHIVE_FILE: ~/work/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:
+- Do not force re-render when component is added or removed

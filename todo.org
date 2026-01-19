@@ -1,17 +1,6 @@
 #+title: Todo
 
 * [ ] General
-** [ ] Optimize Terminal renderer
-- Do not force re-render when component is added or removed:
-  - when remove_component is called, we need to add it to a new set of deleted components and mark as dirty.
-  - when re-render happens, in incremental render we need to take deleted component into account and skip it when walking backwards. this should happen automatically, as deleted components will be in the list during the walk and they should have cached lines.
-  - after stopping the walk, we need to remove all deleted components from the _components before getting tail components and then empty the deleted components set.
-  - if there are no tail components to render - we're done.
-  - otherwise render forward as usual.
-  - make minimal changes, create helpers as needed.
-  - adjust existing tests that rely on full re-render when components are deleted.
- 
-  this should fix the rendering when component is removed and incremental render is called. we should be conservative and prefer incremental renders whenever possible.
 ** [ ] Collapse/expand to work with visible components first, then continue going backwards. Keep track of updated components to resume from.
 ** [ ] Add sync exception handler and send it to the log
 ** [ ] Add session log renderer as a separate screen + shortcut

@@ -9,3 +9,4 @@ ToolTextResponse = base.ToolTextResponse
 ToolStartWorkflowResponse = base.ToolStartWorkflowResponse
 ToolResponse = base.ToolResponse
 ToolFactory = base.ToolFactory
+ToolReq = base.ToolReq

@@ -4,6 +4,8 @@ import json
 from typing import Any
 
 from vocode import settings as vocode_settings
+from vocode import state as vocode_state
+from vocode.tools import base as tools_base
 
 from .base import command, option
 
@@ -37,7 +39,9 @@ async def _run_know_tool(server, tool_name: str, payload: dict[str, Any]) -> Non
         return
 
     try:
-        resp = await tool.run(spec, payload)
+        execution = vocode_state.WorkflowExecution(workflow_name="debug")
+        tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+        resp = await tool.run(tool_req, payload)
     except Exception as exc:
         await server.send_text_message(f"Know tool '{tool_name}' raised: {exc}")
         return

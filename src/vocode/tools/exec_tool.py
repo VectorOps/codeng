@@ -5,7 +5,8 @@ import json
 import platform
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from typing import Callable
-from vocode.tools.base import BaseTool, ToolTextResponse, ToolFactory
+
+from vocode.tools import base as tools_base
 from vocode.settings import EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT, ToolSpec
 from vocode.proc.shell import ShellManager
 
@@ -50,8 +51,8 @@ def _get_max_output_chars(project: "Project", spec: ToolSpec) -> int:
     return EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT
 
 
-@ToolFactory.register("exec")
-class ExecTool(BaseTool):
+@tools_base.ToolFactory.register("exec")
+class ExecTool(tools_base.BaseTool):
     """
     Execute a command via the project's ShellManager.
     Collects combined stdout/stderr, enforces a per-call timeout, and returns a JSON string payload.
@@ -59,9 +60,8 @@ class ExecTool(BaseTool):
 
     name = "exec"
 
-    async def run(self, spec: ToolSpec, args: Any):
-        if not isinstance(spec, ToolSpec):
-            raise TypeError("ExecTool requires a resolved ToolSpec")
+    async def run(self, req: tools_base.ToolReq, args: Any):
+        spec = req.spec
         if self.prj.shells is None:
             raise RuntimeError("ExecTool requires project.shells (ShellManager)")
 
@@ -140,7 +140,7 @@ class ExecTool(BaseTool):
             "exit_code": rc,
             "timed_out": timed_out,
         }
-        return ToolTextResponse(text=json.dumps(payload))
+        return tools_base.ToolTextResponse(text=json.dumps(payload))
 
     async def openapi_spec(self, spec: ToolSpec) -> Dict[str, Any]:
         return {

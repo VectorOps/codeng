@@ -242,6 +242,7 @@ class WorkflowExecution(BaseModel):
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this step, if any."
     )
+    state: Dict[str, Any] = {}
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
