@@ -97,6 +97,8 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     assert all(c.is_collapsed for c in tool_components[-10:])
     assert all(c.is_expanded for c in tool_components[:-10])
+    # Command manager closed; clean up removed components before reopening.
+    ui_state.terminal._delete_removed_components()
 
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
@@ -156,11 +158,13 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
     collapse = input_base.KeyEvent(action="down", key="c", shift=True)
     expand = input_base.KeyEvent(action="down", key="e", shift=True)
     other = input_base.KeyEvent(action="down", key="x", text="x")
+    ui_state._input_handler.publish(open_cmd)
+    ui_state._input_handler.publish(collapse)
+    ui_state.terminal._delete_removed_components()
 
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
-    ui_state._input_handler.publish(open_cmd)
-    ui_state._input_handler.publish(collapse)
+    ui_state.terminal._delete_removed_components()
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     last_twenty = tool_components[-20:]
     assert all(c.is_collapsed for c in last_twenty)
@@ -168,6 +172,7 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
     ui_state._input_handler.publish(other)
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(expand)
+    ui_state.terminal._delete_removed_components()
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     last_ten = tool_components[-10:]
     ten_before = tool_components[-20:-10]
