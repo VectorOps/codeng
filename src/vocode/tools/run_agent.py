@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from .base import BaseTool, ToolStartWorkflowResponse
+from .base import BaseTool, ToolStartWorkflowResponse, ToolReq
 from vocode.settings import ToolSpec
 
 
@@ -10,9 +10,8 @@ class RunAgentTool(BaseTool):
     # Public tool name exposed to LLMs and configs
     name = "run_agent"
 
-    async def run(self, spec: ToolSpec, args: Any):
-        if not isinstance(spec, ToolSpec):
-            raise TypeError("RunAgentTool requires a resolved ToolSpec")
+    async def run(self, req: ToolReq, args: Any):
+        spec = req.spec
         if not isinstance(args, dict):
             raise TypeError("RunAgentTool requires dict args with a 'name' key")
 

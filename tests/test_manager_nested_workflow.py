@@ -38,7 +38,7 @@ class NestedWorkflowTool(tools_base.BaseTool):
 
     async def run(
         self,
-        spec: ToolSpec,
+        req,
         args,
     ) -> tools_base.ToolResponse | None:
         text = ""

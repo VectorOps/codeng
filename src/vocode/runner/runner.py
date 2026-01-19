@@ -108,7 +108,8 @@ class Runner:
         if spec is None:
             spec = vocode_settings.ToolSpec(name=req.name)
         try:
-            raw_result = await tool.run(spec, req.arguments)
+            tool_req = tools_base.ToolReq(execution=self.execution, spec=spec)
+            raw_result = await tool.run(tool_req, req.arguments)
         except RunnerStopped:
             raise
         except Exception as exc:

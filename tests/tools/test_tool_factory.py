@@ -11,7 +11,7 @@ from tests.stub_project import StubProject
 class _DecoratedTool(tools_mod.BaseTool):
     name = "test_decorated_tool"
 
-    async def run(self, spec: ToolSpec, args):
+    async def run(self, req, args):
         return None
 
     async def openapi_spec(self, spec: ToolSpec):

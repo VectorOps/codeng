@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any, Dict, Optional, TYPE_CHECKING
-from vocode.tools.base import BaseTool, ToolTextResponse, ToolFactory
+
+from vocode.tools import base as tools_base
 from vocode.settings import ToolSpec
 from vocode.patch import apply_patch, get_supported_formats
 
@@ -8,8 +9,8 @@ if TYPE_CHECKING:
     from vocode.project import Project
 
 
-@ToolFactory.register("apply_patch")
-class ApplyPatchTool(BaseTool):
+@tools_base.ToolFactory.register("apply_patch")
+class ApplyPatchTool(tools_base.BaseTool):
     """
     Apply a repository patch to the project's filesystem under base_path.
     Patch format comes from the tool config (ToolSpec.config['format']), defaults to 'v4a'.
@@ -18,9 +19,8 @@ class ApplyPatchTool(BaseTool):
 
     name = "apply_patch"
 
-    async def run(self, spec: ToolSpec, args: Any):
-        if not isinstance(spec, ToolSpec):
-            raise TypeError("ApplyPatchTool requires a resolved ToolSpec")
+    async def run(self, req: tools_base.ToolReq, args: Any):
+        spec = req.spec
 
         # Read patch content from args
         text: Optional[str] = None
@@ -39,7 +39,7 @@ class ApplyPatchTool(BaseTool):
         supported = set(get_supported_formats())
         if fmt not in supported:
             supported_list = ", ".join(sorted(supported))
-            return ToolTextResponse(
+            return tools_base.ToolTextResponse(
                 text=f"Unsupported patch format: {fmt}. Supported formats: {supported_list}"
             )
 
@@ -73,9 +73,9 @@ class ApplyPatchTool(BaseTool):
                 # Best-effort: ignore refresh errors in tool execution path
                 pass
 
-            return ToolTextResponse(text=summary)
+            return tools_base.ToolTextResponse(text=summary)
         except Exception as e:
-            return ToolTextResponse(text=f"Error applying patch: {e}")
+            return tools_base.ToolTextResponse(text=f"Error applying patch: {e}")
 
     async def openapi_spec(self, spec: ToolSpec) -> Dict[str, Any]:
         fmts = sorted(get_supported_formats())
