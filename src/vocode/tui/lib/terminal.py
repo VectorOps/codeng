@@ -10,6 +10,7 @@ from rich import console as rich_console
 from rich import control as rich_control
 from rich import segment as rich_segment
 
+from vocode.logger import logger
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib import unicode as tui_unicode
@@ -79,6 +80,7 @@ class Terminal:
         self._animation_task: asyncio.Task[None] | None = None
         self._started: bool = False
         self._screens: list[BaseScreen] = []
+        self._removed_components: typing.Set[tui_base.Component] = set()
         if self._input_handler is not None:
             self._input_handler.subscribe(self._handle_input_event)
 
@@ -155,25 +157,34 @@ class Terminal:
         component.terminal = self
         self._components.insert(position, component)
         self.notify_component(component)
-        self._force_full_render = True
+
+    def _delete_removed_components(self) -> None:
+        removed = self._removed_components
+        if not removed:
+            return
+
+        self._components = [c for c in self._components if c not in removed]
+
+        self._dirty_components.difference_update(removed)
+
+        for c in removed:
+            self._cache.pop(c, None)
+            self._id_index.pop(c.id, None)
+
+        removed.clear()
 
     def remove_component(self, component: tui_base.Component) -> None:
         if component not in self._components:
             return
-        self._components.remove(component)
-        if component in self._dirty_components:
-            self._dirty_components.remove(component)
+
+        self._removed_components.add(component)
+        self.notify_component(component)
+
         if component in self._animation_components:
             self._animation_components.remove(component)
-        if component in self._cache:
-            del self._cache[component]
-        for key, value in list(self._id_index.items()):
-            if value is component:
-                del self._id_index[key]
         if component in self._focus_stack:
             self.remove_focus(component)
         component.terminal = None
-        self._force_full_render = True
 
     def register_animation(self, component: tui_base.Component) -> None:
         if component not in self._components:
@@ -393,7 +404,6 @@ class Terminal:
         if not self._screens:
             self._console.control(tui_controls.CustomControl.exit_alt_screen())
             self.enable_auto_render()
-            self._force_full_render = True
             self._request_auto_render(force=True)
         else:
             top = self._screens[-1]
@@ -482,6 +492,9 @@ class Terminal:
         if remaining:
             return False
 
+        # Remove components for good
+        self._delete_removed_components()
+
         # Get a list of all components starting with the top-most changed
         tail_components = self._components[start_index:]
         if not tail_components:
@@ -531,6 +544,7 @@ class Terminal:
 
         if not any_changed:
             return True
+
         old_span = self._cursor_line - row
         if old_span < 0:
             old_span = 0
@@ -601,7 +615,6 @@ class Terminal:
         if self._screens:
             self._full_render()
             self._width = self._console.size.width
-            self._force_full_render = False
             self._dirty_components.clear()
             return
 
@@ -623,8 +636,6 @@ class Terminal:
             and self._width == width
         ):
             return
-
-        # self._force_full_render = True
 
         if self._width is None or self._force_full_render or self._width != width:
             self._full_render()

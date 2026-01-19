@@ -133,11 +133,13 @@ def test_tui_state_autocomplete_stack_and_toolbar() -> None:
         ),
     ]
     ui_state.handle_autocomplete_options(items)
+    terminal._delete_removed_components()
     assert len(terminal.components) == 3
     new_toolbar = terminal.components[-1]
     assert new_toolbar is not toolbar
 
     ui_state.handle_autocomplete_options(None)
+    terminal._delete_removed_components()
     assert len(terminal.components) == 3
     restored_toolbar = terminal.components[-1]
     assert restored_toolbar is not new_toolbar

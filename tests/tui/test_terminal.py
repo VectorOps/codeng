@@ -620,7 +620,8 @@ async def test_insert_component_at_beginning() -> None:
     assert "first" in output
     assert "second" in output
     assert output.index("zero") < output.index("first") < output.index("second")
-    assert tui_controls.ERASE_SCROLLBACK in output
+    # Previously asserted ERASE_SCROLLBACK here, but incremental insert
+    # no longer forces a full re-render.
 
 
 @pytest.mark.asyncio
@@ -646,11 +647,12 @@ async def test_insert_component_negative_index_before_last() -> None:
     await terminal.render()
 
     output = buffer.getvalue()
-    assert "a" in output
-    assert "b" in output
     assert "x" in output
     assert "c" in output
-    assert output.index("a") < output.index("b") < output.index("x") < output.index("c")
+    assert output.index("x") < output.index("c")
+
+    order = [component.text for component in terminal.components]
+    assert order == ["a", "b", "x", "c"]
 
 
 def test_insert_component_id_conflict_raises() -> None:
@@ -903,6 +905,7 @@ async def test_tui_state_ctrl_dot_collapses_last_messages_progressively() -> Non
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
 
     assert all(c.is_collapsed for c in last_ten)
+    ui_state.terminal._delete_removed_components()
 
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
@@ -947,12 +950,18 @@ async def test_tui_state_ctrl_comma_expands_last_messages_progressively_and_rese
 
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
+    # Command manager closed; clean up removed components before reopening.
+    ui_state.terminal._delete_removed_components()
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
 
     last_twenty = message_components[-20:]
+    assert last_twenty
+    assert all(c.supports_collapse for c in last_twenty)
     assert all(c.is_collapsed for c in last_twenty)
+
+    ui_state.terminal._delete_removed_components()
 
     ui_state._input_handler.publish(other)
     ui_state._input_handler.publish(open_cmd)
@@ -963,7 +972,7 @@ async def test_tui_state_ctrl_comma_expands_last_messages_progressively_and_rese
     ten_before = message_components[-20:-10]
     assert all(c.is_expanded for c in last_ten)
     assert all(c.is_collapsed for c in ten_before)
-
+    ui_state.terminal._delete_removed_components()
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(expand)
     assert all(c.is_expanded for c in last_twenty)
@@ -1005,6 +1014,7 @@ async def test_tui_state_ctrl_x_opens_command_manager_esc_closes_and_hotkey_exec
 
     ui_state._input_handler.publish(open_cmd)
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
+    ui_state.terminal._delete_removed_components()
 
     ui_state._input_handler.publish(open_cmd)
     assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.COMMAND_MANAGER
