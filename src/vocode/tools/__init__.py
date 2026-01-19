@@ -1,7 +1,8 @@
 # Re-export the base tool interfaces and registry
 from . import base
-from . import exec_tool as _exec_tool
-from . import apply_patch_tool as _apply_patch_tool
+from . import exec_tool
+from . import apply_patch_tool
+from . import update_plan_tool
 
 BaseTool = base.BaseTool
 ToolResponseType = base.ToolResponseType
