@@ -13,6 +13,8 @@ variables:
   LLM_ARCHITECT_MODEL: gemini/gemini-3-pro-preview
   LLM_CODER_MODEL: gemini/gemini-3-flash-preview
   LLM_DIFF_FORMAT: patch
+internal_http:
+  port: 5050
 default_workflow: "chat"
 tools:
   - name: read_files
