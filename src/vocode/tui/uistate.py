@@ -167,7 +167,7 @@ class TUIState:
         top = self._action_stack[-1]
         if top.kind is ActionKind.AUTOCOMPLETE:
             component = typing.cast(tui_select_list.SelectListComponent, top.component)
-            if event.key in ("up", "down", "enter", "tab", "esc", "escape"):
+            if event.key in ("up", "down", "tab", "esc", "escape"):
                 if event.action == "down":
                     mapped_key = event.key
                     if mapped_key == "tab":
@@ -181,6 +181,10 @@ class TUIState:
                     )
                     component.on_key_event(mapped_event)
                 return True
+            if event.key == "enter":
+                if event.action == "down":
+                    self._pop_action(ActionKind.AUTOCOMPLETE)
+                return False
         if top.kind is ActionKind.COMMAND_MANAGER:
             if event.action != "down":
                 return True
@@ -420,10 +424,7 @@ class TUIState:
                     self._progressive_hotkey = binding
                     self._progressive_count = 1
             elif event.action == "down":
-                if not (
-                    (binding.key == "x" and binding.ctrl)
-                    or (binding.key in ("esc", "escape"))
-                ):
+                if not (binding.key in ("esc", "escape")):
                     self._progressive_hotkey = None
                     self._progressive_count = 0
 
@@ -432,6 +433,7 @@ class TUIState:
                 handled = self._handle_input_key_event(event)
                 if handled:
                     return
+
         self._terminal._handle_input_event(event)
 
     async def start(self) -> None:

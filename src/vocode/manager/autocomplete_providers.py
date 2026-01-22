@@ -33,21 +33,7 @@ def _token_span(text: str, cursor: int) -> tuple[int, int]:
 
 
 def _filter_noop(text: str, items: list[AutocompleteItem]) -> list[AutocompleteItem]:
-    filtered: list[AutocompleteItem] = []
-    for item in items:
-        start = item.replace_start
-        if start < 0:
-            continue
-        end = start + len(item.replace_text)
-        if end > len(text):
-            continue
-        if text[start:end] != item.replace_text:
-            continue
-        new_text = text[:start] + item.insert_text + text[end:]
-        if new_text == text:
-            continue
-        filtered.append(item)
-    return filtered
+    return list(items)
 
 
 @AutocompleteManager.register_default
