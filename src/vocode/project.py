@@ -20,6 +20,7 @@ from .proc.base import EnvPolicy
 from .proc.shell import ShellManager
 from .skills import Skill, discover_skills
 from vocode.persistence import state_manager as persistence_state_manager
+from vocode.http import server as http_server
 
 
 class ProjectState:
@@ -166,6 +167,9 @@ class Project:
         if self.settings and self.settings.know:
             await self.know.start(self.settings.know)
         await self.state_manager.start()
+
+        if self.settings and self.settings.internal_http is not None:
+            http_server.configure_internal_http(self.settings.internal_http)
 
         # Initialize process manager (idempotent)
         if self.processes is None:
