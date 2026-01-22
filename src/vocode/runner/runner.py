@@ -569,7 +569,9 @@ class Runner:
                         node_output_mode = current_runtime_node.model.output_mode
                         if step.output_mode != node_output_mode:
                             step.output_mode = node_output_mode
+
                         persisted_step = self._persist_step(step)
+
                         if step.type in (
                             state.StepType.PROMPT,
                             state.StepType.PROMPT_CONFIRM,
@@ -579,12 +581,14 @@ class Runner:
                                 current_execution=current_execution,
                             )
                             _ = yield waiting_event
+
                         req = RunEventReq(
                             kind=runner_proto.RunEventReqKind.STEP,
                             execution=self.execution,
                             step=persisted_step,
                         )
                         resp = yield req
+
                         response_step = self._handle_run_event_response(req, resp)
                         response_event = self._build_response_event(response_step)
                         if response_event is not None:
