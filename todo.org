@@ -1,6 +1,7 @@
 #+title: Todo
 
 * [ ] General
+** [ ] Figure out how to show input/http_input nodes as a user input (highlight, etc)
 ** [ ] Figure out why auto-complete might return same file multiple times
 ** [ ] Add sync exception handler and send it to the log
 ** [ ] Add session log renderer as a separate screen + shortcut
