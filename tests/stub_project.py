@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from vocode import state, settings as vocode_settings
+from vocode.project import ProjectState
 from vocode.proc.manager import ProcessManager
 from vocode.proc.shell import ShellManager
 from vocode.persistence import state_manager as persistence_state_manager
@@ -17,6 +18,7 @@ class StubProject:
         self.current_workflow = None
         self.tools = {}
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
+        self.project_state = ProjectState()
         self.processes: ProcessManager | None = process_manager
         self.shells: ShellManager | None = None
         if self.processes is not None:
