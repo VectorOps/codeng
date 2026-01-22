@@ -68,9 +68,17 @@ class ManagerBlockingExecutor(BaseExecutor):
 
 
 class DummyWorkflow:
-    def __init__(self, name: str, graph: models.Graph) -> None:
+    def __init__(
+        self,
+        name: str,
+        graph: models.Graph,
+        need_input: bool = False,
+        need_input_prompt: str | None = None,
+    ) -> None:
         self.name = name
         self.graph = graph
+        self.need_input = need_input
+        self.need_input_prompt = need_input_prompt
 
 
 class FakeProject:

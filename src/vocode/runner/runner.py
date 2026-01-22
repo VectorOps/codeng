@@ -30,14 +30,8 @@ class Runner:
         self.workflow = workflow
         self.project = project
         self.initial_message = initial_message
-        try:
-            self.need_input = bool(workflow.need_input)
-        except AttributeError:
-            self.need_input = False
-        try:
-            self.need_input_prompt = workflow.need_input_prompt
-        except AttributeError:
-            self.need_input_prompt = None
+        self.need_input = bool(workflow.need_input)
+        self.need_input_prompt = workflow.need_input_prompt
 
         self.status = state.RunnerStatus.IDLE
         self.graph = RuntimeGraph(workflow.graph)

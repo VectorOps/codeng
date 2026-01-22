@@ -73,6 +73,8 @@ async def test_http_input_executor_waits_for_external_message(tmp_path) -> None:
         def __init__(self) -> None:
             self.name = "wf-http-input"
             self.graph = graph
+            self.need_input = False
+            self.need_input_prompt = None
 
     workflow = Workflow()
 
