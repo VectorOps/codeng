@@ -48,6 +48,14 @@ class FakeExecutor(BaseExecutor):
     def __init__(self, config: models.Node, project):
         super().__init__(config, project)
         self._call_counts: Dict[str, int] = {}
+        self.inited = False
+        self.shutdown_called = False
+
+    async def init(self) -> None:
+        self.inited = True
+
+    async def shutdown(self) -> None:
+        self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
@@ -114,6 +122,14 @@ class LoopExecutor(BaseExecutor):
     def __init__(self, config: models.Node, project):
         super().__init__(config, project)
         self._run_counts: Dict[str, int] = {}
+        self.inited = False
+        self.shutdown_called = False
+
+    async def init(self) -> None:
+        self.inited = True
+
+    async def shutdown(self) -> None:
+        self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
@@ -146,6 +162,17 @@ class LoopExecutor(BaseExecutor):
 
 @ExecutorFactory.register("tool-prompt")
 class ToolPromptExecutor(BaseExecutor):
+    def __init__(self, config: models.Node, project):
+        super().__init__(config, project)
+        self.inited = False
+        self.shutdown_called = False
+
+    async def init(self) -> None:
+        self.inited = True
+
+    async def shutdown(self) -> None:
+        self.shutdown_called = True
+
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
         has_tool_result = False
@@ -426,6 +453,11 @@ async def test_runner_execution_flow():
                 break
         assert last_complete_output is not None
         assert finals[0] is last_complete_output
+
+    fake_executor = runner._executors["node1"]
+    assert isinstance(fake_executor, FakeExecutor)
+    assert fake_executor.inited is True
+    assert fake_executor.shutdown_called is True
 
 
 @pytest.mark.asyncio
@@ -842,9 +874,25 @@ async def test_runner_stop_stops_execution_loop():
     loop_exec = node_execs_by_name["loop1"]
     assert loop_exec.status == state.RunStatus.STOPPED
 
+    loop_executor = runner._executors["loop1"]
+    assert isinstance(loop_executor, LoopExecutor)
+    assert loop_executor.inited is True
+    assert loop_executor.shutdown_called is True
+
 
 class ResumeSkipExecutor(BaseExecutor):
     type = "resume-skip"
+
+    def __init__(self, config: models.Node, project):
+        super().__init__(config, project)
+        self.inited = False
+        self.shutdown_called = False
+
+    async def init(self) -> None:
+        self.inited = True
+
+    async def shutdown(self) -> None:
+        self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         raise AssertionError("ResumeSkipExecutor.run should not be called")
@@ -855,6 +903,17 @@ ExecutorFactory.register("resume-skip", ResumeSkipExecutor)
 
 class ResumeRunExecutor(BaseExecutor):
     type = "resume-run"
+
+    def __init__(self, config: models.Node, project):
+        super().__init__(config, project)
+        self.inited = False
+        self.shutdown_called = False
+
+    async def init(self) -> None:
+        self.inited = True
+
+    async def shutdown(self) -> None:
+        self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution

@@ -533,11 +533,12 @@ class TUIState:
             return
 
         collapse_lines: int = 10
-        collapsed: bool | None = None
+        collapsed: bool = False
         if display is not None:
             if display.collapse_lines is not None:
                 collapse_lines = display.collapse_lines
             collapsed = display.collapse
+
         component = tui_markdown_component.MarkdownComponent(
             markdown,
             compact_lines=collapse_lines,
@@ -556,6 +557,7 @@ class TUIState:
         markdown = self._format_message_markdown(step)
         if markdown is None:
             return
+
         trimmed = markdown.strip()
         self._upsert_markdown_component(
             step,

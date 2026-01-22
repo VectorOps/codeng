@@ -477,6 +477,14 @@ class Runner:
             step=response_step,
         )
 
+    async def _init_executors(self) -> None:
+        for executor in self._executors.values():
+            await executor.init()
+
+    async def _shutdown_executors(self) -> None:
+        for executor in self._executors.values():
+            await executor.shutdown()
+
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
         if self.status not in (state.RunnerStatus.IDLE, state.RunnerStatus.STOPPED):
@@ -485,6 +493,7 @@ class Runner:
             )
 
         current_execution: Optional[state.NodeExecution]
+        await self._init_executors()
 
         try:
             (
@@ -643,7 +652,6 @@ class Runner:
                 ):
                     continue
 
-                # Tool call handling
                 msg = last_complete_step.message
                 if msg is not None and msg.tool_call_requests:
                     approved: list[state.ToolCallReq] = []
@@ -782,7 +790,6 @@ class Runner:
 
                     continue
 
-                # Node confirmation logic
                 confirmation_mode = current_runtime_node.model.confirmation
                 loop_current_node = False
 
@@ -860,7 +867,6 @@ class Runner:
                 if last_complete_step.message is not None:
                     self._last_final_message = last_complete_step.message
 
-                # Next node selection logic
                 outcomes = current_runtime_node.model.outcomes
 
                 if not outcomes:
@@ -936,7 +942,6 @@ class Runner:
                     _ = yield status_event
                     return
 
-                # Node transition logic
                 next_input_messages = self._build_next_input_messages(
                     current_execution,
                     current_runtime_node.model,
@@ -982,6 +987,8 @@ class Runner:
             )
             _ = yield stop_event
             return
+        finally:
+            await self._shutdown_executors()
 
     def set_status(
         self,
