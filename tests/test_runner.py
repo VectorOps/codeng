@@ -209,9 +209,17 @@ class ToolPromptExecutor(BaseExecutor):
 
 
 class DummyWorkflow:
-    def __init__(self, name: str, graph: models.Graph):
+    def __init__(
+        self,
+        name: str,
+        graph: models.Graph,
+        need_input: bool = False,
+        need_input_prompt: str | None = None,
+    ) -> None:
         self.name = name
         self.graph = graph
+        self.need_input = need_input
+        self.need_input_prompt = need_input_prompt
 
 
 @ExecutorFactory.register("no-complete")
@@ -1351,11 +1359,17 @@ async def test_input_node_prompts_and_returns_user_message_as_output():
 
 
 class InitialInputWorkflow:
-    def __init__(self, name: str, graph: models.Graph):
+    def __init__(
+        self,
+        name: str,
+        graph: models.Graph,
+        need_input: bool = True,
+        need_input_prompt: str | None = None,
+    ) -> None:
         self.name = name
         self.graph = graph
-        self.need_input = True
-        self.need_input_prompt = None
+        self.need_input = need_input
+        self.need_input_prompt = need_input_prompt
 
 
 @pytest.mark.asyncio
