@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -2195,6 +2195,7 @@ name = "vopscode"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "devtools" },
     { name = "gitpython" },
     { name = "json5" },
@@ -2215,6 +2216,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.11.11" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "gitpython", specifier = ">=3.1.36" },
     { name = "json5", specifier = ">=0.9" },
