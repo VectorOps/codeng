@@ -1,6 +1,7 @@
 #+title: Todo
 
 * [ ] General
+** [ ] ctrl+x followed by c when everything is collapsed prints a line to output for some reason and breaks rendering
 ** [ ] Figure out how to show input/http_input nodes as a user input (highlight, etc)
 ** [ ] Figure out why http_input intemediate message is not overridden by new text
 - Rework intermediate messages to be complete and not deltas?
