@@ -56,6 +56,12 @@ class BaseExecutor:
         self.config = config
         self.project = project
 
+    async def init(self) -> None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
+
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         """
         Async generator from Executor to Runner. Executors yields steps. If step is alread
