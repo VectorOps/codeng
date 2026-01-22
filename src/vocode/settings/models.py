@@ -208,6 +208,12 @@ class PersistenceSettings(BaseModel):
     max_total_log_bytes: int = 1024 * 1024 * 1024
 
 
+class InternalHTTPSettings(BaseModel):
+    host: str = "127.0.0.1"
+    port: Optional[int] = None
+    secret_key: Optional[str] = None
+
+
 class Settings(BaseModel):
     workflows: Dict[str, WorkflowConfig] = Field(default_factory=dict)
     # Optional name of the workflow to auto-start in interactive UIs
@@ -222,6 +228,7 @@ class Settings(BaseModel):
     logging: Optional[LoggingSettings] = Field(default=None)
     persistence: Optional[PersistenceSettings] = Field(default=None)
     tui: Optional[TUIOptions] = Field(default=None)
+    internal_http: Optional[InternalHTTPSettings] = Field(default=None)
 
     @model_validator(mode="after")
     def _sync_workflow_names(self) -> "Settings":
