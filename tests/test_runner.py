@@ -3,6 +3,8 @@ from typing import AsyncIterator, Dict, Callable
 import pytest
 
 from vocode import state, models
+from vocode import settings as vocode_settings
+from vocode.tools import base as tools_base
 from tests.stub_project import StubProject
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
@@ -206,8 +208,13 @@ class ToolPromptExecutor(BaseExecutor):
             is_complete=True,
         )
         yield step
+class RecordingTool:
+    def __init__(self) -> None:
+        self.calls: list[tuple[tools_base.ToolReq, dict]] = []
 
-
+    async def run(self, req: tools_base.ToolReq, args: dict) -> None:
+        self.calls.append((req, args))
+        return None
 class DummyWorkflow:
     def __init__(
         self,
@@ -1271,6 +1278,49 @@ async def test_runner_emits_waiting_input_status_for_tool_confirmation():
     assert running_indices
     assert any(run_idx > first_wait_idx for run_idx in running_indices)
 
+
+@pytest.mark.asyncio
+async def test_runner_uses_tool_spec_from_request_for_execution():
+    project = StubProject()
+    recording_tool = RecordingTool()
+    project.tools["test-tool"] = recording_tool
+
+    node = models.Node(
+        name="dummy",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-tool-spec",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    spec = vocode_settings.ToolSpec(
+        name="test-tool",
+        enabled=True,
+        auto_approve=True,
+        config={"foo": "bar"},
+    )
+    req = state.ToolCallReq(
+        id="call-test-tool",
+        name="test-tool",
+        arguments={"x": 1},
+        tool_spec=spec,
+    )
+
+    await runner._execute_tool_call(req)
+    assert len(recording_tool.calls) == 1
+    tool_req, args = recording_tool.calls[0]
+    assert isinstance(tool_req, tools_base.ToolReq)
+    assert tool_req.spec.name == "test-tool"
+    assert tool_req.spec.config.get("foo") == "bar"
+    assert args == {"x": 1}
 
 @pytest.mark.asyncio
 async def test_input_node_prompts_and_returns_user_message_as_output():

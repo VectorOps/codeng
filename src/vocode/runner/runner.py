@@ -65,6 +65,8 @@ class Runner:
     def _get_tool_spec_for_request(
         self, req: state.ToolCallReq
     ) -> Optional[vocode_settings.ToolSpec]:
+        if req.tool_spec is not None:
+            return req.tool_spec
         project_settings = self.project.settings
         if project_settings is None:
             return None

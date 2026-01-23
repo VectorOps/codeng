@@ -1,9 +1,10 @@
 import asyncio
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
+from vocode.logger import logger
 from vocode.tools import base as tools_base
 from vocode.settings import ToolSpec
-from vocode.patch import apply_patch, get_supported_formats
+from vocode.patch import apply_patch, get_supported_formats, get_system_instruction
 
 if TYPE_CHECKING:
     from vocode.project import Project
@@ -79,14 +80,32 @@ class ApplyPatchTool(tools_base.BaseTool):
 
     async def openapi_spec(self, spec: ToolSpec) -> Dict[str, Any]:
         fmts = sorted(get_supported_formats())
+        config = spec.config or {}
+        fmt_config = config.get("format", "v4a")
+        if isinstance(fmt_config, str):
+            fmt = fmt_config.lower().strip()
+        else:
+            fmt = "v4a"
+
+        description = (
+            "Apply a repository patch to the current project. "
+            "Patch format is configured in this tool's config (format="
+            + "/".join(fmts)
+            + "). Returns a human-readable summary of changes or errors."
+        )
+
+        if fmt in get_supported_formats():
+            instruction = get_system_instruction(fmt)
+            description = (
+                description
+                + "\n\n"
+                + "Patch content must follow these format-specific instructions:\n"
+                + instruction
+            )
+
         return {
             "name": self.name,
-            "description": (
-                "Apply a repository patch to the current project. "
-                "Patch format is configured in this tool's config (format="
-                + "/".join(fmts)
-                + "). Returns a human-readable summary of changes or errors."
-            ),
+            "description": description,
             "parameters": {
                 "type": "object",
                 "properties": {
