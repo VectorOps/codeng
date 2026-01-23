@@ -705,7 +705,7 @@ class TUIState:
     ) -> None:
         style = self._input_component.component_style
         if style is None:
-            style = tui_styles.INPUT_PANEL_COMPONENT_STYLE
+            style = tui_styles.INPUT_COMPONENT_STYLE
         if style is None:
             return
         new_style = dataclasses.replace(
