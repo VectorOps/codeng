@@ -224,8 +224,11 @@ async def test_run_autocomplete_provider_does_not_suggest_exact_match() -> None:
         0,
         len("/run wf-auto"),
     )
-
-    assert items is None
+    assert items is not None
+    assert [item.title for item in items] == ["/run wf-auto - workflow"]
+    assert [item.replace_start for item in items] == [0]
+    assert [item.replace_text for item in items] == ["/run wf-auto"]
+    assert [item.insert_text for item in items] == ["/run wf-auto"]
 
 
 @pytest.mark.asyncio

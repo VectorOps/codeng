@@ -424,7 +424,11 @@ class TUIState:
                     self._progressive_hotkey = binding
                     self._progressive_count = 1
             elif event.action == "down":
-                if not (binding.key in ("esc", "escape")):
+                if binding.key in ("esc", "escape"):
+                    pass
+                elif binding.key == "x" and binding.ctrl:
+                    pass
+                else:
                     self._progressive_hotkey = None
                     self._progressive_count = 0
 
