@@ -3,16 +3,16 @@ logging:
   #default_level: debug
 variables:
 # OpenAI
-  LLM_DISCOVERY_MODEL: gpt-5-mini
-  LLM_ARCHITECT_MODEL: gpt-5.1
-#  LLM_ARCHITECT_REASONING: high
-  LLM_ARCHITECT_REASONING: medium
-  LLM_CODER_MODEL: gpt-5-mini
+#  LLM_DISCOVERY_MODEL: gpt-5-mini
+#  LLM_ARCHITECT_MODEL: gpt-5.1
+  LLM_ARCHITECT_REASONING: high
+#  LLM_ARCHITECT_REASONING: medium
+#  LLM_CODER_MODEL: gpt-5-mini
 # Gemini
-#  LLM_DISCOVERY_MODEL: gemini/gemini-3-flash-preview
-#  LLM_ARCHITECT_MODEL: gemini/gemini-3-pro-preview
-#  LLM_CODER_MODEL: gemini/gemini-3-flash-preview
-#  LLM_DIFF_FORMAT: patch
+  LLM_DISCOVERY_MODEL: gemini/gemini-3-flash-preview
+  LLM_ARCHITECT_MODEL: gemini/gemini-3-pro-preview
+  LLM_CODER_MODEL: gemini/gemini-3-flash-preview
+  LLM_DIFF_FORMAT: patch
 internal_http:
   port: 5050
 default_workflow: "chat"

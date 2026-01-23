@@ -6,6 +6,7 @@ import pytest
 from vocode.tools import ToolFactory, base as tools_base
 from vocode import state as vocode_state
 from vocode.settings import ToolSpec
+import vocode.patch as patch_mod
 from tests.stub_project import StubProject
 
 
@@ -80,3 +81,20 @@ async def test_apply_patch_tool_unsupported_format(tmp_path: Path):
     assert resp is not None
     assert resp.type.value == "text"
     assert "Unsupported patch format" in (resp.text or "")
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_tool_openapi_includes_format_instructions(tmp_path: Path):
+    project = PatchTestProject(tmp_path)
+    ToolClass = ToolFactory.get("apply_patch")
+    assert ToolClass is not None
+
+    tool = ToolClass(project)  # type: ignore[call-arg]
+
+    spec = ToolSpec(name="apply_patch", config={"format": "v4a"})
+    openapi = await tool.openapi_spec(spec)
+
+    description = openapi.get("description") or ""
+    instruction = patch_mod.get_system_instruction("v4a")
+
+    assert instruction in description
