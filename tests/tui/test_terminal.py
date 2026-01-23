@@ -388,6 +388,37 @@ def test_input_component_kill_and_case_keybindings() -> None:
     assert component.text == "Hello world"
 
 
+def test_input_component_multiline_scroll_and_height_cap() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=20,
+        height=9,
+    )
+    terminal = tui_terminal.Terminal(console=console)
+    lines = "\n".join(str(i) for i in range(10))
+    component = tui_input_component.InputComponent(lines, id="input")
+    terminal.append_component(component)
+
+    component.set_cursor_position(0, 0)
+
+    options = console.options
+    rendered = component.render(options)
+    assert len(rendered) == 6
+
+    initial_top = component.scroll_top
+    assert initial_top == 0
+
+    for _ in range(9):
+        down = input_base.KeyEvent(action="down", key="down")
+        component.on_key_event(down)
+
+    assert component.cursor_row == 9
+    assert component.scroll_top > 0
+
+
 @pytest.mark.asyncio
 async def test_tui_state_input_history_navigation() -> None:
     async def on_input(value: str) -> None:

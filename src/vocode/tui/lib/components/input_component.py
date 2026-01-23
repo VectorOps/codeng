@@ -44,6 +44,8 @@ class InputComponent(tui_base.Component):
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
         self._cursor_event_subscribers: list[typing.Callable[[int, int], None]] = []
         self._prefix = prefix
+        self._top_line: int = 0
+        self._view_height: int | None = None
 
     @property
     def text(self) -> str:
@@ -70,6 +72,14 @@ class InputComponent(tui_base.Component):
         return self._editor.lines
 
     @property
+    def scroll_top(self) -> int:
+        return self._top_line
+
+    @property
+    def total_lines(self) -> int:
+        return len(self._editor.lines)
+
+    @property
     def cursor_row(self) -> int:
         return self._editor.cursor_row
 
@@ -82,8 +92,61 @@ class InputComponent(tui_base.Component):
         self._mark_dirty()
 
     def _handle_editor_cursor_event(self, row: int, col: int) -> None:
+        self._update_view_height()
+        self._ensure_cursor_visible()
         for subscriber in list(self._cursor_event_subscribers):
             subscriber(row, col)
+
+    def _update_view_height(self) -> None:
+        terminal = self.terminal
+        if terminal is None:
+            self._view_height = None
+            self._top_line = 0
+            return
+        height = terminal.console.size.height
+        if height <= 0:
+            self._view_height = None
+            self._top_line = 0
+            return
+        max_height = int(height * 2 / 3)
+        if max_height < 1:
+            max_height = 1
+        total = len(self._editor.lines)
+        if total <= 0:
+            self._view_height = 0
+            self._top_line = 0
+            return
+        if max_height > total:
+            max_height = total
+        self._view_height = max_height
+        max_top = max(total - max_height, 0)
+        if self._top_line > max_top:
+            self._top_line = max_top
+        if self._top_line < 0:
+            self._top_line = 0
+
+    def _ensure_cursor_visible(self) -> None:
+        height = self._view_height
+        if height is None or height <= 0:
+            return
+        total = len(self._editor.lines)
+        if total <= 0:
+            self._top_line = 0
+            return
+        max_top = max(total - height, 0)
+        if self._top_line < 0:
+            self._top_line = 0
+        if self._top_line > max_top:
+            self._top_line = max_top
+        row = self._editor.cursor_row
+        if row < self._top_line:
+            self._top_line = row
+        elif row >= self._top_line + height:
+            self._top_line = row - (height - 1)
+        if self._top_line < 0:
+            self._top_line = 0
+        if self._top_line > max_top:
+            self._top_line = max_top
 
     def _create_keymap(self) -> dict[KeyBinding, typing.Callable[[], None]]:
         keymap: dict[KeyBinding, typing.Callable[[], None]] = {
@@ -140,6 +203,8 @@ class InputComponent(tui_base.Component):
         if terminal is None:
             return []
         console = terminal.console
+        self._update_view_height()
+        self._ensure_cursor_visible()
         text = self._build_text_with_cursor()
         styled = self.apply_style(text)
         rendered = console.render_lines(
@@ -156,11 +221,22 @@ class InputComponent(tui_base.Component):
         prefix_len = len(prefix) if prefix is not None else 0
         cursor_row = self._editor.cursor_row
         cursor_col = self._editor.cursor_col
-        for row, raw in enumerate(self._editor.lines):
-            if row > 0:
+        lines = self._editor.lines
+        total = len(lines)
+        if self._view_height is None or self._view_height <= 0:
+            start_row = 0
+            end_row = total
+        else:
+            start_row = self._top_line
+            end_row = self._top_line + self._view_height
+            if end_row > total:
+                end_row = total
+        for index in range(start_row, end_row):
+            raw = lines[index]
+            if index > start_row:
                 full.append("\n")
             if prefix is not None:
-                if row == 0:
+                if index == 0:
                     prefix_part = prefix
                 else:
                     prefix_part = " " * prefix_len
@@ -169,7 +245,7 @@ class InputComponent(tui_base.Component):
 
             display_line = raw
             cursor_index_in_raw = None
-            if row == cursor_row:
+            if index == cursor_row:
                 if cursor_col >= len(raw):
                     display_line = raw + " "
                     cursor_index_in_raw = len(raw)
@@ -180,7 +256,7 @@ class InputComponent(tui_base.Component):
                 overflow="fold",
                 no_wrap=False,
             )
-            if row == cursor_row and cursor_index_in_raw is not None:
+            if index == cursor_row and cursor_index_in_raw is not None:
                 start = prefix_len + cursor_index_in_raw
                 line_text.stylize(
                     CURSOR_STYLE,
