@@ -308,7 +308,13 @@ class Runner:
                 break
 
         if mode == models.ResultMode.FINAL_RESPONSE:
-            return [final_message] if final_message is not None else []
+            if final_message is None:
+                return []
+            user_message = state.Message(
+                role=models.Role.USER,
+                text=final_message.text,
+            )
+            return [user_message]
 
         if mode == models.ResultMode.CONCATENATE_FINAL:
             merged_messages: list[state.Message] = []
@@ -324,7 +330,11 @@ class Runner:
             )
             if combined_message is None:
                 return []
-            return [combined_message]
+            user_combined = state.Message(
+                role=models.Role.USER,
+                text=combined_message.text,
+            )
+            return [user_combined]
 
         return []
 

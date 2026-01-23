@@ -709,6 +709,9 @@ async def test_result_mode_final_response_forwards_final_message():
 
     assert [m.text for m in node1_exec.input_messages] == ["hello"]
     assert [m.text for m in node2_exec.input_messages] == ["run1-final"]
+    assert len(node2_exec.input_messages) == 1
+    forwarded = node2_exec.input_messages[0]
+    assert forwarded.role == models.Role.USER
 
 
 @pytest.mark.asyncio
@@ -816,7 +819,7 @@ async def test_result_mode_concatenate_final_builds_single_message():
     assert len(node2_exec.input_messages) == 1
     combined = node2_exec.input_messages[0]
     assert combined.text == "hello\n\nrun1-final"
-    assert combined.role == models.Role.ASSISTANT
+    assert combined.role == models.Role.USER
 
 
 @pytest.mark.asyncio
