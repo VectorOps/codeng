@@ -3,7 +3,7 @@ name = "vopscode"
 version = "0.1.0"
 description = "Vectorops Code"
 readme = "readme.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "devtools>=0.12.2",
     "litellm>=1.78.3",
