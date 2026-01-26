@@ -879,6 +879,7 @@ class Runner:
 
                 outcomes = current_runtime_node.model.outcomes
 
+                outcome_name: Optional[str] = None
                 if not outcomes:
                     self._set_node_execution_status(
                         current_execution, state.RunStatus.FINISHED
@@ -896,6 +897,7 @@ class Runner:
                     children = current_runtime_node.children
                     if children:
                         next_runtime_node = children[0]
+                        outcome_name = outcomes[0].name
                 else:
                     outcome_name = last_complete_step.outcome_name
                     if not outcome_name:
@@ -952,6 +954,22 @@ class Runner:
                     _ = yield status_event
                     return
 
+                edge_reset_policy = None
+                if outcome_name is not None:
+                    graph_model = self.graph.graph
+                    for edge in graph_model.edges:
+                        if (
+                            edge.source_node == current_runtime_node.name
+                            and edge.source_outcome == outcome_name
+                            and edge.target_node == next_runtime_node.name
+                        ):
+                            edge_reset_policy = edge.reset_policy
+                            break
+
+                effective_reset_policy = next_runtime_node.model.reset_policy
+                if edge_reset_policy is not None:
+                    effective_reset_policy = edge_reset_policy
+
                 next_input_messages = self._build_next_input_messages(
                     current_execution,
                     current_runtime_node.model,
@@ -963,10 +981,7 @@ class Runner:
                 current_runtime_node = next_runtime_node
 
                 previous_for_next: Optional[state.NodeExecution] = None
-                if (
-                    current_runtime_node.model.reset_policy
-                    == models.StateResetPolicy.KEEP
-                ):
+                if effective_reset_policy == models.StateResetPolicy.KEEP:
                     previous_for_next = self._find_node_execution(
                         current_runtime_node.name
                     )
