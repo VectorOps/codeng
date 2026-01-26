@@ -82,6 +82,44 @@ async def test_terminal_renders_on_append() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hidden_component_skipped_in_render_and_cache() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    component = DummyComponent("hello")
+    terminal.append_component(component)
+    await terminal.render()
+
+    first_output = buffer.getvalue()
+    assert "hello" in first_output
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    component.is_hidden = True
+    await terminal.render()
+
+    hidden_output = buffer.getvalue()
+    assert "hello" not in hidden_output
+    cache_lines = terminal._cache.get(component)
+    assert cache_lines == []
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    component.is_hidden = False
+    await terminal.render()
+
+    shown_output = buffer.getvalue()
+    assert "hello" in shown_output
+    cache_lines_after = terminal._cache.get(component)
+    assert cache_lines_after is not None
+    assert len(cache_lines_after) > 0
+
+
+@pytest.mark.asyncio
 async def test_auto_render_not_scheduled_before_start() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
@@ -684,6 +722,51 @@ async def test_insert_component_negative_index_before_last() -> None:
 
     order = [component.text for component in terminal.components]
     assert order == ["a", "b", "x", "c"]
+
+def test_insert_component_index_skips_removed_components() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    a = DummyComponent("a")
+    b = DummyComponent("b")
+    c = DummyComponent("c")
+    terminal.append_component(a)
+    terminal.append_component(b)
+    terminal.append_component(c)
+
+    terminal.remove_component(b)
+
+    x = DummyComponent("x")
+    terminal.insert_component(1, x)
+    terminal._delete_removed_components()
+
+    order = [component.text for component in terminal.components]
+    assert order == ["a", "x", "c"]
+
+
+def test_insert_component_negative_index_skips_removed_components() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    a = DummyComponent("a")
+    b = DummyComponent("b")
+    c = DummyComponent("c")
+    terminal.append_component(a)
+    terminal.append_component(b)
+    terminal.append_component(c)
+
+    terminal.remove_component(b)
+
+    x = DummyComponent("x")
+    terminal.insert_component(-1, x)
+    terminal._delete_removed_components()
+
+    order = [component.text for component in terminal.components]
+    assert order == ["a", "x", "c"]
 
 
 def test_insert_component_id_conflict_raises() -> None:

@@ -145,15 +145,39 @@ class Terminal:
             if component.id in self._id_index:
                 raise ValueError(f"Component id already exists: {component.id}")
             self._id_index[component.id] = component
-        length = len(self._components)
+
+        removed = self._removed_components
+        n = len(self._components)
+
         if index >= 0:
-            position = index
-            if position > length:
-                position = length
+            steps = index
+            position = n
+            last_active_pos: int | None = None
+            for pos, existing in enumerate(self._components):
+                if existing in removed:
+                    continue
+                last_active_pos = pos
+                if steps == 0:
+                    position = pos
+                    break
+                steps -= 1
+            if position == n:
+                if last_active_pos is None:
+                    position = n
+                else:
+                    position = last_active_pos + 1
         else:
-            position = length + index
-            if position < 0:
-                position = 0
+            steps = -index
+            position = n
+            for pos in range(n - 1, -1, -1):
+                existing = self._components[pos]
+                if existing in removed:
+                    continue
+                position = pos
+                if steps == 1:
+                    break
+                steps -= 1
+
         component.terminal = self
         self._components.insert(position, component)
         self.notify_component(component)
@@ -421,8 +445,10 @@ class Terminal:
             top.render()
             return
         options = self._console.options
-
         for component in self._dirty_components:
+            if component.is_hidden:
+                self._cache[component] = []
+                continue
             lines = component.render(options)
             self._cache[component] = lines
 
@@ -505,8 +531,12 @@ class Terminal:
         # Special optimization for top-most component - we only need to render its changed lines
         top_component = tail_components[0]
         top_old_lines = self._cache.get(top_component, [])
-        top_new_lines = top_component.render(options)
-        self._cache[top_component] = top_new_lines
+        if top_component.is_hidden:
+            top_new_lines: tui_base.Lines = []
+            self._cache[top_component] = []
+        else:
+            top_new_lines = top_component.render(options)
+            self._cache[top_component] = top_new_lines
 
         top_mismatch = 0
         top_changed = False
@@ -531,7 +561,10 @@ class Terminal:
         # Render remaining components
         for component in tail_components[1:]:
             cached_lines = self._cache.get(component)
-            if component in changed_components or cached_lines is None:
+            if component.is_hidden:
+                new_lines = []
+                self._cache[component] = []
+            elif component in changed_components or cached_lines is None:
                 new_lines = component.render(options)
                 self._cache[component] = new_lines
             else:

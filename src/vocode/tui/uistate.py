@@ -165,6 +165,7 @@ class TUIState:
 
     def _handle_input_key_event(self, event: input_base.KeyEvent) -> bool:
         top = self._action_stack[-1]
+
         if top.kind is ActionKind.AUTOCOMPLETE:
             component = typing.cast(tui_select_list.SelectListComponent, top.component)
             if event.key in ("up", "down", "tab", "esc", "escape"):
@@ -185,6 +186,7 @@ class TUIState:
                 if event.action == "down":
                     self._pop_action(ActionKind.AUTOCOMPLETE)
                 return False
+
         if top.kind is ActionKind.COMMAND_MANAGER:
             if event.action != "down":
                 return True
@@ -208,6 +210,7 @@ class TUIState:
                     self._pop_action(ActionKind.COMMAND_MANAGER)
                     return handled
             return True
+
         binding = tui_input_component.KeyBinding(
             key=event.key,
             ctrl=event.ctrl,
