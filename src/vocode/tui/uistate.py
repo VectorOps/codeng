@@ -39,6 +39,7 @@ class ActionKind(str, enum.Enum):
 class ActionItem:
     kind: ActionKind
     component: tui_terminal.Component
+    animated: bool = False
 
 
 class TUIState:
@@ -902,9 +903,15 @@ class TUIState:
         self._push_action(ActionKind.AUTOCOMPLETE, select)
 
     def _push_action(self, kind: ActionKind, component: tui_terminal.Component) -> None:
-        current_component = self._action_stack[-1].component
+        current_item = self._action_stack[-1]
+        current_component = current_item.component
+        terminal = self._terminal
+
+        if terminal is not None:
+            if current_component in terminal._animation_components:
+                current_item.animated = True
+
         if component is not current_component:
-            terminal = self._terminal
             if terminal is not None:
                 terminal.remove_component(current_component)
                 terminal.append_component(component)
@@ -921,10 +928,35 @@ class TUIState:
         if terminal is not None:
             terminal.remove_component(top.component)
         self._action_stack.pop()
-        self._toolbar_component = self._action_stack[-1].component
+
+        new_top = self._action_stack[-1]
+        self._toolbar_component = new_top.component
+
         if terminal is not None:
+            # If the component was removed but not yet purged (deferred removal),
+            # we need to ensure it's properly re-attached.
+            if self._toolbar_component.terminal is None:
+                if self._toolbar_component in terminal.components:
+                    terminal.components.remove(self._toolbar_component)
+                    if hasattr(terminal, "_removed_components"):
+                        if self._toolbar_component in terminal._removed_components:
+                            terminal._removed_components.remove(self._toolbar_component)
+
             if self._toolbar_component not in terminal.components:
                 terminal.append_component(self._toolbar_component)
+
+            if new_top.animated:
+                if isinstance(
+                    self._toolbar_component,
+                    toolbar_component.ToolbarComponent,
+                ):
+                    toolbar = typing.cast(
+                        toolbar_component.ToolbarComponent,
+                        self._toolbar_component,
+                    )
+                    toolbar.restore_animation()
+                else:
+                    terminal.register_animation(self._toolbar_component)
 
     def _update_toolbar_from_ui_state(self) -> None:
         toolbar = self._base_toolbar_component

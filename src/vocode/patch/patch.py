@@ -297,9 +297,25 @@ def _find_subsequence(hay: List[str], needle: List[str]) -> Optional[int]:
     n, m = len(hay), len(needle)
     if m > n:
         return None
-    for start in range(0, n - m + 1):
-        if hay[start : start + m] == needle:
-            return start
+
+    first = needle[0]
+    current_pos = 0
+    limit = n - m + 1
+
+    while current_pos < limit:
+        try:
+            # fast C-search for the first element
+            idx = hay.index(first, current_pos, limit)
+        except ValueError:
+            return None
+
+        # Candidate found at idx. Check the rest.
+        # Check slice equality. This creates a new list, but only when first element matches.
+        if hay[idx : idx + m] == needle:
+            return idx
+
+        current_pos = idx + 1
+
     return None
 
 
@@ -388,7 +404,7 @@ def build_commits(
                 any_failed = True
                 continue
             end_idx = start_idx + len(act.search)
-            file_lines = file_lines[:start_idx] + act.replace + file_lines[end_idx:]
+            file_lines[start_idx:end_idx] = act.replace
             applied_any = True
 
         # Finalize change for this path

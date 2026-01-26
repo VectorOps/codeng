@@ -174,7 +174,55 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
     renderable = toolbar._build_renderable(rich_console.Console())
     rendered_text = str(renderable)
     assert "wf1@node1 > wf2@node2" in rendered_text
-    assert "step: 10/1k" in rendered_text
+    assert "10/1k (1%)" in rendered_text
     assert "ts: 100" in rendered_text
     assert "tr: 50" in rendered_text
     assert "$0.25" in rendered_text
+
+
+def test_toolbar_animation_restored_after_autocomplete_pop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ui_state = _make_tui_state_with_console()
+    terminal = ui_state.terminal
+    toolbar = terminal.components[-1]
+
+    calls: list[tuple[object, object]] = []
+    terminal_cls = type(terminal)
+    original_register = terminal_cls.register_animation
+
+    def register_animation(self, component: object) -> None:
+        calls.append((self, component))
+        return original_register(self, component)
+
+    monkeypatch.setattr(terminal_cls, "register_animation", register_animation)
+
+    execution = state.WorkflowExecution(workflow_name="wf-anim")
+    runner_frame = manager_proto.RunnerStackFrame(
+        workflow_name=execution.workflow_name,
+        workflow_execution_id=str(execution.id),
+        node_name="node-anim",
+        status=state.RunnerStatus.RUNNING,
+    )
+    packet = manager_proto.UIServerStatePacket(
+        status=manager_proto.UIServerStatus.RUNNING,
+        runners=[runner_frame],
+    )
+
+    ui_state.handle_ui_state(packet)
+    assert calls
+    assert calls[-1][1] is toolbar
+
+    items = [
+        manager_proto.AutocompleteItem(
+            title="one",
+            replace_start=0,
+            replace_text="",
+            insert_text="ONE",
+        )
+    ]
+    ui_state.handle_autocomplete_options(items)
+    ui_state.handle_autocomplete_options(None)
+
+    assert len(calls) >= 2
+    assert calls[-1][1] is toolbar
