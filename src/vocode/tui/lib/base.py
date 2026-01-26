@@ -90,9 +90,11 @@ class Component(ABC):
     ) -> None:
         self.id = id
         self.terminal: TerminalLike | None = None
+        self.parent: typing.Optional["Component"] = None
         self.component_style = component_style
         self.is_visible: bool = False
         self._collapsed: bool | None = None
+        self._hidden: bool = False
 
     @property
     def supports_collapse(self) -> bool:
@@ -105,6 +107,17 @@ class Component(ABC):
     @property
     def is_expanded(self) -> bool:
         return not self.is_collapsed
+
+    @property
+    def is_hidden(self) -> bool:
+        return self._hidden
+
+    @is_hidden.setter
+    def is_hidden(self, value: bool) -> None:
+        if self._hidden == value:
+            return
+        self._hidden = value
+        self._mark_dirty()
 
     def set_collapsed(self, collapsed: bool) -> None:
         if self._collapsed is None:
@@ -161,6 +174,10 @@ class Component(ABC):
         return current
 
     def _mark_dirty(self) -> None:
+        parent = self.parent
+        if parent is not None:
+            parent._mark_dirty()
+            return
         terminal = self.terminal
         if terminal is not None:
             terminal.notify_component(self)

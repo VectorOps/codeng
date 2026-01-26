@@ -6,6 +6,7 @@ from .select_list import SelectItem, SelectListComponent
 
 from .markdown_component import MarkdownComponent
 from .renderable import RenderableComponentBase, CallbackComponent
+from .composite_component import CompositeComponent
 
 __all__ = [
     "InputComponent",
@@ -15,4 +16,5 @@ __all__ = [
     "MarkdownComponent",
     "RenderableComponentBase",
     "CallbackComponent",
+    "CompositeComponent",
 ]
