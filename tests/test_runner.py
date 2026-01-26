@@ -180,8 +180,8 @@ class ToolPromptExecutor(BaseExecutor):
         has_tool_result = False
         for existing_step in execution.steps:
             if (
-                existing_step.type == state.StepType.TOOL_RESULT
-                and existing_step.is_complete
+                existing_step.message is not None
+                and existing_step.message.tool_call_responses
             ):
                 has_tool_result = True
                 break
@@ -208,6 +208,8 @@ class ToolPromptExecutor(BaseExecutor):
             is_complete=True,
         )
         yield step
+
+
 class RecordingTool:
     def __init__(self) -> None:
         self.calls: list[tuple[tools_base.ToolReq, dict]] = []
@@ -215,6 +217,8 @@ class RecordingTool:
     async def run(self, req: tools_base.ToolReq, args: dict) -> None:
         self.calls.append((req, args))
         return None
+
+
 class DummyWorkflow:
     def __init__(
         self,
@@ -1322,6 +1326,7 @@ async def test_runner_uses_tool_spec_from_request_for_execution():
     assert tool_req.spec.config.get("foo") == "bar"
     assert args == {"x": 1}
 
+
 @pytest.mark.asyncio
 async def test_input_node_prompts_and_returns_user_message_as_output():
     node = InputNode(
@@ -1480,9 +1485,7 @@ async def test_runner_requires_initial_input_and_forwards_to_first_node():
     root_exec = node_execs_by_name["root"]
 
     prompt_steps = [s for s in root_exec.steps if s.type == state.StepType.PROMPT]
-    input_steps = [
-        s for s in root_exec.steps if s.type == state.StepType.INPUT_MESSAGE
-    ]
+    input_steps = [s for s in root_exec.steps if s.type == state.StepType.INPUT_MESSAGE]
     output_steps = [
         s
         for s in root_exec.steps
@@ -1557,7 +1560,7 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
     )
     tool_step = state.Step(
         execution=execution,
-        type=state.StepType.TOOL_RESULT,
+        type=state.StepType.OUTPUT_MESSAGE,
         message=msg,
         is_complete=True,
     )
@@ -1591,7 +1594,7 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
     ]
     assert complete_outputs
     assert any(
-        s.message is not None and s.message.text == "resumed-output"
+        s.message is not None and s.message.tool_call_responses
         for s in complete_outputs
     )
 

@@ -1,7 +1,11 @@
 from vocode import state, models
 from tests.stub_project import StubProject
 from vocode.runner.base import ExecutorInput
-from vocode.runner.executors.llm.llm import LLMExecutor, ToolCallProviderState, LLMStepState
+from vocode.runner.executors.llm.llm import (
+    LLMExecutor,
+    ToolCallProviderState,
+    LLMStepState,
+)
 from vocode.runner.executors.llm.models import LLMNode
 
 
@@ -28,10 +32,17 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         arguments={"x": 1},
         state=ToolCallProviderState(provider_state={"thought_signature": "sig-123"}),
     )
+    tool_resp = state.ToolCallResp(
+        id="call-1",
+        name="test-tool",
+        status=state.ToolCallStatus.COMPLETED,
+        result={"ok": True},
+    )
     assistant_msg = state.Message(
         role=models.Role.ASSISTANT,
         text="call tool",
         tool_call_requests=[tool_req],
+        tool_call_responses=[tool_resp],
     )
     assistant_step = state.Step(
         execution=execution,
@@ -41,26 +52,6 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
     )
     execution.steps.append(assistant_step)
     run.steps.append(assistant_step)
-
-    tool_resp = state.ToolCallResp(
-        id="call-1",
-        name="test-tool",
-        status=state.ToolCallStatus.COMPLETED,
-        result={"ok": True},
-    )
-    tool_msg = state.Message(
-        role=models.Role.TOOL,
-        text="",
-        tool_call_responses=[tool_resp],
-    )
-    tool_step = state.Step(
-        execution=execution,
-        type=state.StepType.TOOL_RESULT,
-        message=tool_msg,
-        is_complete=True,
-    )
-    execution.steps.append(tool_step)
-    run.steps.append(tool_step)
 
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)

@@ -165,8 +165,10 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         terminal = self.terminal
         message = self._step.message
         tool_calls: list[vocode_state.ToolCallReq] = []
+        tool_responses: list[vocode_state.ToolCallResp] = []
         if message is not None:
             tool_calls = message.tool_call_requests
+            tool_responses = message.tool_call_responses
 
         if (
             tool_calls
@@ -174,12 +176,16 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         ):
             renderables.append(rich_text.Text("Please confirm the tool call:"))
 
-        if tool_calls and terminal is not None:
+        if terminal is not None and (tool_calls or tool_responses):
             manager = tui_tcf.ToolCallFormatterManager.instance()
             for tool_call in tool_calls:
-                rendered = manager.format_request(terminal, tool_call)
-                if rendered is not None:
-                    renderables.append(rendered)
+                rendered_req = manager.format_request(terminal, tool_call)
+                if rendered_req is not None:
+                    renderables.append(rendered_req)
+            for resp in tool_responses:
+                rendered_resp = manager.format_response(terminal, resp)
+                if rendered_resp is not None:
+                    renderables.append(rendered_resp)
 
         if status is None:
             if not renderables:

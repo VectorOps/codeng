@@ -43,6 +43,8 @@ class MarkdownComponent(tui_base.Component):
         terminal = self.terminal
         if terminal is None:
             return []
+        if self._markdown == "":
+            return []
         console = terminal.console
         renderable: tui_base.Renderable = rich_markdown.Markdown(self._markdown)
         styled = self.apply_style(renderable)
