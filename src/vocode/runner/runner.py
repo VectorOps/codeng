@@ -211,24 +211,6 @@ class Runner:
             results.append(result)
         return results
 
-    def _create_tool_result_step(
-        self,
-        execution: state.NodeExecution,
-        tool_responses: list[state.ToolCallResp],
-    ) -> state.Step:
-        tool_message = state.Message(
-            role=models.Role.TOOL,
-            text="",
-            tool_call_responses=tool_responses,
-        )
-        tool_step = state.Step(
-            execution=execution,
-            type=state.StepType.TOOL_RESULT,
-            message=tool_message,
-            is_complete=True,
-        )
-        return self._persist_step(tool_step)
-
     def _create_transition_error_event(
         self,
         execution: state.NodeExecution,
@@ -391,7 +373,6 @@ class Runner:
                 if step.type not in (
                     state.StepType.OUTPUT_MESSAGE,
                     state.StepType.INPUT_MESSAGE,
-                    state.StepType.TOOL_RESULT,
                 ):
                     continue
                 anchor_index = i
@@ -793,10 +774,44 @@ class Runner:
                             _ = yield status_event
 
                     if tool_responses:
-                        self._create_tool_result_step(
-                            current_execution,
-                            tool_responses,
+                        msg.tool_call_responses = list(tool_responses)
+
+                        resp_by_id: dict[str, list[state.ToolCallResp]] = {}
+                        for resp in tool_responses:
+                            resp_list = resp_by_id.get(resp.id)
+                            if resp_list is None:
+                                resp_list = []
+                                resp_by_id[resp.id] = resp_list
+                            resp_list.append(resp)
+
+                        for req in msg.tool_call_requests:
+                            per_req = resp_by_id.get(req.id)
+                            if per_req is None:
+                                continue
+                            tool_step = tool_request_steps.get(id(req))
+                            if tool_step is None:
+                                continue
+                            tool_message = tool_step.message
+                            if tool_message is None:
+                                continue
+                            tool_message.tool_call_responses = list(per_req)
+                            tool_step.message = tool_message
+                            persisted_tool_step = self._persist_step(tool_step)
+                            tool_event = RunEventReq(
+                                kind=runner_proto.RunEventReqKind.STEP,
+                                execution=self.execution,
+                                step=persisted_tool_step,
+                            )
+                            _ = yield tool_event
+
+                        last_complete_step.message = msg
+                        persisted_step = self._persist_step(last_complete_step)
+                        event = RunEventReq(
+                            kind=runner_proto.RunEventReqKind.STEP,
+                            execution=self.execution,
+                            step=persisted_step,
                         )
+                        _ = yield event
 
                     continue
 

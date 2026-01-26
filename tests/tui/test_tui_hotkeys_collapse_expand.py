@@ -7,7 +7,6 @@ import pytest
 from vocode import models, state
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
-from vocode.tui.components import tool_call_resp as tool_call_resp_component
 from vocode.tui.lib.input import base as input_base
 
 
@@ -39,6 +38,11 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
             name="tool",
             arguments={"i": i},
         )
+        resp = state.ToolCallResp(
+            id=f"call_{i}",
+            name="tool",
+            result={"ok": True, "i": i},
+        )
         req_step = state.Step(
             id=uuid4(),
             execution=execution,
@@ -47,40 +51,18 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
                 role=models.Role.ASSISTANT,
                 text="",
                 tool_call_requests=[req],
-            ),
-        )
-        ui_state.handle_step(req_step)
-
-        resp = state.ToolCallResp(
-            id=f"call_{i}",
-            name="tool",
-            result={"ok": True, "i": i},
-        )
-        resp_step = state.Step(
-            id=uuid4(),
-            execution=execution,
-            type=state.StepType.TOOL_RESULT,
-            message=state.Message(
-                role=models.Role.TOOL,
-                text="",
                 tool_call_responses=[resp],
             ),
         )
-        ui_state.handle_step(resp_step)
+        ui_state.handle_step(req_step)
 
     message_components = ui_state.terminal.components[1:-2]
     tool_components = [
         c
         for c in message_components
-        if isinstance(
-            c,
-            (
-                tool_call_req_component.ToolCallReqComponent,
-                tool_call_resp_component.ToolCallRespComponent,
-            ),
-        )
+        if isinstance(c, tool_call_req_component.ToolCallReqComponent)
     ]
-    assert len(tool_components) == 24
+    assert len(tool_components) == 12
     assert all(c.supports_collapse for c in tool_components)
 
     for component in tool_components:

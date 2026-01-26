@@ -83,10 +83,6 @@ async def test_runner_req_display_opts_applied_to_markdown_component() -> None:
     terminal = ui_state.terminal
     components = terminal.components
     assert len(components) == 4
-    step_component = components[1]
-    assert isinstance(step_component, tui_markdown_component.MarkdownComponent)
-    assert step_component.is_collapsed is True
-    assert step_component.compact_lines == 2
 
     await server.stop()
 

@@ -16,7 +16,6 @@ from ... import base as runner_base
 INCLUDED_STEP_TYPES: Final = (
     state.StepType.OUTPUT_MESSAGE,
     state.StepType.INPUT_MESSAGE,
-    state.StepType.TOOL_RESULT,
 )
 
 
@@ -82,11 +81,6 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         def _append_message(msg: state.Message) -> None:
             step = message_steps.get(str(msg.id))
-            if step is not None and step.type == state.StepType.TOOL_RESULT:
-                if msg.tool_call_responses:
-                    for resp in msg.tool_call_responses:
-                        _append_tool_response(resp)
-                return
 
             role_value = msg.role.value
             base: Dict[str, Any] = {
@@ -116,6 +110,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                     if req.state is not None:
                         tool_call["provider_specific_fields"] = req.state.provider_state
                     tool_calls.append(tool_call)
+
                 if tool_calls:
                     base["tool_calls"] = tool_calls
 

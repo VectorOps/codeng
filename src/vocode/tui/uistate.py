@@ -19,7 +19,6 @@ from vocode.tui.lib.components import rich_text_component as tui_rich_text_compo
 from vocode.tui.lib.components import select_list as tui_select_list
 from vocode.tui.components import command_manager_help as command_manager_help_component
 from vocode.tui.components import tool_call_req as tool_call_req_component
-from vocode.tui.components import tool_call_resp as tool_call_resp_component
 from vocode.tui.components import toolbar as toolbar_component
 from vocode.tui import command_manager as tui_command_manager
 from vocode.tui.lib.input import base as input_base
@@ -92,7 +91,6 @@ class TUIState:
             vocode_state.StepType.PROMPT: self._handle_prompt_step,
             vocode_state.StepType.PROMPT_CONFIRM: self._handle_prompt_step,
             vocode_state.StepType.TOOL_REQUEST: self._handle_tool_request_step,
-            vocode_state.StepType.TOOL_RESULT: self._handle_tool_result_step,
         }
 
         self._terminal.append_component(header)
@@ -346,10 +344,7 @@ class TUIState:
         for component in message_components:
             is_tool = isinstance(
                 component,
-                (
-                    tool_call_req_component.ToolCallReqComponent,
-                    tool_call_resp_component.ToolCallRespComponent,
-                ),
+                tool_call_req_component.ToolCallReqComponent,
             )
             if is_tool and not include_tools:
                 continue
@@ -663,22 +658,6 @@ class TUIState:
             )
             terminal.insert_component(-2, component)
 
-    def _handle_tool_result_step(self, step: vocode_state.Step) -> None:
-        step_id = str(step.id)
-        terminal = self._terminal
-        try:
-            component = typing.cast(
-                tool_call_resp_component.ToolCallRespComponent,
-                terminal.get_component(step_id),
-            )
-            component.set_step(step)
-        except KeyError:
-            component = tool_call_resp_component.ToolCallRespComponent(
-                step=step,
-                component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
-            )
-            terminal.insert_component(-2, component)
-
     def _handle_default_step(self, step: vocode_state.Step) -> None:
         markdown = self._format_message_markdown(step)
         if markdown is None:
@@ -690,6 +669,8 @@ class TUIState:
         step: vocode_state.Step,
         display: manager_proto.RunnerReqDisplayOpts | None = None,
     ) -> None:
+        logger.info("msg", s=step.message, final=step.is_final)
+
         if display is not None and display.visible is False:
             return
         mode = step.output_mode

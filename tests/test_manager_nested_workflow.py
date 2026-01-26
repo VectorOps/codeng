@@ -11,6 +11,7 @@ from vocode.settings import Settings, WorkflowConfig, ToolSpec
 from vocode.tools import base as tools_base
 from vocode.persistence import state_manager as persistence_state_manager
 
+
 class NestedWorkflowTestProject:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -65,8 +66,8 @@ class StartNestedWorkflowExecutor(BaseExecutor):
         has_tool_result = False
         for existing_step in execution.steps:
             if (
-                existing_step.type == state.StepType.TOOL_RESULT
-                and existing_step.is_complete
+                existing_step.message is not None
+                and existing_step.message.tool_call_responses
             ):
                 has_tool_result = True
                 break
@@ -187,20 +188,17 @@ async def test_nested_workflow_execution_via_manager():
         node_execs_by_name[ne.node] = ne
     assert "parent-node" in node_execs_by_name
     parent_exec = node_execs_by_name["parent-node"]
-    tool_result_steps = [
-        s for s in parent_exec.steps if s.type == state.StepType.TOOL_RESULT
+    tool_response_steps = [
+        s
+        for s in parent_exec.steps
+        if s.message is not None and s.message.tool_call_responses
     ]
-    assert tool_result_steps
-    last_tool_step = tool_result_steps[-1]
+    assert tool_response_steps
+    last_tool_step = tool_response_steps[-1]
     assert last_tool_step.message is not None
     assert last_tool_step.message.tool_call_responses
     tool_resp = last_tool_step.message.tool_call_responses[0]
     assert tool_resp.result is not None
     assert tool_resp.result.get("agent_name") == "child"
-    assert (
-        tool_resp.result.get("response")
-        == child_runner.last_final_message.text
-    )
-    assert any(
-        e.kind == runner_proto.RunEventReqKind.START_WORKFLOW for e in events
-    )
+    assert tool_resp.result.get("response") == child_runner.last_final_message.text
+    assert any(e.kind == runner_proto.RunEventReqKind.START_WORKFLOW for e in events)
