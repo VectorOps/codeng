@@ -1,11 +1,11 @@
 #+title: Todo
 
 * [ ] General
-** [ ] Add support for edge-level state policy override
+** [X] Add support for edge-level state policy override
 ** [X] Fix component addition/removal for help
 ** [X] Rework tooltip
 ** [ ] Benchmark slow apply_patch on Windows
-** [ ] Fix rendering full lines - it seems like we're adding delete till end even if line takes whole screen
+** [X] Fix rendering full lines - it seems like we're adding delete till end even if line takes whole screen
 ** [ ] Current context window usage (input) is showing accumulated number instead of last step number
 ** [ ] Create alternative Markdown renderer that only highlights, but does not format
 ** [ ] Need apply_patch formatter with input and output (collapsed)

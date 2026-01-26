@@ -600,8 +600,14 @@ class Terminal:
             if lines_to_output:
                 cleared_lines: tui_base.Lines = []
                 for line in lines_to_output:
-                    new_line = [tui_controls.CustomControl.erase_line_end().segment]
-                    new_line.extend(line)
+                    line_width = 0
+                    for segment in line:
+                        line_width += segment.cell_length
+                    if line_width < width:
+                        new_line = [tui_controls.CustomControl.erase_line_end().segment]
+                        new_line.extend(line)
+                    else:
+                        new_line = list(line)
                     cleared_lines.append(new_line)
 
                 self._print_lines(cleared_lines)

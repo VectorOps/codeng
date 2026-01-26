@@ -235,7 +235,7 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         extra_args = dict(cfg.extra or {})
 
-        logger.info("LLM request:", req=conv, tools=tools)
+        logger.debug("LLM request:", req=conv, tools=tools)
 
         max_retries = 3
         attempt = 0
