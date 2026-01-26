@@ -226,3 +226,131 @@ def test_toolbar_animation_restored_after_autocomplete_pop(
 
     assert len(calls) >= 2
     assert calls[-1][1] is toolbar
+
+
+def test_autocomplete_up_down_do_not_activate_when_inactive() -> None:
+    ui_state = _make_tui_state_with_console()
+    items = [
+        manager_proto.AutocompleteItem(
+            title="one",
+            replace_start=0,
+            replace_text="",
+            insert_text="ONE",
+        ),
+        manager_proto.AutocompleteItem(
+            title="two",
+            replace_start=0,
+            replace_text="",
+            insert_text="TWO",
+        ),
+    ]
+    ui_state.handle_autocomplete_options(items)
+    terminal = ui_state.terminal
+    select_component = terminal.components[-1]
+    assert getattr(type(select_component), "__name__", "") == "SelectListComponent"
+    assert select_component.selected_index is None
+
+    event_up = input_base.KeyEvent(
+        action="down",
+        key="up",
+        ctrl=False,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_up)
+    assert select_component.selected_index is None
+
+    event_down = input_base.KeyEvent(
+        action="down",
+        key="down",
+        ctrl=False,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_down)
+    assert select_component.selected_index is None
+
+
+def test_autocomplete_ctrl_n_p_activate_and_navigate() -> None:
+    ui_state = _make_tui_state_with_console()
+    items = [
+        manager_proto.AutocompleteItem(
+            title="one",
+            replace_start=0,
+            replace_text="",
+            insert_text="ONE",
+        ),
+        manager_proto.AutocompleteItem(
+            title="two",
+            replace_start=0,
+            replace_text="",
+            insert_text="TWO",
+        ),
+    ]
+    ui_state.handle_autocomplete_options(items)
+    terminal = ui_state.terminal
+    select_component = terminal.components[-1]
+    assert select_component.selected_index is None
+
+    event_ctrl_n = input_base.KeyEvent(
+        action="down",
+        key="n",
+        ctrl=True,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_ctrl_n)
+    assert select_component.selected_index is not None
+
+    first_index = select_component.selected_index
+    event_ctrl_p = input_base.KeyEvent(
+        action="down",
+        key="p",
+        ctrl=True,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_ctrl_p)
+    assert select_component.selected_index != first_index
+
+
+def test_autocomplete_tab_activates_then_accepts() -> None:
+    ui_state = _make_tui_state_with_console()
+    input_component = ui_state._input_component
+    input_component.text = "he"
+    input_component.set_cursor_position(0, 2)
+
+    items = [
+        manager_proto.AutocompleteItem(
+            title="hello",
+            replace_start=0,
+            replace_text="he",
+            insert_text="hello",
+        ),
+    ]
+    ui_state.handle_autocomplete_options(items)
+    terminal = ui_state.terminal
+    select_component = terminal.components[-1]
+    assert select_component.selected_index is None
+
+    event_tab = input_base.KeyEvent(
+        action="down",
+        key="tab",
+        ctrl=False,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_tab)
+    assert select_component.selected_index == 0
+
+    event_tab_accept = input_base.KeyEvent(
+        action="down",
+        key="tab",
+        ctrl=False,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_tab_accept)
+    assert select_component.terminal is None
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
+    assert input_component.text == "hello"
