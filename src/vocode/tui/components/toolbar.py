@@ -94,18 +94,21 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
             return label
         return status
 
-    def _update_animation(self) -> None:
+    def _update_animation(self, force: bool = False) -> None:
         terminal = self.terminal
         if terminal is None:
             return
         should_animate = self._status is vocode_state.RunnerStatus.RUNNING
-        if should_animate == self._animated:
+        if not force and should_animate == self._animated:
             return
         self._animated = should_animate
         if should_animate:
             terminal.register_animation(self)
         else:
             terminal.deregister_animation(self)
+
+    def restore_animation(self) -> None:
+        self._update_animation(force=True)
 
     def _build_renderable(
         self,
@@ -170,7 +173,14 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         usage_parts: list[str] = []
         step_input_tokens_str = lib_formatting.format_int_compact(step_input_tokens)
         step_input_limit_str = lib_formatting.format_int_compact(step_input_limit)
-        usage_parts.append(f"step: {step_input_tokens_str}/{step_input_limit_str}")
+
+        percentage = 0
+        if step_input_limit > 0:
+            percentage = int((step_input_tokens / step_input_limit) * 100)
+
+        usage_parts.append(
+            f"{step_input_tokens_str}/{step_input_limit_str} ({percentage}%)"
+        )
         sent_str = lib_formatting.format_int_compact(total_sent)
         received_str = lib_formatting.format_int_compact(total_received)
         cost_str = lib_formatting.format_cost_compact(total_cost)

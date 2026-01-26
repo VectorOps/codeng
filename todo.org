@@ -1,6 +1,10 @@
 #+title: Todo
 
 * [ ] General
+** [ ] Emit LLM usage when tool call steps are returned from LLM executor
+** [ ] Auto-complete
+*** [ ] Space with selection should auto-complete
+*** [ ] Tab with open auto-complete list, but no selection should select first item, but not auto-complete
 ** [X] Add support for edge-level state policy override
 ** [X] Fix component addition/removal for help
 ** [X] Rework tooltip
