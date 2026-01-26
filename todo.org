@@ -3,9 +3,7 @@
 * [ ] General
 ** [ ] Add support for edge-level state policy override
 ** [X] Fix component addition/removal for help
-** [ ] Rework tooltip
-- Add support for history management (going up when help is visible) 
-- If hint text matches input text, enter should work as an enter and not as autocompletion
+** [X] Rework tooltip
 ** [ ] Benchmark slow apply_patch on Windows
 ** [ ] Fix rendering full lines - it seems like we're adding delete till end even if line takes whole screen
 ** [ ] Current context window usage (input) is showing accumulated number instead of last step number
@@ -88,3 +86,6 @@
 ** [ ] Branch current session from a specific message
 ** [ ] Load session from the disk
 ** [ ] Store session inputs in a metadat file and show them as a summary
+* [ ] Patchers
+** [ ] More strict V4A parser
+*** [ ] Prevent partial updates?
