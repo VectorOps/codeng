@@ -425,6 +425,18 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
     await server.start()
     execution = state.WorkflowExecution(workflow_name="wf-ui-status")
 
+    execution.llm_usage = state.LLMUsageStats(
+        prompt_tokens=123,
+        completion_tokens=456,
+        cost_dollars=1.23,
+    )
+    execution.last_step_llm_usage = state.LLMUsageStats(
+        prompt_tokens=10,
+        completion_tokens=5,
+        cost_dollars=0.01,
+        input_token_limit=1000,
+    )
+
     stats = runner_proto.RunStats(
         status=state.RunnerStatus.RUNNING,
         current_node_name="node-status",
@@ -473,6 +485,10 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
     assert runner_state.workflow_execution_id == str(execution.id)
     assert runner_state.node_name == stats.current_node_name
     assert runner_state.status == stats.status
+    assert state_packet.last_step_llm_usage is not None
+    assert state_packet.last_step_llm_usage.prompt_tokens == 10
+    assert state_packet.last_step_llm_usage.completion_tokens == 5
+    assert state_packet.last_step_llm_usage.input_token_limit == 1000
 
     dummy_task.cancel()
     with pytest.raises(asyncio.CancelledError):

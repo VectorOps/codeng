@@ -39,6 +39,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._frame_index = 0
         self._animated = False
         self._active_workflow_llm_usage: vocode_state.LLMUsageStats | None = None
+        self._last_step_llm_usage: vocode_state.LLMUsageStats | None = None
         self._project_llm_usage: vocode_state.LLMUsageStats | None = None
 
     @property
@@ -58,6 +59,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         workflow_label = ""
         status: vocode_state.RunnerStatus | None = None
         active_usage: vocode_state.LLMUsageStats | None = None
+        last_step_usage: vocode_state.LLMUsageStats | None = None
         project_usage: vocode_state.LLMUsageStats | None = None
         if ui_state is not None:
             if ui_state.runners:
@@ -73,10 +75,12 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
                 workflow_label = " > ".join(labels)
                 status = ui_state.runners[-1].status
             active_usage = ui_state.active_workflow_llm_usage
+            last_step_usage = ui_state.last_step_llm_usage
             project_usage = ui_state.project_llm_usage
         self._workflow_label = workflow_label
         self._status = status
         self._active_workflow_llm_usage = active_usage
+        self._last_step_llm_usage = last_step_usage
         self._project_llm_usage = project_usage
         self._update_animation()
 
@@ -145,15 +149,15 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
 
         main_text = " ".join(parts)
 
-        workflow_usage = self._active_workflow_llm_usage
+        last_step_usage = self._last_step_llm_usage
         project_usage = self._project_llm_usage
 
-        input_tokens = 0
-        input_limit = 0
-        if workflow_usage is not None:
-            input_tokens = int(workflow_usage.prompt_tokens or 0)
-            if workflow_usage.input_token_limit is not None:
-                input_limit = int(workflow_usage.input_token_limit)
+        step_input_tokens = 0
+        step_input_limit = 0
+        if last_step_usage is not None:
+            step_input_tokens = int(last_step_usage.prompt_tokens or 0)
+            if last_step_usage.input_token_limit is not None:
+                step_input_limit = int(last_step_usage.input_token_limit)
 
         total_sent = 0
         total_received = 0
@@ -164,9 +168,9 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
             total_cost = float(project_usage.cost_dollars or 0.0)
 
         usage_parts: list[str] = []
-        input_tokens_str = lib_formatting.format_int_compact(input_tokens)
-        input_limit_str = lib_formatting.format_int_compact(input_limit)
-        usage_parts.append(f"{input_tokens_str}/{input_limit_str}")
+        step_input_tokens_str = lib_formatting.format_int_compact(step_input_tokens)
+        step_input_limit_str = lib_formatting.format_int_compact(step_input_limit)
+        usage_parts.append(f"step: {step_input_tokens_str}/{step_input_limit_str}")
         sent_str = lib_formatting.format_int_compact(total_sent)
         received_str = lib_formatting.format_int_compact(total_received)
         cost_str = lib_formatting.format_cost_compact(total_cost)
