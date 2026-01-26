@@ -95,6 +95,8 @@ class ToolCallFormatterManager:
         formatter_name = "generic"
         if config is not None and config.formatter:
             formatter_name = config.formatter
+        elif tool_name in self._registry:
+            formatter_name = tool_name
 
         formatter = self._get_instance(formatter_name)
         if formatter is not None:

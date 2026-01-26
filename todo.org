@@ -5,6 +5,7 @@
 ** [ ] Auto-complete
 *** [ ] Space with selection should auto-complete
 *** [ ] Tab with open auto-complete list, but no selection should select first item, but not auto-complete
+*** [ ] Pressing up going through the history and when auto-complete is displayed, pressing up should continue the history navigation? Or prevent showing auto-complete list for the current word if cursor is not at the end of it
 ** [X] Add support for edge-level state policy override
 ** [X] Fix component addition/removal for help
 ** [X] Rework tooltip
