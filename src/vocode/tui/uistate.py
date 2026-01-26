@@ -167,11 +167,44 @@ class TUIState:
 
         if top.kind is ActionKind.AUTOCOMPLETE:
             component = typing.cast(tui_select_list.SelectListComponent, top.component)
-            if event.key in ("up", "down", "tab", "esc", "escape"):
-                if event.action == "down":
-                    mapped_key = event.key
-                    if mapped_key == "tab":
-                        mapped_key = "enter"
+            key = event.key
+            is_ctrl_nav = key in ("n", "p") and event.ctrl
+            if key in ("up", "down", "tab", "enter", "esc", "escape") or is_ctrl_nav:
+                if event.action != "down":
+                    return True
+                selected_index = component.selected_index
+                if key in ("esc", "escape"):
+                    mapped_event = input_base.KeyEvent(
+                        action="down",
+                        key=key,
+                        ctrl=False,
+                        alt=False,
+                        shift=False,
+                    )
+                    component.on_key_event(mapped_event)
+                    return True
+                if key == "tab" and not event.ctrl and not event.alt:
+                    items = component.items
+                    if not items:
+                        return True
+                    if selected_index is None:
+                        component.set_selected_index(0)
+                        return True
+                    mapped_event = input_base.KeyEvent(
+                        action="down",
+                        key="enter",
+                        ctrl=False,
+                        alt=False,
+                        shift=False,
+                    )
+                    component.on_key_event(mapped_event)
+                    self._pop_action(ActionKind.AUTOCOMPLETE)
+                    return True
+                if is_ctrl_nav:
+                    items = component.items
+                    if not items:
+                        return True
+                    mapped_key = "down" if key == "n" else "up"
                     mapped_event = input_base.KeyEvent(
                         action="down",
                         key=mapped_key,
@@ -180,22 +213,34 @@ class TUIState:
                         shift=False,
                     )
                     component.on_key_event(mapped_event)
-                return True
-            if event.key == "enter":
-                if event.action != "down":
                     return True
-                if component.selected_index is None:
-                    self._pop_action(ActionKind.AUTOCOMPLETE)
-                    return False
-                mapped_event = input_base.KeyEvent(
-                    action="down",
-                    key="enter",
-                    ctrl=False,
-                    alt=False,
-                    shift=False,
-                )
-                component.on_key_event(mapped_event)
-                return True
+                if key in ("up", "down"):
+                    if selected_index is None:
+                        if key == "up":
+                            return self._handle_history_up(event)
+                        return self._handle_history_down(event)
+                    mapped_event = input_base.KeyEvent(
+                        action="down",
+                        key=key,
+                        ctrl=False,
+                        alt=False,
+                        shift=False,
+                    )
+                    component.on_key_event(mapped_event)
+                    return True
+                if key == "enter":
+                    if selected_index is None:
+                        self._pop_action(ActionKind.AUTOCOMPLETE)
+                        return False
+                    mapped_event = input_base.KeyEvent(
+                        action="down",
+                        key="enter",
+                        ctrl=False,
+                        alt=False,
+                        shift=False,
+                    )
+                    component.on_key_event(mapped_event)
+                    return True
 
         if top.kind is ActionKind.COMMAND_MANAGER:
             if event.action != "down":
