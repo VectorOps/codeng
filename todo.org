@@ -14,7 +14,7 @@
 ** [ ] Create alternative Markdown renderer that only highlights, but does not format
 ** [ ] Need apply_patch formatter with input and output (collapsed)
 ** [ ] Need to rename read_files to read_file
-** [ ] Animation stops after showing/hiding toolbar component
+** [X] Animation stops after showing/hiding toolbar component
 ** [ ] Assign a number to collapse/expand a specific component and show number in the component view. (bad idea due to repaints?)
 ** [ ] Compact tool call representation, where consequent calls are merged onto a single.
 ** [ ] Hide time indicator for tool calls - it is not helpful
