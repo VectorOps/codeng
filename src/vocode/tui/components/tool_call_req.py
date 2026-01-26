@@ -218,6 +218,8 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
             return []
         console = terminal.console
         renderable = self._build_renderable(console)
+        if renderable == "":
+            return []
         styled = self.apply_style(renderable)
         rendered = console.render_lines(
             styled,

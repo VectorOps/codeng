@@ -17,7 +17,7 @@ _STATUS_IN_PROGRESS = "in_progress"
 _STATUS_COMPLETED = "completed"
 
 
-@tui_tcf.ToolCallFormatterManager.register("tasklist")
+@tui_tcf.ToolCallFormatterManager.register("update_plan")
 class TaskToolFormatter(tui_tcf.BaseToolCallFormatter):
     def format_input(
         self,
@@ -40,17 +40,23 @@ class TaskToolFormatter(tui_tcf.BaseToolCallFormatter):
             title = config.title
 
         tasks = self._parse_tasks_from_result(result)
-        if not tasks:
-            from vocode.tui.tcf import generic as generic_tcf
+        if tasks:
+            return self._format_tasks(tasks, title)
 
-            formatter = generic_tcf.GenericToolCallFormatter()
-            return formatter.format_output(
-                terminal=terminal,
-                tool_name=tool_name,
-                result=result,
-                config=config,
-            )
-        return self._format_tasks(tasks, title)
+        payload: str
+        if isinstance(result, str):
+            payload = result
+        else:
+            try:
+                payload = json.dumps(result, ensure_ascii=False)
+            except Exception:
+                payload = str(result)
+
+        text = rich_text.Text(no_wrap=False)
+        text.append(f"{title}:", style=tui_styles.TOOL_CALL_NAME_STYLE)
+        text.append("\n")
+        text.append(payload)
+        return text
 
     @staticmethod
     def _parse_tasks_sequence(raw: Any) -> List[Dict[str, str]]:

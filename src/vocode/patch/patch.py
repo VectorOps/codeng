@@ -304,7 +304,6 @@ def _find_subsequence(hay: List[str], needle: List[str]) -> Optional[int]:
 
     while current_pos < limit:
         try:
-            # fast C-search for the first element
             idx = hay.index(first, current_pos, limit)
         except ValueError:
             return None
