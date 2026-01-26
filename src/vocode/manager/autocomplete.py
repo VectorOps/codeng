@@ -19,6 +19,13 @@ class AutocompleteItem:
 AutocompleteProvider = Callable[
     ["UIServer", str, int, int], Awaitable[Optional[list[AutocompleteItem]]]
 ]
+def filter_autocomplete_items_for_text(
+    items: list[AutocompleteItem],
+    text: str,
+) -> list[AutocompleteItem]:
+    if not items:
+        return []
+    return [item for item in items if item.insert_text != text]
 
 
 class AutocompleteManager:
@@ -47,5 +54,8 @@ class AutocompleteManager:
             items = await provider(server, text, row, col)
             if items is None:
                 continue
-            results.extend(items)
+            filtered = filter_autocomplete_items_for_text(items, text)
+            if not filtered:
+                continue
+            results.extend(filtered)
         return results

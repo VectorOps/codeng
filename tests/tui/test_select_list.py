@@ -108,7 +108,7 @@ def test_select_list_enter_on_empty_does_not_notify_subscribers() -> None:
     component.subscribe_select(subscriber)
     enter_event = input_base.KeyEvent(action="down", key="enter")
     component.on_key_event(enter_event)
-    assert selected == []
+    assert selected == [None]
 
 
 def test_select_list_escape_notifies_subscribers_with_none() -> None:
@@ -151,11 +151,67 @@ def test_select_list_item_management_and_selection_bounds() -> None:
     assert [item.id for item in component.items] == ["x", "y"]
     assert component.selected_item is not None
     assert component.selected_item.id == "x"
-    component.remove_item_by_id("x")
-    assert [item.id for item in component.items] == ["y"]
+
+    component.set_selected_index(1)
+    assert component.selected_item is not None
+    assert component.selected_item.id == "y"
+    component.set_items(
+        [
+            {"id": "y", "text": "Item Y2"},
+            {"id": "z", "text": "Item Z"},
+        ]
+    )
+    assert [item.id for item in component.items] == ["y", "z"]
     assert component.selected_item is not None
     assert component.selected_item.id == "y"
     component.remove_item_by_id("y")
+    assert [item.id for item in component.items] == ["z"]
+    assert component.selected_item is not None
+    assert component.selected_item.id == "z"
+    component.remove_item_by_id("z")
     assert component.items == []
     assert component.selected_index is None
     assert component.selected_item is None
+
+
+def test_select_list_allows_no_selection_and_cycles() -> None:
+    component = tui_select_list.SelectListComponent(allow_no_selection=True)
+    component.set_items(
+        [
+            {"id": "a", "text": "Item A"},
+            {"id": "b", "text": "Item B"},
+        ]
+    )
+    assert component.selected_index is None
+
+    up_event = input_base.KeyEvent(action="down", key="up")
+    component.on_key_event(up_event)
+    assert component.selected_index == 1
+    component.on_key_event(up_event)
+    assert component.selected_index == 0
+    down_event = input_base.KeyEvent(action="down", key="down")
+    component.on_key_event(down_event)
+    assert component.selected_index == 1
+    component.on_key_event(down_event)
+    assert component.selected_index is None
+
+    component.set_selected_index(None)
+    assert component.selected_index is None
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=40,
+    )
+    terminal = tui_terminal.Terminal(console=console)
+    terminal.append_component(component)
+    options = console.options
+    lines = component.render(options)
+    assert lines
+    first_line = lines[0]
+    has_reverse = any(
+        isinstance(segment.style, rich_style.Style) and segment.style.reverse
+        for segment in first_line
+    )
+    assert not has_reverse

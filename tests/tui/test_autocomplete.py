@@ -177,7 +177,10 @@ def test_tui_state_run_autocomplete_after_run_with_space() -> None:
     ui_state.handle_autocomplete_options(items)
 
     select_component = terminal.components[-1]
-    select_component.select_current()
+    down_event = input_base.KeyEvent(action="down", key="down")
+    select_component.on_key_event(down_event)
+    enter_event = input_base.KeyEvent(action="down", key="enter")
+    select_component.on_key_event(enter_event)
 
     assert input_component.text == "/run wf-auto"
 
@@ -214,7 +217,10 @@ def test_tui_state_run_autocomplete_after_run_without_space() -> None:
     ui_state.handle_autocomplete_options(items)
 
     select_component = terminal.components[-1]
-    select_component.select_current()
+    down_event = input_base.KeyEvent(action="down", key="down")
+    select_component.on_key_event(down_event)
+    enter_event = input_base.KeyEvent(action="down", key="enter")
+    select_component.on_key_event(enter_event)
 
     assert input_component.text == "/run wf-auto"
 
@@ -250,7 +256,10 @@ def test_tui_state_autocomplete_apply_noop_on_mismatch() -> None:
     ]
     ui_state.handle_autocomplete_options(items)
     select_component = terminal.components[-1]
-    select_component.select_current()
+    down_event = input_base.KeyEvent(action="down", key="down")
+    select_component.on_key_event(down_event)
+    enter_event = input_base.KeyEvent(action="down", key="enter")
+    select_component.on_key_event(enter_event)
     assert input_component.text == "hello"
 
 
@@ -285,7 +294,10 @@ def test_tui_state_file_autocomplete_selection_removes_at_prefix() -> None:
     ]
     ui_state.handle_autocomplete_options(items)
     select_component = terminal.components[-1]
-    select_component.select_current()
+    down_event = input_base.KeyEvent(action="down", key="down")
+    select_component.on_key_event(down_event)
+    enter_event = input_base.KeyEvent(action="down", key="enter")
+    select_component.on_key_event(enter_event)
     assert input_component.text == "repo/file.py"
 
 
@@ -334,7 +346,10 @@ def test_tui_state_autocomplete_selection_uses_latest_items() -> None:
     )
 
     select_component = terminal.components[-1]
-    select_component.select_current()
+    down_event = input_base.KeyEvent(action="down", key="down")
+    select_component.on_key_event(down_event)
+    enter_event = input_base.KeyEvent(action="down", key="enter")
+    select_component.on_key_event(enter_event)
     assert input_component.text == "/run "
 
 
@@ -369,5 +384,8 @@ def test_tui_state_autocomplete_apply_insert_when_replace_text_empty() -> None:
     ]
     ui_state.handle_autocomplete_options(items)
     select_component = terminal.components[-1]
-    select_component.select_current()
+    down_event = input_base.KeyEvent(action="down", key="down")
+    select_component.on_key_event(down_event)
+    enter_event = input_base.KeyEvent(action="down", key="enter")
+    select_component.on_key_event(enter_event)
     assert input_component.text == "hello"

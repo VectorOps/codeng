@@ -183,9 +183,20 @@ class TUIState:
                     component.on_key_event(mapped_event)
                 return True
             if event.key == "enter":
-                if event.action == "down":
+                if event.action != "down":
+                    return True
+                if component.selected_index is None:
                     self._pop_action(ActionKind.AUTOCOMPLETE)
-                return False
+                    return False
+                mapped_event = input_base.KeyEvent(
+                    action="down",
+                    key="enter",
+                    ctrl=False,
+                    alt=False,
+                    shift=False,
+                )
+                component.on_key_event(mapped_event)
+                return True
 
         if top.kind is ActionKind.COMMAND_MANAGER:
             if event.action != "down":
@@ -197,6 +208,7 @@ class TUIState:
                 self._pop_action(ActionKind.COMMAND_MANAGER)
                 return True
 
+            # TODO: Optimize
             hotkeys = self._build_command_manager_hotkeys()
             binding = tui_input_component.KeyBinding(
                 key=event.key,
@@ -819,7 +831,10 @@ class TUIState:
                 ]
             )
             return
-        select = tui_select_list.SelectListComponent(id="autocomplete")
+        select = tui_select_list.SelectListComponent(
+            id="autocomplete",
+            allow_no_selection=True,
+        )
 
         def _on_select(item: tui_select_list.SelectItem | None) -> None:
             if item is None:
@@ -883,6 +898,7 @@ class TUIState:
                 for index, item in enumerate(items)
             ]
         )
+        select.set_selected_index(None)
         self._push_action(ActionKind.AUTOCOMPLETE, select)
 
     def _push_action(self, kind: ActionKind, component: tui_terminal.Component) -> None:

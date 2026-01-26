@@ -30,15 +30,17 @@ class SelectListComponent(tui_base.Component):
         ) = None,
         id: str | None = None,
         component_style: tui_base.ComponentStyle | None = None,
+        allow_no_selection: bool = False,
     ) -> None:
         super().__init__(
             id=id,
             component_style=component_style,
         )
         self._items: list[SelectItem] = []
-        self._selected_index: int = 0
+        self._selected_index: int | None = None
         self._view_offset: int = 0
         self._select_subscribers: list[typing.Callable[[SelectItem | None], None]] = []
+        self._allow_no_selection = allow_no_selection
         if items is not None:
             self.set_items(items)
 
@@ -48,8 +50,6 @@ class SelectListComponent(tui_base.Component):
 
     @property
     def selected_index(self) -> int | None:
-        if not self._items:
-            return None
         return self._selected_index
 
     @property
@@ -57,6 +57,8 @@ class SelectListComponent(tui_base.Component):
         if not self._items:
             return None
         index = self._selected_index
+        if index is None:
+            return None
         if index < 0 or index >= len(self._items):
             return None
         return self._items[index]
@@ -65,11 +67,32 @@ class SelectListComponent(tui_base.Component):
         self,
         items: typing.Iterable[SelectItem | typing.Mapping[str, typing.Any]],
     ) -> None:
+        prev_selected_index: typing.Optional[int] = self._selected_index
+        prev_selected_id: typing.Optional[str] = None
+        if (
+            prev_selected_index is not None
+            and prev_selected_index >= 0
+            and prev_selected_index < len(self._items)
+        ):
+            prev_selected_id = self._items[prev_selected_index].id
+
         self._items = [self._coerce_item(item) for item in items]
-        if self._items:
-            self._selected_index = 0
+        if not self._items:
+            self._selected_index = None
         else:
-            self._selected_index = 0
+            if prev_selected_index is None and self._allow_no_selection:
+                self._selected_index = None
+            else:
+                new_index: typing.Optional[int] = None
+                if prev_selected_id is not None:
+                    for index, item in enumerate(self._items):
+                        if item.id == prev_selected_id:
+                            new_index = index
+                            break
+                if new_index is not None:
+                    self._selected_index = new_index
+                else:
+                    self._selected_index = 0
         self._view_offset = 0
         self._sync_view_offset()
         self._mark_dirty()
@@ -92,13 +115,15 @@ class SelectListComponent(tui_base.Component):
             return
         del self._items[index]
         if not self._items:
-            self._selected_index = 0
+            self._selected_index = None
             self._view_offset = 0
         else:
-            if self._selected_index >= len(self._items):
-                self._selected_index = len(self._items) - 1
-            elif index < self._selected_index:
-                self._selected_index -= 1
+            current = self._selected_index
+            if current is not None:
+                if current >= len(self._items):
+                    self._selected_index = len(self._items) - 1
+                elif index < current:
+                    self._selected_index = current - 1
         self._sync_view_offset()
         self._mark_dirty()
 
@@ -106,18 +131,27 @@ class SelectListComponent(tui_base.Component):
         if not self._items:
             return
         self._items.clear()
-        self._selected_index = 0
+        self._selected_index = None
         self._view_offset = 0
         self._mark_dirty()
 
-    def set_selected_index(self, index: int) -> None:
+    def set_selected_index(self, index: int | None) -> None:
         if not self._items:
+            return
+        if index is None:
+            if not self._allow_no_selection:
+                return
+            if self._selected_index is None:
+                return
+            self._selected_index = None
+            self._sync_view_offset()
+            self._mark_dirty()
             return
         if index < 0:
             index = 0
         if index >= len(self._items):
             index = len(self._items) - 1
-        if index == self._selected_index:
+        if self._selected_index is not None and index == self._selected_index:
             return
         self._selected_index = index
         self._sync_view_offset()
@@ -130,8 +164,6 @@ class SelectListComponent(tui_base.Component):
 
     def select_current(self) -> None:
         item = self.selected_item
-        if item is None:
-            return
         for subscriber in list(self._select_subscribers):
             subscriber(item)
 
@@ -142,18 +174,39 @@ class SelectListComponent(tui_base.Component):
     def move_selection_up(self) -> None:
         if not self._items:
             return
-        if self._selected_index == 0:
-            return
-        self._selected_index -= 1
+        if not self._allow_no_selection:
+            if self._selected_index == 0:
+                return
+            self._selected_index = (
+                0 if self._selected_index is None else self._selected_index - 1
+            )
+        else:
+            if self._selected_index is None:
+                self._selected_index = len(self._items) - 1
+            elif self._selected_index == 0:
+                self._selected_index = None
+            else:
+                self._selected_index -= 1
         self._sync_view_offset()
         self._mark_dirty()
 
     def move_selection_down(self) -> None:
         if not self._items:
             return
-        if self._selected_index >= len(self._items) - 1:
-            return
-        self._selected_index += 1
+        if not self._allow_no_selection:
+            if self._selected_index is None:
+                self._selected_index = 0
+            elif self._selected_index >= len(self._items) - 1:
+                return
+            else:
+                self._selected_index += 1
+        else:
+            if self._selected_index is None:
+                self._selected_index = 0
+            elif self._selected_index >= len(self._items) - 1:
+                self._selected_index = None
+            else:
+                self._selected_index += 1
         self._sync_view_offset()
         self._mark_dirty()
 
@@ -167,6 +220,7 @@ class SelectListComponent(tui_base.Component):
         end = start + MAX_VISIBLE_ITEMS
         visible_items = self._items[start:end]
         lines: tui_base.Lines = []
+        selected_index = self._selected_index
         for index, item in enumerate(visible_items):
             text = rich_text.Text(item.text)
             item_lines = console.render_lines(
@@ -175,7 +229,11 @@ class SelectListComponent(tui_base.Component):
                 pad=False,
                 new_lines=False,
             )
-            is_selected = total > 0 and (start + index) == self._selected_index
+            is_selected = (
+                total > 0
+                and selected_index is not None
+                and (start + index) == selected_index
+            )
             if is_selected:
                 highlighted_lines: tui_base.Lines = []
                 for line in item_lines:
@@ -259,7 +317,10 @@ class SelectListComponent(tui_base.Component):
         max_offset = max(len(self._items) - MAX_VISIBLE_ITEMS, 0)
         if self._view_offset > max_offset:
             self._view_offset = max_offset
-        if self._selected_index < self._view_offset:
-            self._view_offset = self._selected_index
-        elif self._selected_index >= self._view_offset + MAX_VISIBLE_ITEMS:
-            self._view_offset = self._selected_index - MAX_VISIBLE_ITEMS + 1
+        index = self._selected_index
+        if index is None:
+            return
+        if index < self._view_offset:
+            self._view_offset = index
+        elif index >= self._view_offset + MAX_VISIBLE_ITEMS:
+            self._view_offset = index - MAX_VISIBLE_ITEMS + 1

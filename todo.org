@@ -1,7 +1,8 @@
 #+title: Todo
 
 * [ ] General
-** [ ] Fix component addition/removal for help
+** [ ] Add support for edge-level state policy override
+** [X] Fix component addition/removal for help
 ** [ ] Rework tooltip
 - Add support for history management (going up when help is visible) 
 - If hint text matches input text, enter should work as an enter and not as autocompletion
@@ -10,7 +11,8 @@
 ** [ ] Current context window usage (input) is showing accumulated number instead of last step number
 ** [ ] Create alternative Markdown renderer that only highlights, but does not format
 ** [ ] Need apply_patch formatter with input and output (collapsed)
-** [ ] Need to rename read_files to read_file9. Animation stops after showing/hiding toolbar component
+** [ ] Need to rename read_files to read_file
+** [ ] Animation stops after showing/hiding toolbar component
 ** [ ] Figure out how to support parallel nested workflows:
 - Remove the single workflow stack or refactor it to contain a list of runners instead of one 
 - Figure out how to drive multiple parallel workflow tasks. Multiple coordinators? Single awaitable for results? 
@@ -19,8 +21,11 @@
 ** [ ] Assign a number to collapse/expand a specific component and show number in the component view. (bad idea due to repaints?)
 ** [ ] Compact tool call representation, where consequent calls are merged onto a single.
 ** [ ] Hide time indicator for tool calls - it is not helpful14. Limit number of lines actually rendered for full refreshes, make the number configurable
-** [ ] Add hidden flag to components to prevent components from being removed from the bottom
-** [ ] Combine input + toolbar + help + etc to a single component due to dynamic component shifting17. When inserting component to a specific position, skip deleted items.
+** [X] Add hidden flag to components to prevent components from being removed from the bottom
+** [ ] Combine input + toolbar + help + etc to a single component due to dynamic component shifting
+- Move stacking logic out of TUIState
+- Move keyboard logic out of TUIState
+** [X] When inserting component to a specific position, skip deleted items.
 ** [ ] ctrl+x followed by c when everything is collapsed prints a line to output for some reason and breaks rendering
 ** [ ] Figure out how to show input/http_input nodes as a user input (highlight, etc)
 ** [ ] Figure out why http_input intemediate message is not overridden by new text
