@@ -193,7 +193,6 @@ class Terminal:
 
         for c in removed:
             self._cache.pop(c, None)
-            self._id_index.pop(c.id, None)
 
         removed.clear()
 
@@ -208,6 +207,7 @@ class Terminal:
             self._animation_components.remove(component)
         if component in self._focus_stack:
             self.remove_focus(component)
+        self._id_index.pop(component.id, None)
         component.terminal = None
 
     def register_animation(self, component: tui_base.Component) -> None:
@@ -444,6 +444,9 @@ class Terminal:
             top = self._screens[-1]
             top.render()
             return
+
+        self._delete_removed_components()
+
         options = self._console.options
         for component in self._dirty_components:
             if component.is_hidden:

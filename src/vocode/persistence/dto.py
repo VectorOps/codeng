@@ -72,5 +72,6 @@ class WorkflowExecutionDTO(BaseModel):
     node_executions: Dict[UUID, NodeExecutionDTO] = Field(default_factory=dict)
     steps: List[StepDTO] = Field(default_factory=list)
     llm_usage: Optional[Dict[str, Any]] = None
+    last_step_llm_usage: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime

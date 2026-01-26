@@ -240,7 +240,11 @@ class WorkflowExecution(BaseModel):
     node_executions: Dict[UUID, NodeExecution] = Field(default_factory=dict)
     steps: List[Step] = Field(default_factory=list)
     llm_usage: Optional[LLMUsageStats] = Field(
-        default=None, description="LLM usage stats for this step, if any."
+        default=None, description="LLM usage stats for this workflow execution, if any."
+    )
+    last_step_llm_usage: Optional[LLMUsageStats] = Field(
+        default=None,
+        description="LLM usage stats for the last completed step, if any.",
     )
     state: Dict[str, Any] = {}
     created_at: datetime = Field(default_factory=utcnow)

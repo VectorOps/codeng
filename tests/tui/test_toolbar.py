@@ -164,6 +164,7 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
         status=manager_proto.UIServerStatus.RUNNING,
         runners=[runner_frame1, runner_frame2],
         active_workflow_llm_usage=active_usage,
+        last_step_llm_usage=active_usage,
         project_llm_usage=project_usage,
     )
 
@@ -173,7 +174,7 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
     renderable = toolbar._build_renderable(rich_console.Console())
     rendered_text = str(renderable)
     assert "wf1@node1 > wf2@node2" in rendered_text
-    assert "10/1k" in rendered_text
+    assert "step: 10/1k" in rendered_text
     assert "ts: 100" in rendered_text
     assert "tr: 50" in rendered_text
     assert "$0.25" in rendered_text

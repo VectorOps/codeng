@@ -1053,6 +1053,13 @@ class Runner:
     def _apply_llm_usage(self, usage: Optional[state.LLMUsageStats]) -> None:
         if usage is None:
             return
+        self.execution.last_step_llm_usage = state.LLMUsageStats(
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            cost_dollars=usage.cost_dollars,
+            input_token_limit=usage.input_token_limit,
+            output_token_limit=usage.output_token_limit,
+        )
         execution_usage = self.execution.llm_usage
         if execution_usage is None:
             self.execution.llm_usage = state.LLMUsageStats(

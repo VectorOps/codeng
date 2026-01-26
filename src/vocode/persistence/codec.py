@@ -166,6 +166,11 @@ def to_dto(execution: state.WorkflowExecution) -> persistence_dto.WorkflowExecut
         node_executions=node_dtos,
         steps=step_dtos,
         llm_usage=execution.llm_usage.model_dump() if execution.llm_usage is not None else None,
+        last_step_llm_usage=(
+            execution.last_step_llm_usage.model_dump()
+            if execution.last_step_llm_usage is not None
+            else None
+        ),
         created_at=execution.created_at,
         updated_at=execution.updated_at,
     )
@@ -180,6 +185,11 @@ def from_dto(dto: persistence_dto.WorkflowExecutionDTO) -> state.WorkflowExecuti
         llm_usage=(
             state.LLMUsageStats.model_validate(dto.llm_usage)
             if dto.llm_usage is not None
+            else None
+        ),
+        last_step_llm_usage=(
+            state.LLMUsageStats.model_validate(dto.last_step_llm_usage)
+            if dto.last_step_llm_usage is not None
             else None
         ),
     )

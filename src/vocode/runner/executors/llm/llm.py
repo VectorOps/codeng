@@ -445,6 +445,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             completion_tokens=completion_tokens,
             cost_dollars=round_cost,
             input_token_limit=model_input_token_limit,
+            output_token_limit=cfg.max_tokens,
         )
 
         final_outcome_name = outcome_name if len(outcome_names) > 1 else None
