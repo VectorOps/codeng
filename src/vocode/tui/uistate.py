@@ -188,17 +188,13 @@ class TUIState:
                     if not items:
                         return True
                     if selected_index is None:
+                        if len(items) == 1:
+                            component.set_selected_index(0)
+                            component.select_current()
+                            return True
                         component.set_selected_index(0)
                         return True
-                    mapped_event = input_base.KeyEvent(
-                        action="down",
-                        key="enter",
-                        ctrl=False,
-                        alt=False,
-                        shift=False,
-                    )
-                    component.on_key_event(mapped_event)
-                    self._pop_action(ActionKind.AUTOCOMPLETE)
+                    component.select_current()
                     return True
                 if is_ctrl_nav:
                     items = component.items
@@ -218,7 +214,16 @@ class TUIState:
                     if selected_index is None:
                         if key == "up":
                             return self._handle_history_up(event)
-                        return self._handle_history_down(event)
+                        handled, exhausted = self._maybe_history_down()
+                        if handled:
+                            return True
+                        if exhausted:
+                            items = component.items
+                            if not items:
+                                return True
+                            component.set_selected_index(0)
+                            return True
+                        return False
                     mapped_event = input_base.KeyEvent(
                         action="down",
                         key=key,
@@ -345,22 +350,28 @@ class TUIState:
             component.set_cursor_position(last_row, last_col)
         return True
 
-    def _handle_history_down(self, event: input_base.KeyEvent) -> bool:
+    def _maybe_history_down(self) -> tuple[bool, bool]:
         component = self._input_component
         lines = component.lines
         if not lines:
-            return False
+            return False, False
         last_row = len(lines) - 1
         if component.cursor_row != last_row:
-            return False
+            return False, False
         new_text = self._history_manager.navigate_next()
         if new_text is None:
-            return False
+            return False, True
         component.text = new_text
         lines = component.lines
         if lines:
             component.set_cursor_position(0, 0)
-        return True
+        return True, False
+
+
+    def _handle_history_down(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        handled, _ = self._maybe_history_down()
+        return handled
 
     def _handle_stop(self, event: input_base.KeyEvent) -> bool:
         _ = event

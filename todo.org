@@ -1,11 +1,22 @@
 #+title: Todo
 
 * [ ] General
+** [X] Add support for RateLimit exception with correct timeout
 ** [ ] Emit LLM usage when tool call steps are returned from LLM executor
 ** [ ] Auto-complete
+*** [X] Tab with single value in the list should auto-select the value
+*** [X] Pressing down with no history should select first item of auto-complete
 *** [ ] Space with selection should auto-complete
-*** [ ] Tab with open auto-complete list, but no selection should select first item, but not auto-complete
-*** [ ] Pressing up going through the history and when auto-complete is displayed, pressing up should continue the history navigation? Or prevent showing auto-complete list for the current word if cursor is not at the end of it
+*** [X] Tab with open auto-complete list, but no selection should select first item, but not auto-complete
+*** [X] Pressing up going through the history and when auto-complete is displayed, pressing up should continue the history navigation? Or prevent showing auto-complete list for the current word if cursor is not at the end of it
+** [ ] Fix viewer pane
+*** [ ] Fix jerkiness on key press
+*** [ ] Add top/bottom hotkeys
+*** [ ] Start at the bottom always
+** [ ] Send LLM stats in tool call rounds as well
+** [ ] Send LLM stats when executor starts (from old state?)
+** [ ] Store cached stats in LLM usage stats
+** [ ] Terminal resize does not re-render all components correctly
 ** [X] Add support for edge-level state policy override
 ** [X] Fix component addition/removal for help
 ** [X] Rework tooltip
@@ -96,3 +107,8 @@
 * [ ] Patchers
 ** [ ] More strict V4A parser
 *** [ ] Prevent partial updates?
+* [ ] Know
+** [ ] C parser
+** [ ] C++ parser
+** [ ] Add extensions to parsers (.h -> cpp or to c, etc)
+

@@ -268,7 +268,7 @@ def test_autocomplete_up_down_do_not_activate_when_inactive() -> None:
         shift=False,
     )
     ui_state._handle_input_event(event_down)
-    assert select_component.selected_index is None
+    assert select_component.selected_index == 0
 
 
 def test_autocomplete_ctrl_n_p_activate_and_navigate() -> None:
