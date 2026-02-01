@@ -210,6 +210,64 @@ class ToolPromptExecutor(BaseExecutor):
         yield step
 
 
+@ExecutorFactory.register("fake-llm-tool")
+class FakeLLMToolExecutor(BaseExecutor):
+    def __init__(self, config: models.Node, project):
+        super().__init__(config, project)
+
+    async def init(self) -> None:
+        return None
+
+    async def shutdown(self) -> None:
+        return None
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        execution = inp.execution
+        has_tool_result = False
+        for existing_step in execution.steps:
+            if (
+                existing_step.message is not None
+                and existing_step.message.tool_call_responses
+            ):
+                has_tool_result = True
+                break
+        if not has_tool_result:
+            usage = state.LLMUsageStats(
+                prompt_tokens=10,
+                completion_tokens=5,
+                cost_dollars=1.0,
+            )
+            tool_req = state.ToolCallReq(
+                id="call-fake-tool",
+                name="fake-tool",
+                arguments={"x": 1},
+            )
+            msg = state.Message(
+                role=models.Role.ASSISTANT,
+                text="with tool",
+                tool_call_requests=[tool_req],
+            )
+            step = state.Step(
+                execution=execution,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message=msg,
+                llm_usage=usage,
+                is_complete=True,
+            )
+        else:
+            msg = state.Message(
+                role=models.Role.ASSISTANT,
+                text="after tool",
+            )
+            step = state.Step(
+                execution=execution,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message=msg,
+                is_complete=True,
+            )
+        yield step
+
+
 class RecordingTool:
     def __init__(self) -> None:
         self.calls: list[tuple[tools_base.ToolReq, dict]] = []
@@ -1146,6 +1204,70 @@ async def test_runner_emits_waiting_input_status_for_prompt_steps():
     ]
     assert running_indices
     assert any(run_idx > first_wait_idx for run_idx in running_indices)
+
+
+@pytest.mark.asyncio
+async def test_runner_tool_round_carries_llm_usage_on_tool_request():
+    node = models.Node(
+        name="tool-llm-node",
+        type="fake-llm-tool",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-tool-llm-usage", graph=graph)
+
+    project = StubProject()
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    agen = runner.run()
+
+    def handler(event: RunEvent) -> RunEventResp:
+        step = event.step
+        if step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        if (
+            step.type == state.StepType.TOOL_REQUEST
+            and step.message is not None
+            and step.message.tool_call_requests
+        ):
+            return RunEventResp(
+                resp_type=RunEventResponseType.APPROVE,
+                message=None,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=False)
+
+    tool_events = [
+        e
+        for e in events
+        if e.step is not None and e.step.type == state.StepType.TOOL_REQUEST
+    ]
+    assert tool_events
+    tool_step = tool_events[0].step
+    assert tool_step is not None
+    assert tool_step.llm_usage is not None
+    assert tool_step.llm_usage.prompt_tokens == 10
+    assert tool_step.llm_usage.completion_tokens == 5
+    assert tool_step.llm_usage.cost_dollars == 1.0
+
+    assert project.llm_usage.prompt_tokens == 10
+    assert project.llm_usage.completion_tokens == 5
+    assert project.llm_usage.cost_dollars == 1.0
 
 
 @pytest.mark.asyncio
