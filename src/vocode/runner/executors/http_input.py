@@ -22,6 +22,12 @@ class HTTPInputNode(models.Node):
         default=None,
         description="Optional status message emitted while waiting for HTTP input.",
     )
+    content_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional default content type for incoming text when request headers do not provide one."
+        ),
+    )
 
 
 @runner_base.ExecutorFactory.register("http-input")
@@ -49,6 +55,18 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
                 return web.json_response(
                     {"error": "missing_text"}, status=400
                 )
+            header_content_type = request.headers.get("Content-Type")
+            if isinstance(header_content_type, str) and header_content_type:
+                effective_content_type: Optional[str] = header_content_type
+            else:
+                effective_content_type = self.config.content_type
+
+            is_markdown = (
+                effective_content_type is not None
+                and "markdown" in effective_content_type.lower()
+            )
+            if not is_markdown:
+                text = f"```\n{text}\n```"
 
             role_value = data.get("role", models.Role.USER.value)
             try:
