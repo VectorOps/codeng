@@ -292,6 +292,29 @@ class LLMExecutor(runner_base.BaseExecutor):
                         yield interim_step
 
                 break
+            except litellm.RateLimitError as e:
+                logger.warning("LLM rate limit retry", exc=e)
+                if attempt < max_retries:
+                    attempt += 1
+
+                    wait = 60
+                    if hasattr(e, "response") and e.response is not None:
+                        retry_after = e.response.headers.get("retry-after")
+                        if retry_after:
+                            wait = int(retry_after) + 1
+
+                    await asyncio.sleep(wait)
+                    continue
+
+                error_step = self._build_step_from_message(
+                    step,
+                    role=models.Role.SYSTEM,
+                    step_type=state.StepType.REJECTION,
+                    text=f"LLM error: {e}",
+                    is_complete=True,
+                )
+                yield error_step
+                return
             except Exception as e:
                 status_code = None
                 try:
@@ -306,7 +329,7 @@ class LLMExecutor(runner_base.BaseExecutor):
 
                 if should_retry and attempt < max_retries:
                     attempt += 1
-                    await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+                    await asyncio.sleep(1 * (2 ** (attempt - 1)))
 
                     logger.warning(
                         "LLM retry",
