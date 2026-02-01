@@ -154,6 +154,7 @@ class Runner:
         self,
         execution: state.NodeExecution,
         req: state.ToolCallReq,
+        usage: Optional[state.LLMUsageStats] = None,
     ) -> state.Step:
         prompt_message = state.Message(
             role=models.Role.ASSISTANT,
@@ -167,6 +168,14 @@ class Runner:
             is_complete=True,
             is_final=False,
         )
+        if usage is not None:
+            prompt_step.llm_usage = state.LLMUsageStats(
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                cost_dollars=usage.cost_dollars,
+                input_token_limit=usage.input_token_limit,
+                output_token_limit=usage.output_token_limit,
+            )
         return self._persist_step(prompt_step)
 
     def _process_tool_approval_response(
@@ -611,6 +620,13 @@ class Runner:
 
                 self._apply_llm_usage(last_complete_step.llm_usage)
 
+                if last_complete_step.llm_usage is not None:
+                    usage_status_event = self.set_status(
+                        self.status,
+                        current_execution=current_execution,
+                    )
+                    _ = yield usage_status_event
+
                 if (
                     last_complete_step is not None
                     and last_complete_step.type == state.StepType.WORKFLOW_REQUEST
@@ -660,6 +676,9 @@ class Runner:
                             persisted_prompt = self._create_tool_prompt_step(
                                 current_execution,
                                 req,
+                                last_complete_step.llm_usage
+                                if last_complete_step is not None
+                                else None,
                             )
                             tool_request_steps[id(req)] = persisted_prompt
 

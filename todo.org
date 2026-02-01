@@ -9,10 +9,10 @@
 *** [ ] Space with selection should auto-complete
 *** [X] Tab with open auto-complete list, but no selection should select first item, but not auto-complete
 *** [X] Pressing up going through the history and when auto-complete is displayed, pressing up should continue the history navigation? Or prevent showing auto-complete list for the current word if cursor is not at the end of it
-** [ ] Fix viewer pane
-*** [ ] Fix jerkiness on key press
-*** [ ] Add top/bottom hotkeys
-*** [ ] Start at the bottom always
+** [X] Fix viewer pane
+*** [X] Fix jerkiness on key press
+*** [X] Add top/bottom hotkeys
+*** [X] Start at the bottom always
 ** [ ] Send LLM stats in tool call rounds as well
 ** [ ] Send LLM stats when executor starts (from old state?)
 ** [ ] Store cached stats in LLM usage stats
