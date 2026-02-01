@@ -18,17 +18,20 @@ class BaseViewerScreen(abc.ABC):
         self,
         terminal: tui_terminal.Terminal,
         enable_search: bool = True,
+        initial_bottom: bool = True,
     ) -> None:
         self._terminal: tui_terminal.Terminal = terminal
         self._top_line: int = 0
         self._cursor_line: int = 0
         self._enable_search: bool = enable_search
+        self._initial_bottom: bool = initial_bottom
         self._search_pattern: re.Pattern[str] | None = None
         self._last_search: str | None = None
         self._search_mode: bool = False
         self._search_buffer: str = ""
         self._last_width: int | None = None
         self._first_render: bool = True
+        self._position_initialized: bool = False
 
     @abc.abstractmethod
     def _get_view_lines(self, top_line: int, height: int) -> tuple[list[str], int]:
@@ -49,6 +52,17 @@ class BaseViewerScreen(abc.ABC):
         if not lines:
             return ""
         return lines[0]
+
+    def _initialize_position(self) -> None:
+        total = self._total_lines()
+        height = self._height()
+        if self._initial_bottom and total > 0:
+            self._cursor_line = total - 1
+            self._top_line = max(total - height, 0)
+        else:
+            self._cursor_line = 0
+            self._top_line = 0
+        self._position_initialized = True
 
     def _clamp_state(self) -> None:
         height = self._height()
@@ -159,7 +173,9 @@ class BaseViewerScreen(abc.ABC):
         status = f"{self._cursor_line + 1}/{total} ({percent}%)"
         base_help = "q: quit  j/k, up/down: line  f/b, pgdn/pgup, space: page"
         if self._enable_search:
-            help_text = f"{base_help}  /: search  n: next"
+            help_text = (
+                f"{base_help}  g/G: top/bottom  /: search  n: next"
+            )
         else:
             help_text = base_help
         separator = (
@@ -188,6 +204,8 @@ class BaseViewerScreen(abc.ABC):
         if self._last_width is None or self._last_width != width:
             self.refresh_data()
             self._last_width = width
+        if not self._position_initialized:
+            self._initialize_position()
         self._clamp_state()
         body_lines = self._build_body_lines()
         footer = self._build_footer_renderable()
@@ -241,18 +259,44 @@ class BaseViewerScreen(abc.ABC):
             return
         if key == "j" or key == "down":
             if self._enable_search:
+                before_cursor = self._cursor_line
                 self._move_cursor(1)
+                if self._cursor_line == before_cursor:
+                    return
             else:
+                old_top = self._top_line
                 self._scroll_lines(1)
+                if self._top_line == old_top:
+                    return
                 self._cursor_line = self._top_line
             self.render()
             return
         if key == "k" or key == "up":
             if self._enable_search:
+                before_cursor = self._cursor_line
                 self._move_cursor(-1)
+                if self._cursor_line == before_cursor:
+                    return
             else:
+                old_top = self._top_line
                 self._scroll_lines(-1)
+                if self._top_line == old_top:
+                    return
                 self._cursor_line = self._top_line
+            self.render()
+            return
+        if key == "home":
+            self._cursor_line = 0
+            self._top_line = 0
+            self._clamp_state()
+            self.render()
+            return
+        if key == "end":
+            total = self._total_lines()
+            if total > 0:
+                self._cursor_line = total - 1
+                self._top_line = max(total - self._height(), 0)
+                self._clamp_state()
             self.render()
             return
         if key == "g" and not event.ctrl and not event.alt:
@@ -316,8 +360,13 @@ class BaseViewerScreen(abc.ABC):
 
 
 class TextViewerScreen(BaseViewerScreen):
-    def __init__(self, terminal: tui_terminal.Terminal, text: str) -> None:
-        super().__init__(terminal)
+    def __init__(
+        self,
+        terminal: tui_terminal.Terminal,
+        text: str,
+        initial_bottom: bool = True,
+    ) -> None:
+        super().__init__(terminal, initial_bottom=initial_bottom)
         self._lines: list[str] = text.splitlines() or [""]
 
     def _get_view_lines(self, top_line: int, height: int) -> tuple[list[str], int]:

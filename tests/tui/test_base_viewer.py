@@ -69,3 +69,57 @@ def test_base_viewer_search_and_next() -> None:
 
     output = buffer.getvalue()
     assert "target" in output
+
+
+def test_base_viewer_initial_position_bottom() -> None:
+    lines = "\n".join(str(i) for i in range(20))
+    terminal, buffer = _make_terminal(20, 10)
+    screen = base_viewer.TextViewerScreen(terminal, lines)
+    terminal.push_screen(screen)
+    output = buffer.getvalue().splitlines()
+    assert any("19" in line for line in output)
+
+
+def test_base_viewer_initial_position_top() -> None:
+    lines = "\n".join(str(i) for i in range(20))
+    terminal, buffer = _make_terminal(20, 10)
+    screen = base_viewer.TextViewerScreen(
+        terminal, lines, initial_bottom=False
+    )
+    terminal.push_screen(screen)
+    output = buffer.getvalue().splitlines()
+    assert any("0" in line for line in output)
+
+
+def test_base_viewer_home_end_keys() -> None:
+    lines = "\n".join(str(i) for i in range(50))
+    terminal, buffer = _make_terminal(20, 10)
+    screen = base_viewer.TextViewerScreen(terminal, lines)
+    terminal.push_screen(screen)
+
+    home = input_base.KeyEvent(action="down", key="home")
+    screen.on_key_event(home)
+    after_home = buffer.getvalue()
+
+    end = input_base.KeyEvent(action="down", key="end")
+    screen.on_key_event(end)
+    after_end = buffer.getvalue()
+
+    assert after_home != after_end
+
+
+def test_no_jitter_when_pressing_up_at_top() -> None:
+    lines = "\n".join(str(i) for i in range(50))
+    terminal, buffer = _make_terminal(20, 10)
+    screen = base_viewer.TextViewerScreen(terminal, lines)
+    terminal.push_screen(screen)
+
+    home = input_base.KeyEvent(action="down", key="home")
+    screen.on_key_event(home)
+    before_up = buffer.getvalue()
+
+    up = input_base.KeyEvent(action="down", key="up")
+    screen.on_key_event(up)
+    after_up = buffer.getvalue()
+
+    assert before_up == after_up
