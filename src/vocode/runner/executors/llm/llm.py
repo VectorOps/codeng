@@ -368,9 +368,22 @@ class LLMExecutor(runner_base.BaseExecutor):
         message_data = first_choice.message
         content = message_data.content
 
-        assistant_text = ""
+        # Prefer the streamed text as the final assistant message,
+        # but capture the assembled content for comparison / fallback.
+        response_text: str = ''
         if isinstance(content, str):
-            assistant_text = content
+            response_text = content
+
+        # Debug comparison of streamed vs assembled text
+        if assistant_partial != response_text:
+            logger.info(
+                "LLM message text comparison",
+                streamed=assistant_partial,
+                assembled=response_text,
+            )
+
+        # Use streamed text as canonical; fall back to assembled if stream was empty
+        assistant_text = assistant_partial if assistant_partial else response_text
 
         outcome_name: Optional[str] = None
         tool_call_reqs: List[state.ToolCallReq] = []

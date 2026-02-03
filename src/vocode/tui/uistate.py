@@ -725,8 +725,6 @@ class TUIState:
         step: vocode_state.Step,
         display: manager_proto.RunnerReqDisplayOpts | None = None,
     ) -> None:
-        logger.info("msg", s=step.message, final=step.is_final)
-
         if display is not None and display.visible is False:
             return
         mode = step.output_mode
