@@ -210,7 +210,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
             )
 
         style = tui_styles.TOOL_CALL_DURATION_STYLE
-        status_line = rich_markup.render(f"[{style}]{icon}  {status_text}[/]")
+        status_line = rich_markup.render(f"  [{style}]{icon} {status_text}[/]")
         renderables.append(status_line)
 
         if len(renderables) == 1:
