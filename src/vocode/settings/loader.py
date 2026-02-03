@@ -549,7 +549,20 @@ def load_settings(path: str) -> Settings:
     vars_map: Dict[str, Any] = {}
     vars_map.update(included_vars)
     vars_map.update(dir_vars)
-    vars_map.update(root_vars)
+
+    filtered_root_vars: Dict[str, Any] = {}
+    for k, v in root_vars.items():
+        if isinstance(v, str):
+            m = VAR_PATTERN.fullmatch(v)
+            if m:
+                ref = m.group(1)
+                if ref.startswith("env:"):
+                    env_name = ref[4:]
+                    if not env_name or os.getenv(env_name) is None:
+                        continue
+        filtered_root_vars[k] = v
+
+    vars_map.update(filtered_root_vars)
 
     # Resolve variable-to-variable references (e.g., a: ${b}) with cycle detection
     vars_map = _resolve_variables(vars_map)
