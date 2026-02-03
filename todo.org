@@ -1,8 +1,15 @@
 #+title: Todo
 
 * [ ] General
+** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
+** [ ] Fix apply_patch result formatter to not be JSON
 ** [ ] Why do we have a lag when we approve a tool call? Is knowlt blocking the main thread?
-** [ ] Patch tool needs its own formatter
+*** [ ] Store last project refresh timestamp on a project. Use timestamp to cull files to be tested before even running DuckDB query. Add a flag to control behavior and disable pre-filtering on bad filesystems.
+*** [ ] Instead of getting all files at once - batch them in 100 and process batches independently.
+*** [ ] Fix comparison to be greater than:
+if p.existing_meta and p.existing_meta.last_updated == mod_time:
+*** [ ] Move glob and path filtering to a thread, as well as timestamp check
+** [X] Patch tool needs its own formatter
 ** [ ] Know: rename read_files to read_file
 ** [ ] Never collapse tool output if approval is requested?
 ** [ ] Unicode support is wonky - write tests for patches using utf-8
