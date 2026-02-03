@@ -31,7 +31,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
     _STATUS_TEXT: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
         vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "Waiting for confirmation",
         vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "Pending execution",
-        vocode_state.ToolCallReqStatus.EXECUTING: "Running",
+        vocode_state.ToolCallReqStatus.EXECUTING: "Running...",
         vocode_state.ToolCallReqStatus.REJECTED: "Rejected",
     }
 
@@ -210,7 +210,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
             )
 
         style = tui_styles.TOOL_CALL_DURATION_STYLE
-        status_line = rich_markup.render(f"[{style}]{icon} {status_text}[/]")
+        status_line = rich_markup.render(f"[{style}]{icon}  {status_text}[/]")
         renderables.append(status_line)
 
         if len(renderables) == 1:

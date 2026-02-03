@@ -201,7 +201,7 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         arguments: typing.Any,
         config: vocode_settings.ToolCallFormatter | None,
     ) -> tui_base.Renderable | None:
-        display_name = tool_name
+        display_name = self.format_tool_name(tool_name)
         if config is not None and config.title:
             display_name = config.title
         options, options_error = self._parse_options(config)
@@ -210,7 +210,11 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         min_value_chars = options.min_value_chars
 
         text = rich_text.Text(no_wrap=True)
-        text.append("<<< ", style=tui_styles.TOOL_CALL_BULLET_STYLE)
+        text.append(
+            terminal.unicode.glyph(":circle:"),
+            style=tui_styles.TOOL_CALL_BULLET_STYLE,
+        )
+        text.append(" ")
         text.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
         if options_error is not None:
             text.append(" ", style=tui_styles.TOOL_CALL_META_STYLE)
@@ -238,7 +242,7 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
 
         joiner = ", "
         max_width = self._max_width(terminal)
-        prefix_len = _cell_len("<<< ")
+        prefix_len = _cell_len(terminal.unicode.glyph(":circle:")) + 1
         fitted_pairs, need_ellipsis = _fit_kv_pairs_to_width(
             max_width=max_width,
             prefix_len=prefix_len,
@@ -284,7 +288,7 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         if not config.show_output and not options.format_output:
             return None
 
-        display_name = tool_name
+        display_name = self.format_tool_name(tool_name)
         if config.title:
             display_name = config.title
         max_value_chars = options.max_output_chars
@@ -294,7 +298,11 @@ class GenericToolCallFormatter(tui_tcf.BaseToolCallFormatter):
             rendered = rendered[: max_value_chars - 3] + "..."
 
         text = rich_text.Text(no_wrap=True)
-        text.append(">>> ", style=tui_styles.TOOL_CALL_BULLET_STYLE)
+        text.append(
+            terminal.unicode.glyph(":circle:"),
+            style=tui_styles.TOOL_CALL_BULLET_STYLE,
+        )
+        text.append(" ")
         text.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
         if options_error is not None:
             text.append(" ", style=tui_styles.TOOL_CALL_META_STYLE)
