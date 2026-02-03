@@ -3,6 +3,7 @@ from __future__ import annotations
 import typing
 from abc import ABC, abstractmethod
 from typing import ClassVar
+import re
 
 from vocode.logger import logger
 from vocode import settings as vocode_settings
@@ -12,6 +13,19 @@ from vocode.tui.lib import base as tui_base
 
 
 class BaseToolCallFormatter(ABC):
+    def format_tool_name(self, tool_name: str) -> str:
+        name = tool_name.strip()
+        if not name:
+            return ""
+        name = name.replace("_", " ").replace("-", " ")
+        tokens: list[str] = []
+        for raw in name.split():
+            step1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1 \2", raw)
+            step2 = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", step1)
+            tokens.append(step2)
+        words = " ".join(tokens).split()
+        capitalized = [w[0].upper() + w[1:] if w else "" for w in words]
+        return " ".join(capitalized)
     @abstractmethod
     def format_input(
         self,

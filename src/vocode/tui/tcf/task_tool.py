@@ -35,7 +35,7 @@ class TaskToolFormatter(tui_tcf.BaseToolCallFormatter):
         result: Any,
         config: vocode_settings.ToolCallFormatter | None,
     ) -> tui_base.Renderable | None:
-        title = tool_name
+        title = self.format_tool_name(tool_name)
         if config is not None and config.title:
             title = config.title
 

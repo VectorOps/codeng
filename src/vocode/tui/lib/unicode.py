@@ -22,6 +22,7 @@ class UnicodeManager:
         "hourglass_with_flowing_sand": "\u23f3\ufe0e",
         "heavy_multiplication_x": "\u2716\ufe0e",
         "heavy_check_mark": "\u2714\ufe0e",
+        ":circle:": "\u25cf",
     }
 
     _EMOJI_ASCII: Final[dict[str, str]] = {
@@ -33,6 +34,7 @@ class UnicodeManager:
         "hourglass_with_flowing_sand": "...",
         "heavy_multiplication_x": "[x]",
         "heavy_check_mark": "[+]",
+        ":circle:": "*",
     }
 
     _SPINNER_UNICODE: Final[dict[SpinnerVariant, tuple[str, ...]]] = {

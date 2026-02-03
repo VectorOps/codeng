@@ -4,6 +4,7 @@ import typing
 
 from rich import console as rich_console
 from rich import markdown as rich_markdown
+from rich import syntax as rich_syntax
 from rich import text as rich_text
 
 from vocode import settings as vocode_settings
@@ -22,12 +23,16 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         arguments: typing.Any,
         config: vocode_settings.ToolCallFormatter | None,
     ) -> tui_base.Renderable | None:
-        display_name = tool_name
+        display_name = self.format_tool_name(tool_name)
         if config is not None and config.title:
             display_name = config.title
 
         header = rich_text.Text(no_wrap=True)
-        header.append("<<< ", style=tui_styles.TOOL_CALL_BULLET_STYLE)
+        header.append(
+            terminal.unicode.glyph(":circle:"),
+            style=tui_styles.TOOL_CALL_BULLET_STYLE,
+        )
+        header.append(" ")
         header.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
 
         content_str = ""
@@ -36,9 +41,12 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         elif isinstance(arguments, str):
             content_str = arguments
 
-        markdown = rich_markdown.Markdown(content_str)
+        if "```" in content_str:
+            body = rich_markdown.Markdown(content_str)
+        else:
+            body = rich_syntax.Syntax(content_str, "diff")
 
-        return rich_console.Group(header, markdown)
+        return rich_console.Group(header, body)
 
     def format_output(
         self,
@@ -47,12 +55,16 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         result: typing.Any,
         config: vocode_settings.ToolCallFormatter | None,
     ) -> tui_base.Renderable | None:
-        display_name = tool_name
+        display_name = self.format_tool_name(tool_name)
         if config is not None and config.title:
             display_name = config.title
 
         header = rich_text.Text(no_wrap=True)
-        header.append(">>> ", style=tui_styles.TOOL_CALL_BULLET_STYLE)
+        header.append(
+            terminal.unicode.glyph(":circle:"),
+            style=tui_styles.TOOL_CALL_BULLET_STYLE,
+        )
+        header.append(" ")
         header.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
         header.append(" => ", style=tui_styles.TOOL_CALL_META_STYLE)
 
