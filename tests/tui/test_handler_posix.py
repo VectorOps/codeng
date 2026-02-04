@@ -89,6 +89,16 @@ def test_decoder_bracketed_paste() -> None:
     assert paste_event.text == "hello world"
 
 
+def test_decoder_bracketed_paste_multiline() -> None:
+    decoder = posix.PosixInputDecoder()
+    data = b"\x1b[200~first line\nsecond line\x1b[201~"
+    events = decoder.feed(data)
+    assert len(events) == 1
+    paste_event = events[0]
+    assert isinstance(paste_event, base.PasteEvent)
+    assert paste_event.text == "first line\nsecond line"
+
+
 def test_handler_single_escape_emits_key_event(monkeypatch) -> None:
     read_fd, write_fd = os.pipe()
 

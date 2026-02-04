@@ -181,14 +181,13 @@ class InputComponent(tui_base.Component):
         }
         if self._single_line:
             keymap[KeyBinding("enter")] = self.submit
-            keymap[KeyBinding("enter", alt=True)] = self.submit
         else:
             if self._submit_with_enter:
                 keymap[KeyBinding("enter")] = self.submit
-                keymap[KeyBinding("enter", ctrl=True)] = self.break_line
+                keymap[KeyBinding("enter", alt=True)] = self.break_line
             else:
                 keymap[KeyBinding("enter")] = self.break_line
-            keymap[KeyBinding("enter", alt=True)] = self.submit
+                keymap[KeyBinding("enter", alt=True)] = self.submit
         return keymap
 
     def subscribe_submit(self, subscriber: typing.Callable[[str], None]) -> None:
@@ -347,6 +346,15 @@ class InputComponent(tui_base.Component):
     def break_line(self) -> None:
         self._editor.break_line()
         self._mark_dirty()
+
+    def paste_text(self, text: str) -> None:
+        if not text:
+            return
+        for ch in text:
+            if ch == "\n":
+                self.break_line()
+            else:
+                self.insert_char(ch)
 
     def on_key_event(self, event: input_base.KeyEvent) -> None:
         if event.action != "down":

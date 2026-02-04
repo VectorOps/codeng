@@ -485,6 +485,12 @@ class TUIState:
         return True
 
     def _handle_input_event(self, event: input_base.InputEvent) -> None:
+        if isinstance(event, input_base.PasteEvent):
+            text = event.text
+            if text:
+                self._input_component.paste_text(text)
+            return
+
         if isinstance(event, input_base.KeyEvent):
             binding = tui_input_component.KeyBinding(
                 key=event.key,

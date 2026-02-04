@@ -278,16 +278,46 @@ def test_input_component_multiline_submit_with_enter_mode() -> None:
     assert component.text == "hi"
     assert submitted == []
 
+    alt_enter = input_base.KeyEvent(action="down", key="enter", alt=True)
+    component.on_key_event(alt_enter)
+
+    assert submitted == []
+    assert component.text == "hi\n"
+
     plain_enter = input_base.KeyEvent(action="down", key="enter")
     component.on_key_event(plain_enter)
 
-    assert submitted == ["hi"]
-    assert component.text == "hi"
+    assert submitted == ["hi\n"]
 
-    ctrl_enter = input_base.KeyEvent(action="down", key="enter", ctrl=True)
-    component.on_key_event(ctrl_enter)
 
-    assert component.text == "hi\n"
+@pytest.mark.asyncio
+async def test_tui_state_paste_inserts_without_submit() -> None:
+    called: list[str] = []
+
+    async def on_input(value: str) -> None:
+        called.append(value)
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return
+
+    handler = DummyInputHandler()
+    state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=handler,
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    paste_text = "first line\nsecond line"
+    event = input_base.PasteEvent(text=paste_text)
+    state._handle_input_event(event)
+
+    component = state._input_component
+    assert component.text == paste_text
+    assert called == []
 
 
 def test_input_component_home_end_and_word_navigation() -> None:
