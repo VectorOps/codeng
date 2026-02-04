@@ -3,7 +3,6 @@ from __future__ import annotations
 import typing
 
 from rich import console as rich_console
-from rich import markdown as rich_markdown
 from rich import syntax as rich_syntax
 from rich import text as rich_text
 
@@ -41,10 +40,7 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         elif isinstance(arguments, str):
             content_str = arguments
 
-        if "```" in content_str:
-            body = rich_markdown.Markdown(content_str)
-        else:
-            body = rich_syntax.Syntax(content_str, "diff")
+        body = rich_syntax.Syntax(content_str, "diff")
 
         return rich_console.Group(header, body)
 
@@ -68,6 +64,22 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         header.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
         header.append(" => ", style=tui_styles.TOOL_CALL_META_STYLE)
 
-        result_renderable = rich_text.Text(str(result))
+        result_text = ""
+        if isinstance(result, dict):
+            text_value = result.get("text")
+            if isinstance(text_value, str):
+                result_text = text_value
+            else:
+                error_value = result.get("error")
+                if isinstance(error_value, str):
+                    result_text = error_value
+                else:
+                    result_text = str(result)
+        elif isinstance(result, str):
+            result_text = result
+        else:
+            result_text = str(result)
 
-        return rich_console.Group(header, result_renderable)
+        body = rich_syntax.Syntax(result_text, "diff")
+
+        return rich_console.Group(header, body)
