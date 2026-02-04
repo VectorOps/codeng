@@ -2,7 +2,7 @@
 
 * [ ] General
 ** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
-** [ ] Update tool formatter to also signal that no completion confirmation needs to be displayed. Hide it for task tool.
+** [X] Update tool formatter to also signal that no completion confirmation needs to be displayed. Hide it for task tool.
 ** [ ] Change menu shortcut to ctrl+space
 ** [X] Fix apply_patch result formatter to not be JSON
 ** [ ] Why do we have a lag when we approve a tool call? Is knowlt blocking the main thread?

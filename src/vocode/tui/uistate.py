@@ -157,7 +157,7 @@ class TUIState:
             tui_input_component.KeyBinding("down"): self._handle_history_down,
             tui_input_component.KeyBinding("n", ctrl=True): self._handle_history_down,
             tui_input_component.KeyBinding(
-                "x", ctrl=True
+                "space", ctrl=True
             ): self._handle_open_command_manager,
             tui_input_component.KeyBinding("c", ctrl=True): self._handle_stop,
             tui_input_component.KeyBinding("d", ctrl=True): self._handle_eof,
@@ -251,7 +251,7 @@ class TUIState:
         if top.kind is ActionKind.COMMAND_MANAGER:
             if event.action != "down":
                 return True
-            if event.key == "x" and event.ctrl:
+            if event.key == "space" and event.ctrl:
                 self._pop_action(ActionKind.COMMAND_MANAGER)
                 return True
             if event.key in ("esc", "escape"):
@@ -493,7 +493,7 @@ class TUIState:
             elif event.action == "down":
                 if binding.key in ("esc", "escape"):
                     pass
-                elif binding.key == "x" and binding.ctrl:
+                elif binding.key == "space" and binding.ctrl:
                     pass
                 else:
                     self._progressive_hotkey = None
