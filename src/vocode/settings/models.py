@@ -72,12 +72,15 @@ class ToolCallFormatter(BaseModel):
     - title: what to display as the function name
     - formatter: registered formatter implementation name (e.g. "generic")
     - show_output: whether to show tool output details by default
+    - show_execution_stats: whether to show execution statistics (duration, status)
+      for this tool request when rendered in the TUI
     - options: free-form formatter-specific configuration
     """
 
     title: str
     formatter: str = "generic"
     show_output: bool = False
+    show_execution_stats: bool = True
     options: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -102,8 +105,6 @@ class ToolAutoApproveRule(BaseModel):
         ) as exc:  # pragma: no cover - exact message is implementation detail
             raise ValueError(f"Invalid regex pattern {v!r}: {exc}") from exc
         return v
-
-
 
 
 class TUIOptions(BaseModel):

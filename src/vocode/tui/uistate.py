@@ -13,6 +13,7 @@ from vocode.manager import proto as manager_proto
 from vocode.tui import lib as tui_terminal
 from vocode.tui import styles as tui_styles
 from vocode.tui import history as tui_history
+from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
@@ -367,7 +368,6 @@ class TUIState:
             component.set_cursor_position(0, 0)
         return True, False
 
-
     def _handle_history_down(self, event: input_base.KeyEvent) -> bool:
         _ = event
         handled, _ = self._maybe_history_down()
@@ -712,6 +712,18 @@ class TUIState:
                 step=step,
                 component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
             )
+            message = step.message
+            if message is not None:
+                disable_stats = False
+                for tool_call in message.tool_call_requests:
+                    name = tool_call.name
+                    manager = tui_tcf.ToolCallFormatterManager.instance()
+                    if not manager.show_execution_stats(name):
+                        disable_stats = True
+                        break
+                if disable_stats:
+                    component.set_show_execution_stats(False)
+
             terminal.insert_component(-2, component)
 
     def _handle_default_step(self, step: vocode_state.Step) -> None:

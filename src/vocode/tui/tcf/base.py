@@ -26,6 +26,7 @@ class BaseToolCallFormatter(ABC):
         words = " ".join(tokens).split()
         capitalized = [w[0].upper() + w[1:] if w else "" for w in words]
         return " ".join(capitalized)
+
     @abstractmethod
     def format_input(
         self,
@@ -101,6 +102,18 @@ class ToolCallFormatterManager:
         inst = formatter_type()
         self._instances[name] = inst
         return inst
+
+    def get_config(
+        self,
+        tool_name: str,
+    ) -> vocode_settings.ToolCallFormatter | None:
+        return self._tool_configs.get(tool_name)
+
+    def show_execution_stats(self, tool_name: str) -> bool:
+        config = self.get_config(tool_name)
+        if config is None:
+            return True
+        return config.show_execution_stats
 
     def _resolve(
         self, tool_name: str

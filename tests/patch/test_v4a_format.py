@@ -834,3 +834,30 @@ def test_triple_identical_blocks_apply_to_all_occurrences():
         "tc.status = v_state.ToolCallStatus.rejected\n"
     )
     assert statuses == {"src/repeated.py": FileApplyStatus.Update}
+
+
+def test_unicode_content_v4a_patch():
+    patch_text = """*** Begin Patch
+*** Update File: src/unicode.py
+ header
+-value = '\u2603'
++value = '\u2603\u2603'
+ footer
+*** End Patch"""
+
+    snowman = chr(0x2603)
+    initial = {
+        "src/unicode.py": "header\n" + f"value = '{snowman}'\n" + "footer\n"
+    }
+
+    statuses, errs, writes, deletes, opened = run_patch(
+        patch_text, initial_files=initial
+    )
+
+    assert errs == []
+    assert deletes == []
+    assert opened == ["src/unicode.py"]
+    assert statuses == {"src/unicode.py": FileApplyStatus.Update}
+    assert writes["src/unicode.py"] == (
+        "header\n" + f"value = '{snowman}{snowman}'\n" + "footer\n"
+    )
