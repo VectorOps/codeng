@@ -211,11 +211,13 @@ class UIServer:
             node.collapse is not None
             or node.collapse_lines is not None
             or not node.visible
+            or node.tool_collapse is not None
         ):
             display = manager_proto.RunnerReqDisplayOpts(
                 collapse=node.collapse,
                 collapse_lines=node.collapse_lines,
                 visible=node.visible,
+                tool_collapse=node.tool_collapse,
             )
 
         input_title: Optional[str] = None

@@ -703,7 +703,11 @@ class TUIState:
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )
 
-    def _handle_tool_request_step(self, step: vocode_state.Step) -> None:
+    def _handle_tool_request_step(
+        self,
+        step: vocode_state.Step,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
+    ) -> None:
         step_id = str(step.id)
         terminal = self._terminal
         try:
@@ -739,6 +743,9 @@ class TUIState:
                 if expand_for_confirmation:
                     component.set_collapsed(False)
 
+            if display is not None and display.tool_collapse is not None:
+                component.set_collapsed(display.tool_collapse)
+
             terminal.insert_component(-2, component)
 
     def _handle_default_step(self, step: vocode_state.Step) -> None:
@@ -772,7 +779,10 @@ class TUIState:
             return
         handler = self._step_handlers.get(step.type)
         if handler is not None:
-            handler(step)
+            if step.type is vocode_state.StepType.TOOL_REQUEST:
+                self._handle_tool_request_step(step, display=display)
+            else:
+                handler(step)
             return
         self._handle_default_step(step)
 
