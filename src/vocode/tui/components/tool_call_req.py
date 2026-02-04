@@ -48,6 +48,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         self._frame_index = 0
         self._animated = False
         self._collapsed = True
+        self._show_execution_stats: bool = True
 
     @property
     def step(self) -> vocode_state.Step:
@@ -55,6 +56,16 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
 
     def set_step(self, step: vocode_state.Step) -> None:
         self._step = step
+        self._mark_dirty()
+
+    @property
+    def show_execution_stats(self) -> bool:
+        return self._show_execution_stats
+
+    def set_show_execution_stats(self, value: bool) -> None:
+        if self._show_execution_stats == value:
+            return
+        self._show_execution_stats = value
         self._mark_dirty()
 
     def _compute_overall_status(
@@ -187,7 +198,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
                 if rendered_resp is not None:
                     renderables.append(rendered_resp)
 
-        if status is None:
+        if not self._show_execution_stats or status is None:
             if not renderables:
                 return ""
             if len(renderables) == 1:

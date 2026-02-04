@@ -323,3 +323,39 @@ def test_mixed_add_update_delete_and_partial():
     assert any(
         e.filename == "missing.txt" and "Failed to read file" in e.msg for e in errors
     )
+
+
+def test_unicode_content_fenced_patch():
+    writes: dict[str, str] = {}
+
+    def write_fn(path: str, content: str) -> None:
+        writes[path] = content
+
+    def open_fn(path: str) -> str:
+        snowman = chr(0x2603)
+        return "pre\n" + f"value = '{snowman}'\n" + "post\n"
+
+    def delete_fn(path: str) -> None:
+        raise AssertionError("delete_fn should not be called for unicode update")
+
+    snowman = chr(0x2603)
+    text = "\n".join(
+        [
+            "```text",
+            "unicode.txt",
+            "<<<<<<< SEARCH",
+            f"value = '{snowman}'",
+            "=======",
+            f"value = '{snowman}{snowman}'",
+            ">>>>>>> REPLACE",
+            "````",
+        ]
+    )
+
+    statuses, errors = process_patch(text, open_fn, write_fn, delete_fn)
+
+    assert errors == []
+    assert statuses == {"unicode.txt": FileApplyStatus.Update}
+    assert writes["unicode.txt"] == (
+        "pre\n" + f"value = '{snowman}{snowman}'\n" + "post\n"
+    )
