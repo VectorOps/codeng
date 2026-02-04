@@ -62,6 +62,11 @@ class App:
         init_params = typing.get_type_hints(state_type.__init__)
         if "on_open_logs" in init_params:
             state_kwargs["on_open_logs"] = self.open_logs
+        tui_options = None
+        if project.settings is not None and project.settings.tui is not None:
+            tui_options = project.settings.tui
+        if "tui_options" in init_params and tui_options is not None:
+            state_kwargs["tui_options"] = tui_options
         self._state = tui_uistate.TUIState(**state_kwargs)
 
     def _next_msg_id(self) -> int:
