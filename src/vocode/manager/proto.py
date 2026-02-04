@@ -13,6 +13,7 @@ class RunnerReqDisplayOpts(BaseModel):
     collapse: Optional[bool] = Field(default=None)
     collapse_lines: Optional[int] = Field(default=None)
     visible: Optional[bool] = Field(default=None)
+    tool_collapse: Optional[bool] = Field(default=None)
 
 
 class BasePacketKind(str, Enum):

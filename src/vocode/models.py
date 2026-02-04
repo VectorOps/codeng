@@ -180,6 +180,12 @@ class Node(BaseModel):
         default=None,
         description="If set, number of lines to show when this node's markdown output is collapsed.",
     )
+    tool_collapse: Optional[bool] = Field(
+        default=None,
+        description=(
+            "If set, overrides the default collapsed state for tool calls produced by this node."
+        ),
+    )
 
     # Registry keyed by the existing "type" field value
     _registry: ClassVar[Dict[str, Type["Node"]]] = {}
