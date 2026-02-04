@@ -8,6 +8,7 @@ from rich import console as rich_console
 from rich import control as rich_control
 from vocode import state as vocode_state
 from vocode import models as vocode_models
+from vocode import settings as vocode_settings
 from vocode.logger import logger
 from vocode.manager import proto as manager_proto
 from vocode.tui import lib as tui_terminal
@@ -54,6 +55,7 @@ class TUIState:
         on_open_logs: typing.Callable[[], typing.Awaitable[None]] | None = None,
         on_stop: typing.Callable[[], typing.Awaitable[None]] | None = None,
         on_eof: typing.Callable[[], typing.Awaitable[None]] | None = None,
+        tui_options: vocode_settings.TUIOptions | None = None,
     ) -> None:
         self._on_input = on_input
         self._on_autocomplete_request = on_autocomplete_request
@@ -64,7 +66,10 @@ class TUIState:
             input_handler = input_handler_mod.PosixInputHandler()
         self._input_handler = input_handler
         self._input_task: asyncio.Task[None] | None = None
-        settings = tui_terminal.TerminalSettings()
+        if tui_options is None:
+            settings = tui_terminal.TerminalSettings()
+        else:
+            settings = tui_terminal.TerminalSettings(tui=tui_options)
         self._terminal = tui_terminal.Terminal(
             console=console,
             settings=settings,
@@ -715,14 +720,24 @@ class TUIState:
             message = step.message
             if message is not None:
                 disable_stats = False
+                expand_for_confirmation = False
+                tui_settings = terminal.settings.tui
                 for tool_call in message.tool_call_requests:
                     name = tool_call.name
                     manager = tui_tcf.ToolCallFormatterManager.instance()
                     if not manager.show_execution_stats(name):
                         disable_stats = True
                         break
+                    status = tool_call.status
+                    if (
+                        status is vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+                        and tui_settings.expand_confirm_tools
+                    ):
+                        expand_for_confirmation = True
                 if disable_stats:
                     component.set_show_execution_stats(False)
+                if expand_for_confirmation:
+                    component.set_collapsed(False)
 
             terminal.insert_component(-2, component)
 

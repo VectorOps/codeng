@@ -110,6 +110,7 @@ class ToolAutoApproveRule(BaseModel):
 class TUIOptions(BaseModel):
     unicode: bool = True
     ascii_fallback: bool = False
+    expand_confirm_tools: bool = True
 
 
 class ToolSpec(BaseModel):

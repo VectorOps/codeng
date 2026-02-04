@@ -7,7 +7,9 @@ import pytest
 from rich import console as rich_console
 
 from vocode import models, state
+from vocode import settings as vocode_settings
 from vocode.tui import uistate as tui_uistate
+from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.input import base as input_base
 
@@ -266,6 +268,60 @@ async def test_tui_state_renders_approval_and_rejection_steps() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_request_with_confirmation_expanded_by_default() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    req = state.ToolCallReq(
+        id="call_1",
+        name="tool",
+        arguments={},
+        status=state.ToolCallReqStatus.REQUIRES_CONFIRMATION,
+    )
+    step = state.Step(
+        id=uuid4(),
+        execution=execution,
+        type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+
+    ui_state.handle_step(step)
+
+    components = ui_state.terminal.components
+    tool_components = [
+        c
+        for c in components
+        if isinstance(c, tool_call_req_component.ToolCallReqComponent)
+    ]
+    assert len(tool_components) == 1
+    assert tool_components[0].is_expanded
+
+
+@pytest.mark.asyncio
 async def test_tui_state_history_up_places_cursor_on_last_row() -> None:
     async def on_input(_: str) -> None:
         return None
@@ -317,3 +373,62 @@ async def test_tui_state_history_down_places_cursor_on_first_row() -> None:
     event_down = input_base.KeyEvent(action="down", key="down")
     ui_state._input_handler.publish(event_down)
     assert input_component.cursor_row == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_request_with_confirmation_collapsed_when_disabled() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    tui_opts = vocode_settings.TUIOptions(
+        expand_confirm_tools=False,
+    )
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+        tui_options=tui_opts,
+    )
+
+    execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    req = state.ToolCallReq(
+        id="call_1",
+        name="tool",
+        arguments={},
+        status=state.ToolCallReqStatus.REQUIRES_CONFIRMATION,
+    )
+    step = state.Step(
+        id=uuid4(),
+        execution=execution,
+        type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+
+    ui_state.handle_step(step)
+
+    components = ui_state.terminal.components
+    tool_components = [
+        c
+        for c in components
+        if isinstance(c, tool_call_req_component.ToolCallReqComponent)
+    ]
+    assert len(tool_components) == 1
+    assert tool_components[0].is_collapsed
