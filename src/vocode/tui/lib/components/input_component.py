@@ -44,6 +44,7 @@ class InputComponent(tui_base.Component):
         self._submit_with_enter = submit_with_enter
         self._keymap = self._create_keymap()
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
+        self._change_subscribers: list[typing.Callable[[str], None]] = []
         self._cursor_event_subscribers: list[typing.Callable[[int, int], None]] = []
         self._prefix = prefix
         self._top_line: int = 0
@@ -193,6 +194,9 @@ class InputComponent(tui_base.Component):
     def subscribe_submit(self, subscriber: typing.Callable[[str], None]) -> None:
         self._submit_subscribers.append(subscriber)
 
+    def subscribe_change(self, subscriber: typing.Callable[[str], None]) -> None:
+        self._change_subscribers.append(subscriber)
+
     def subscribe_cursor_event(
         self, subscriber: typing.Callable[[int, int], None]
     ) -> None:
@@ -202,6 +206,17 @@ class InputComponent(tui_base.Component):
         value = self.text
         for subscriber in list(self._submit_subscribers):
             subscriber(value)
+
+    def _notify_change(self) -> None:
+        if not self._change_subscribers:
+            return
+        value = self.text
+        for subscriber in list(self._change_subscribers):
+            subscriber(value)
+
+    def _mark_dirty(self) -> None:
+        super()._mark_dirty()
+        self._notify_change()
 
     def render(self, options: rich_console.ConsoleOptions) -> tui_base.Lines:
         terminal = self.terminal
@@ -350,11 +365,8 @@ class InputComponent(tui_base.Component):
     def paste_text(self, text: str) -> None:
         if not text:
             return
-        for ch in text:
-            if ch == "\n":
-                self.break_line()
-            else:
-                self.insert_char(ch)
+        self._editor.insert_text(text)
+        self._mark_dirty()
 
     def on_key_event(self, event: input_base.KeyEvent) -> None:
         if event.action != "down":

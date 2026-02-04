@@ -1,6 +1,8 @@
 #+title: Todo
 
 * [ ] General
+** [ ] Add LLM timeouts when waiting for any response
+** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
 ** [ ] Tool call rejection with the message needs format
 ** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
 ** [X] Update tool formatter to also signal that no completion confirmation needs to be displayed. Hide it for task tool.

@@ -17,6 +17,8 @@ ERASE_LINE_END: typing.Final[str] = "\x1b[K"
 CURSOR_PREVIOUS_LINE_FMT: typing.Final[str] = "\x1b[{}F"
 ALT_SCREEN_ENTER: typing.Final[str] = "\x1b[?1049h"
 ALT_SCREEN_EXIT: typing.Final[str] = "\x1b[?1049l"
+BRACKETED_PASTE_ENABLE: typing.Final[str] = "\x1b[?2004h"
+BRACKETED_PASTE_DISABLE: typing.Final[str] = "\x1b[?2004l"
 
 
 class CustomControl(rich_control.Control):
@@ -64,3 +66,11 @@ class CustomControl(rich_control.Control):
     @classmethod
     def exit_alt_screen(cls) -> "CustomControl":
         return cls(ALT_SCREEN_EXIT)
+
+    @classmethod
+    def enable_bracketed_paste(cls) -> "CustomControl":
+        return cls(BRACKETED_PASTE_ENABLE)
+
+    @classmethod
+    def disable_bracketed_paste(cls) -> "CustomControl":
+        return cls(BRACKETED_PASTE_DISABLE)
