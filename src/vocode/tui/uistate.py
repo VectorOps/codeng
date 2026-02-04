@@ -120,6 +120,7 @@ class TUIState:
 
         self._input_component.subscribe_submit(self._handle_submit)
         self._input_component.subscribe_cursor_event(self._handle_cursor_event)
+        self._input_component.subscribe_change(self._handle_change)
 
         if self._input_handler is not None:
             self._input_handler.subscribe(self._handle_input_event)
@@ -886,6 +887,16 @@ class TUIState:
     def _handle_cursor_event(self, row: int, col: int) -> None:
         if self._on_autocomplete_request is None:
             return
+        ok = self._capture_autocomplete_context(row, col)
+        if not ok:
+            return
+        self._schedule_autocomplete_request()
+
+    def _handle_change(self, _: str) -> None:
+        if self._on_autocomplete_request is None:
+            return
+        row = self._input_component.cursor_row
+        col = self._input_component.cursor_col
         ok = self._capture_autocomplete_context(row, col)
         if not ok:
             return

@@ -21,9 +21,7 @@ class TextEditor:
         else:
             self._cursor_row = last_row
             self._cursor_col = 0
-        self._cursor_event_subscribers: list[
-            typing.Callable[[int, int], None]
-        ] = []
+        self._cursor_event_subscribers: list[typing.Callable[[int, int], None]] = []
 
     @property
     def text(self) -> str:
@@ -231,6 +229,38 @@ class TextEditor:
         col = self._cursor_col
         self._lines[self._cursor_row] = line[:col] + ch + line[col:]
         self._cursor_col = col + len(ch)
+        self._emit_cursor_event(previous_row, previous_col)
+
+    def insert_text(self, text: str) -> None:
+        if not text:
+            return
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
+        parts = text.split("\n")
+        if not parts:
+            return
+        row = self._cursor_row
+        col = self._cursor_col
+        line = self._lines[row]
+        prefix = line[:col]
+        suffix = line[col:]
+        if len(parts) == 1:
+            self._lines[row] = prefix + parts[0] + suffix
+            self._cursor_row = row
+            self._cursor_col = len(prefix) + len(parts[0])
+            self._emit_cursor_event(previous_row, previous_col)
+            return
+        first = parts[0]
+        last = parts[-1]
+        middle = parts[1:-1]
+        self._lines[row] = prefix + first
+        insert_row = row + 1
+        for part in middle:
+            self._lines.insert(insert_row, part)
+            insert_row += 1
+        self._lines.insert(insert_row, last + suffix)
+        self._cursor_row = insert_row
+        self._cursor_col = len(last)
         self._emit_cursor_event(previous_row, previous_col)
 
     def backspace(self) -> None:

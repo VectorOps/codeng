@@ -362,6 +362,7 @@ class Terminal:
         self._console.control(
             rich_control.Control.clear(),
             rich_control.Control.home(),
+            tui_controls.CustomControl.enable_bracketed_paste(),
         )
         self._started = True
         self._request_auto_render(force=True)
@@ -384,6 +385,9 @@ class Terminal:
         if animation_task is not None and not animation_task.done():
             animation_task.cancel()
         self._animation_task = None
+        self._console.control(
+            tui_controls.CustomControl.disable_bracketed_paste(),
+        )
         task = self._input_task
         if task is None:
             return
