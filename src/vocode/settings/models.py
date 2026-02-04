@@ -111,6 +111,7 @@ class TUIOptions(BaseModel):
     unicode: bool = True
     ascii_fallback: bool = False
     expand_confirm_tools: bool = True
+    submit_with_enter: bool = True
 
 
 class ToolSpec(BaseModel):

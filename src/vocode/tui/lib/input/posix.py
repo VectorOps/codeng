@@ -25,6 +25,7 @@ class KeyMapping:
 
 def _build_key_sequence_map() -> dict[bytes, KeyMapping]:
     mapping: dict[bytes, KeyMapping] = {}
+    mapping[b"\x00"] = KeyMapping(name="space", ctrl=True)
     mapping[b"\t"] = KeyMapping(name="tab", text="\t")
     mapping[b"\r"] = KeyMapping(name="enter", text="\n")
     mapping[b"\n"] = KeyMapping(name="enter", text="\n")
@@ -114,9 +115,11 @@ class PosixInputDecoder:
         ctrl: bool = False,
         shift: bool = False,
     ) -> None:
-        # Printable-key events normalize uppercase letters to lowercase key names.
         alpha_shift = ch.isalpha() and ch.isupper()
-        key_name = ch.lower() if alpha_shift else ch
+        if ch == " ":
+            key_name = "space"
+        else:
+            key_name = ch.lower() if alpha_shift else ch
         events.append(
             input_base.KeyEvent(
                 action="down",

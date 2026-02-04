@@ -200,7 +200,7 @@ def test_input_component_handles_keys_and_renders_cursor() -> None:
 
 
 def test_input_component_submit_notifies_subscribers() -> None:
-    component = tui_input_component.InputComponent("")
+    component = tui_input_component.InputComponent("", submit_with_enter=False)
     submitted: list[str] = []
 
     def subscriber(value: str) -> None:
@@ -231,7 +231,10 @@ def test_input_component_submit_notifies_subscribers() -> None:
 
 
 def test_input_component_single_line_enter_submits_without_newline() -> None:
-    component = tui_input_component.InputComponent("", single_line=True)
+    component = tui_input_component.InputComponent(
+        "",
+        single_line=True,
+    )
     submitted: list[str] = []
 
     def subscriber(value: str) -> None:
@@ -256,6 +259,35 @@ def test_input_component_single_line_enter_submits_without_newline() -> None:
 
     assert submitted == ["hi"]
     assert component.text == "hi"
+
+
+def test_input_component_multiline_submit_with_enter_mode() -> None:
+    component = tui_input_component.InputComponent("", submit_with_enter=True)
+    submitted: list[str] = []
+
+    def subscriber(value: str) -> None:
+        submitted.append(value)
+
+    component.subscribe_submit(subscriber)
+
+    key_event_h = input_base.KeyEvent(action="down", key="char", text="h")
+    key_event_i = input_base.KeyEvent(action="down", key="char", text="i")
+    component.on_key_event(key_event_h)
+    component.on_key_event(key_event_i)
+
+    assert component.text == "hi"
+    assert submitted == []
+
+    plain_enter = input_base.KeyEvent(action="down", key="enter")
+    component.on_key_event(plain_enter)
+
+    assert submitted == ["hi"]
+    assert component.text == "hi"
+
+    ctrl_enter = input_base.KeyEvent(action="down", key="enter", ctrl=True)
+    component.on_key_event(ctrl_enter)
+
+    assert component.text == "hi\n"
 
 
 def test_input_component_home_end_and_word_navigation() -> None:
@@ -722,6 +754,7 @@ async def test_insert_component_negative_index_before_last() -> None:
 
     order = [component.text for component in terminal.components]
     assert order == ["a", "b", "x", "c"]
+
 
 def test_insert_component_index_skips_removed_components() -> None:
     buffer = io.StringIO()

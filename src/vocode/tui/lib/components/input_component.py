@@ -32,6 +32,7 @@ class InputComponent(tui_base.Component):
         single_line: bool = False,
         component_style: tui_base.ComponentStyle | None = None,
         prefix: str | None = None,
+        submit_with_enter: bool = False,
     ) -> None:
         super().__init__(
             id=id,
@@ -40,6 +41,7 @@ class InputComponent(tui_base.Component):
         self._editor = components_text_editor.TextEditor(text)
         self._editor.subscribe_cursor_event(self._handle_editor_cursor_event)
         self._single_line = single_line
+        self._submit_with_enter = submit_with_enter
         self._keymap = self._create_keymap()
         self._submit_subscribers: list[typing.Callable[[str], None]] = []
         self._cursor_event_subscribers: list[typing.Callable[[int, int], None]] = []
@@ -181,7 +183,11 @@ class InputComponent(tui_base.Component):
             keymap[KeyBinding("enter")] = self.submit
             keymap[KeyBinding("enter", alt=True)] = self.submit
         else:
-            keymap[KeyBinding("enter")] = self.break_line
+            if self._submit_with_enter:
+                keymap[KeyBinding("enter")] = self.submit
+                keymap[KeyBinding("enter", ctrl=True)] = self.break_line
+            else:
+                keymap[KeyBinding("enter")] = self.break_line
             keymap[KeyBinding("enter", alt=True)] = self.submit
         return keymap
 
