@@ -13,11 +13,11 @@
 *** [X] Move glob and path filtering to a thread, as well as timestamp check
 ** [X] Patch tool needs its own formatter
 ** [ ] Know: rename read_files to read_file
-** [ ] Never collapse tool output if approval is requested?
-** [ ] Unicode support is wonky - write tests for patches using utf-8
+** [X] Never collapse tool output if approval is requested?
+** [X] Unicode support is wonky - write tests for patches using utf-8
 ** [ ] Editing the history message does not re-send it to UI
 ** [X] Add support for RateLimit exception with correct timeout
-** [ ] Emit LLM usage when tool call steps are returned from LLM executor
+** [X] Emit LLM usage when tool call steps are returned from LLM executor
 ** [ ] Auto-complete
 *** [X] Tab with single value in the list should auto-select the value
 *** [X] Pressing down with no history should select first item of auto-complete

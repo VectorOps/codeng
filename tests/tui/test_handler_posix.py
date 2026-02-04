@@ -21,6 +21,31 @@ def test_decoder_simple_character() -> None:
     assert not event.shift
 
 
+def test_decoder_space_and_ctrl_space() -> None:
+    decoder = posix.PosixInputDecoder()
+
+    space_events = decoder.feed(b" ")
+    assert len(space_events) == 1
+    space_event = space_events[0]
+    assert isinstance(space_event, base.KeyEvent)
+    assert space_event.action == "down"
+    assert space_event.key == "space"
+    assert space_event.text == " "
+    assert not space_event.ctrl
+    assert not space_event.alt
+    assert not space_event.shift
+
+    ctrl_space_events = decoder.feed(b"\x00")
+    assert len(ctrl_space_events) == 1
+    ctrl_space_event = ctrl_space_events[0]
+    assert isinstance(ctrl_space_event, base.KeyEvent)
+    assert ctrl_space_event.action == "down"
+    assert ctrl_space_event.key == "space"
+    assert ctrl_space_event.ctrl
+    assert not ctrl_space_event.alt
+    assert not ctrl_space_event.shift
+
+
 def test_decoder_enter_and_backspace() -> None:
     decoder = posix.PosixInputDecoder()
     events = decoder.feed(b"\n\x7f")

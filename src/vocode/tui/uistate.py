@@ -81,6 +81,9 @@ class TUIState:
             id="input",
             prefix="> ",
             component_style=tui_styles.INPUT_PANEL_COMPONENT_STYLE,
+            submit_with_enter=(
+                True if tui_options is None else bool(tui_options.submit_with_enter)
+            ),
         )
 
         self._input_component = input_component
