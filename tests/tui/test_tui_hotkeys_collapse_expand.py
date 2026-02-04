@@ -72,7 +72,7 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
     assert non_tool_components
     assert all(c.is_expanded for c in non_tool_components if c.supports_collapse)
 
-    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    open_cmd = input_base.KeyEvent(action="down", key="space", ctrl=True)
     collapse = input_base.KeyEvent(action="down", key="c", shift=True)
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
@@ -136,7 +136,7 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
     assert len(tool_components) == 25
     assert all(c.supports_collapse for c in tool_components)
 
-    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    open_cmd = input_base.KeyEvent(action="down", key="space", ctrl=True)
     collapse = input_base.KeyEvent(action="down", key="c", shift=True)
     expand = input_base.KeyEvent(action="down", key="e", shift=True)
     other = input_base.KeyEvent(action="down", key="x", text="x")

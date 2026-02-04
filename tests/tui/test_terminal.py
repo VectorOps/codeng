@@ -1012,7 +1012,7 @@ async def test_tui_state_ctrl_dot_collapses_last_messages_progressively() -> Non
     assert all(c.supports_collapse for c in last_ten)
     assert all(c.is_expanded for c in last_ten)
 
-    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    open_cmd = input_base.KeyEvent(action="down", key="space", ctrl=True)
     collapse = input_base.KeyEvent(action="down", key="c")
     ui_state._input_handler.publish(open_cmd)
     ui_state._input_handler.publish(collapse)
@@ -1057,7 +1057,7 @@ async def test_tui_state_ctrl_comma_expands_last_messages_progressively_and_rese
     message_components = ui_state.terminal.components[1:-2]
     assert len(message_components) == 25
 
-    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    open_cmd = input_base.KeyEvent(action="down", key="space", ctrl=True)
     collapse = input_base.KeyEvent(action="down", key="c")
     expand = input_base.KeyEvent(action="down", key="e")
     other = input_base.KeyEvent(action="down", key="x", text="x")
@@ -1118,7 +1118,7 @@ async def test_tui_state_ctrl_x_opens_command_manager_esc_closes_and_hotkey_exec
         on_eof=None,
     )
 
-    open_cmd = input_base.KeyEvent(action="down", key="x", ctrl=True)
+    open_cmd = input_base.KeyEvent(action="down", key="space", ctrl=True)
     esc = input_base.KeyEvent(action="down", key="esc")
     ui_state._input_handler.publish(esc)
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
