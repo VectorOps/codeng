@@ -33,4 +33,3 @@ workflows:
               format: ${LLM_DIFF_FORMAT}
           - name: update_plan
             auto_approve: true
-
