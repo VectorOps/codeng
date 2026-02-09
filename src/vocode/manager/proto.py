@@ -78,6 +78,7 @@ class RunnerStackFrame(BaseModel):
     workflow_execution_id: str
     node_name: str
     status: state.RunnerStatus
+    node_execution_id: Optional[str] = Field(default=None)
 
 
 class UIServerStatePacket(BaseModel):

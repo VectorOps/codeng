@@ -1056,11 +1056,14 @@ class Runner:
     ) -> RunEventReq:
         self.status = status
         current_node_name: Optional[str] = None
+        current_node_execution_id = None
         if current_execution is not None:
             current_node_name = current_execution.node
+            current_node_execution_id = current_execution.id
         stats = runner_proto.RunStats(
             status=status,
             current_node_name=current_node_name,
+            current_node_execution_id=current_node_execution_id,
         )
         return RunEventReq(
             kind=runner_proto.RunEventReqKind.STATUS,

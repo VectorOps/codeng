@@ -110,6 +110,81 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    await server.start()
+
+    execution = state.WorkflowExecution(workflow_name="wf-ui-node-start-time")
+    node_execution = state.NodeExecution(
+        node="node-start",
+        status=state.RunStatus.RUNNING,
+    )
+    execution.node_executions[node_execution.id] = node_execution
+
+    stats = runner_proto.RunStats(
+        status=state.RunnerStatus.RUNNING,
+        current_node_name=node_execution.node,
+        current_node_execution_id=node_execution.id,
+    )
+
+    class DummyRunner:
+        def __init__(self, execution: state.WorkflowExecution) -> None:
+            self.execution = execution
+
+    async def dummy_coro() -> None:
+        await asyncio.Event().wait()
+
+    dummy_task = asyncio.create_task(dummy_coro())
+    runner = DummyRunner(execution)
+    frame = RunnerFrame(
+        workflow_name=execution.workflow_name,
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+        last_stats=stats,
+    )
+    server.manager._runner_stack.append(frame)
+
+    event = runner_proto.RunEventReq(
+        kind=runner_proto.RunEventReqKind.STATUS,
+        execution=execution,
+        stats=stats,
+    )
+
+    resp = await server.on_runner_event(frame, event)
+    assert resp is not None
+
+    envelope = await client_endpoint.recv()
+    payload = envelope.payload
+    assert isinstance(payload, manager_proto.UIServerStatePacket)
+    assert payload.active_node_started_at is None
+
+    step = state.Step(
+        execution=node_execution,
+        type=state.StepType.INPUT_MESSAGE,
+        message=state.Message(
+            role=models.Role.USER,
+            text="hello",
+        ),
+    )
+    node_execution.steps.append(step)
+
+    resp2 = await server.on_runner_event(frame, event)
+    assert resp2 is not None
+
+    envelope2 = await client_endpoint.recv()
+    payload2 = envelope2.payload
+    assert isinstance(payload2, manager_proto.UIServerStatePacket)
+    assert payload2.active_node_started_at == step.created_at
+
+    dummy_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dummy_task
+
+
+@pytest.mark.asyncio
 async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
@@ -117,9 +192,15 @@ async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
     await server.start()
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-stop-input")
+    node_execution = state.NodeExecution(
+        node="node-stop",
+        status=state.RunStatus.RUNNING,
+    )
+    execution.node_executions[node_execution.id] = node_execution
     stats = runner_proto.RunStats(
         status=state.RunnerStatus.STOPPED,
-        current_node_name="node-stop",
+        current_node_name=node_execution.node,
+        current_node_execution_id=node_execution.id,
     )
 
     class DummyRunner:
@@ -437,9 +518,15 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
         input_token_limit=1000,
     )
 
+    node_execution = state.NodeExecution(
+        node="node-status",
+        status=state.RunStatus.RUNNING,
+    )
+    execution.node_executions[node_execution.id] = node_execution
     stats = runner_proto.RunStats(
         status=state.RunnerStatus.RUNNING,
-        current_node_name="node-status",
+        current_node_name=node_execution.node,
+        current_node_execution_id=node_execution.id,
     )
 
     class DummyRunner:
@@ -484,6 +571,7 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
     assert runner_state.workflow_name == execution.workflow_name
     assert runner_state.workflow_execution_id == str(execution.id)
     assert runner_state.node_name == stats.current_node_name
+    assert runner_state.node_execution_id == str(node_execution.id)
     assert runner_state.status == stats.status
     assert state_packet.last_step_llm_usage is not None
     assert state_packet.last_step_llm_usage.prompt_tokens == 10

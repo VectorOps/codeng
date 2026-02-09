@@ -336,25 +336,23 @@ class UIServer:
             if stats is None:
                 continue
             execution = runner_frame.runner.execution
-            node_name = stats.current_node_name or ""
+            node_name = ""
+            node_execution_id = None
             node_started_at = None
-            if node_name:
-                latest_execution = None
-                for node_execution in execution.node_executions.values():
-                    if node_execution.node != node_name:
-                        continue
-                    if (
-                        latest_execution is None
-                        or node_execution.created_at > latest_execution.created_at
-                    ):
-                        latest_execution = node_execution
-                if latest_execution is not None:
-                    node_started_at = latest_execution.created_at
+            stats_execution_id = stats.current_node_execution_id
+            if stats_execution_id is not None:
+                node_execution = execution.node_executions.get(stats_execution_id)
+                if node_execution is not None:
+                    if node_execution.steps:
+                        node_started_at = node_execution.steps[0].created_at
+                    node_name = node_execution.node
+                    node_execution_id = str(node_execution.id)
             runners.append(
                 manager_proto.RunnerStackFrame(
                     workflow_name=execution.workflow_name,
                     workflow_execution_id=str(execution.id),
                     node_name=node_name,
+                    node_execution_id=node_execution_id,
                     status=stats.status,
                 )
             )
