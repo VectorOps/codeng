@@ -1,6 +1,8 @@
 from enum import Enum
 from typing import Optional, Annotated, Union
 
+from uuid import UUID
+
 from pydantic import BaseModel, Field, model_validator
 
 from vocode import state
@@ -51,6 +53,10 @@ class RunStats(BaseModel):
     current_node_name: Optional[str] = Field(
         default=None,
         description="Current node name, if any",
+    )
+    current_node_execution_id: Optional[UUID] = Field(
+        default=None,
+        description="Current node execution id, if any",
     )
 
 
