@@ -19,6 +19,8 @@ _STATUS_COMPLETED = "completed"
 
 @tui_tcf.ToolCallFormatterManager.register("update_plan")
 class TaskToolFormatter(tui_tcf.BaseToolCallFormatter):
+    show_execution_stats_default: bool = False
+
     def format_input(
         self,
         terminal: tui_terminal.Terminal,

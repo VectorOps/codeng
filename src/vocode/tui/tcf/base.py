@@ -13,6 +13,8 @@ from vocode.tui.lib import base as tui_base
 
 
 class BaseToolCallFormatter(ABC):
+    show_execution_stats_default: bool = True
+
     def format_tool_name(self, tool_name: str) -> str:
         name = tool_name.strip()
         if not name:
@@ -111,9 +113,13 @@ class ToolCallFormatterManager:
 
     def show_execution_stats(self, tool_name: str) -> bool:
         config = self.get_config(tool_name)
-        if config is None:
+        if config is not None:
+            return config.show_execution_stats
+
+        formatter, _ = self._resolve(tool_name)
+        if formatter is None:
             return True
-        return config.show_execution_stats
+        return formatter.show_execution_stats_default
 
     def _resolve(
         self, tool_name: str
