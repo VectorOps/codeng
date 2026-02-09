@@ -13,10 +13,10 @@
 *** [ ] Fail if user wants a confirmation in non-interactive mode
 ** [ ] Fix up logging
 *** [ ] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
-** [ ] Add LLM timeouts
-*** [ ] Streaming start timeout, None = unlimited
-*** [ ] If LLM times out, retry attempt
-*** [ ] Total timeout, None = unlimited
+** [X] Add LLM timeouts
+*** [X] Streaming start timeout, None = unlimited
+*** [X] If LLM times out, retry attempt
+*** [X] Total timeout, None = unlimited
 ** [ ] Show how run the step is running in the toolbar. Store step creation time and show delte to current time for running status
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
 ** [ ] Tool call rejection with the message needs format

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Annotated, Optional
+from datetime import datetime
 import typing
 
 from pydantic import BaseModel, Field
@@ -85,6 +86,7 @@ class UIServerStatePacket(BaseModel):
     )
     status: UIServerStatus
     runners: list[RunnerStackFrame] = Field(default_factory=list)
+    active_node_started_at: Optional[datetime] = Field(default=None)
     active_workflow_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)
     last_step_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)
     project_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)

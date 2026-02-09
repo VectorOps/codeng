@@ -8,6 +8,7 @@ class DummyNode:
         self.collapse = None
         self.collapse_lines = None
         self.visible = True
+        self.tool_collapse = None
 
 
 class DummyGraph:
