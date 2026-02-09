@@ -432,3 +432,57 @@ async def test_tool_request_with_confirmation_collapsed_when_disabled() -> None:
     ]
     assert len(tool_components) == 1
     assert tool_components[0].is_collapsed
+
+
+@pytest.mark.asyncio
+async def test_tool_request_update_plan_uses_formatter_default_for_stats() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    req = state.ToolCallReq(
+        id="call_1",
+        name="update_plan",
+        arguments={},
+        status=state.ToolCallReqStatus.PENDING_EXECUTION,
+    )
+    step = state.Step(
+        id=uuid4(),
+        execution=execution,
+        type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+
+    ui_state.handle_step(step)
+
+    components = ui_state.terminal.components
+    tool_components = [
+        c
+        for c in components
+        if isinstance(c, tool_call_req_component.ToolCallReqComponent)
+    ]
+    assert len(tool_components) == 1
+    assert tool_components[0].show_execution_stats is False
