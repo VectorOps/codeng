@@ -438,7 +438,7 @@ class Terminal:
             top.render()
         return screen
 
-    def _full_render(self) -> None:
+    def _full_render(self, *, repaint_all: bool = False) -> None:
         if self._screens:
             self._console.control(tui_controls.CustomControl.sync_update_start())
             self._console.control(
@@ -452,7 +452,13 @@ class Terminal:
         self._delete_removed_components()
 
         options = self._console.options
-        for component in self._dirty_components:
+        components_to_render: typing.Iterable[tui_base.Component]
+        if repaint_all:
+            components_to_render = self._components
+        else:
+            components_to_render = self._dirty_components
+
+        for component in components_to_render:
             if component.is_hidden:
                 self._cache[component] = []
                 continue
@@ -683,8 +689,10 @@ class Terminal:
         ):
             return
 
+        repaint_all = self._width is not None and self._width != width
+
         if self._width is None or self._force_full_render or self._width != width:
-            self._full_render()
+            self._full_render(repaint_all=repaint_all)
         else:
             handled = self._incremental_render(changed_components)
             if not handled:

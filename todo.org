@@ -1,11 +1,29 @@
 #+title: Todo
 
 * [ ] General
-** [ ] Add LLM timeouts when waiting for any response
+** [ ] Add dynamic progress indicator for knowlt
+** [ ] Investigate lag when sending first input message
+** [ ] Add dynamic variable support that's calculated at runtime
+*** [ ] Allow changing variables at runtime via str-like object that's recalculated
+** [X] Terminal resize does not re-render all components correctly
+** [ ] Non-interactive mode
+*** [ ] Accept workflow to run via commandline parameter
+*** [ ] Implement TUI that's pipe compatible (rich should support)
+*** [ ] Disable vocode
+*** [ ] Fail if user wants a confirmation in non-interactive mode
+** [ ] Fix up logging
+*** [ ] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
+** [ ] Add LLM timeouts
+*** [ ] Streaming start timeout, None = unlimited
+*** [ ] If LLM times out, retry attempt
+*** [ ] Total timeout, None = unlimited
+** [ ] Show how run the step is running in the toolbar. Store step creation time and show delte to current time for running status
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
 ** [ ] Tool call rejection with the message needs format
 ** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
-** [X] Update tool formatter to also signal that no completion confirmation needs to be displayed. Hide it for task tool.
+** [ ] Improve history editing:
+*** [ ] Make replace-last-message also emit step removals to UI
+** [ ] Update tool formatter to also signal that no completion confirmation needs to be displayed. Hide it for task tool.
 ** [X] Change menu shortcut to ctrl+space
 ** [X] Fix apply_patch result formatter to not be JSON
 ** [X] Why do we have a lag when we approve a tool call? Is knowlt blocking the main thread?
@@ -30,19 +48,17 @@
 *** [X] Fix jerkiness on key press
 *** [X] Add top/bottom hotkeys
 *** [X] Start at the bottom always
-** [ ] Send LLM stats in tool call rounds as well
+** [X] Send LLM stats in tool call rounds as well
 ** [ ] Send LLM stats when executor starts (from old state?)
 ** [ ] Store cached stats in LLM usage stats
-** [ ] Terminal resize does not re-render all components correctly
 ** [X] Add support for edge-level state policy override
 ** [X] Fix component addition/removal for help
 ** [X] Rework tooltip
-** [ ] Benchmark slow apply_patch on Windows
+** [X] Benchmark slow apply_patch on Windows
 ** [X] Fix rendering full lines - it seems like we're adding delete till end even if line takes whole screen
 ** [X] Current context window usage (input) is showing accumulated number instead of last step number
 ** [ ] Create alternative Markdown renderer that only highlights, but does not format
 ** [ ] Need apply_patch formatter with input and output (collapsed)
-** [ ] Need to rename read_files to read_file
 ** [X] Animation stops after showing/hiding toolbar component
 ** [ ] Assign a number to collapse/expand a specific component and show number in the component view. (bad idea due to repaints?)
 ** [ ] Compact tool call representation, where consequent calls are merged onto a single.
@@ -124,7 +140,15 @@
 * [ ] Patchers
 ** [ ] More strict V4A parser
 *** [ ] Prevent partial updates?
+** [ ] Nudge patch format to provide multiple patches in single roundtrip to save on tokens
 * [ ] Know
 ** [ ] C parser
 ** [ ] C++ parser
 ** [ ] Add extensions to parsers (.h -> cpp or to c, etc)
+* [ ] Worktree support
+** [ ] Extend know to support worktree
+*** [ ] Worktrees table and nullable worktree_id to all tables
+*** [ ] Accept worktree_id filter and do read-through
+*** [ ] Scanning to be updated to support worktree_id
+*** [ ] Quick deletion of worktree related data
+** [ ] Add support for worktree_id to project, runner, etc
