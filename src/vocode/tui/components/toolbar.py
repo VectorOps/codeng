@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Final
+import datetime
 from rich import console as rich_console
 from rich import text as rich_text
 
@@ -41,6 +42,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._active_workflow_llm_usage: vocode_state.LLMUsageStats | None = None
         self._last_step_llm_usage: vocode_state.LLMUsageStats | None = None
         self._project_llm_usage: vocode_state.LLMUsageStats | None = None
+        self._active_node_started_at: datetime.datetime | None = None
 
     @property
     def text(self) -> str:
@@ -61,6 +63,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         active_usage: vocode_state.LLMUsageStats | None = None
         last_step_usage: vocode_state.LLMUsageStats | None = None
         project_usage: vocode_state.LLMUsageStats | None = None
+        active_node_started_at: datetime.datetime | None = None
         if ui_state is not None:
             if ui_state.runners:
                 labels: list[str] = []
@@ -74,6 +77,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
                     labels.append(label)
                 workflow_label = " > ".join(labels)
                 status = ui_state.runners[-1].status
+            active_node_started_at = ui_state.active_node_started_at
             active_usage = ui_state.active_workflow_llm_usage
             last_step_usage = ui_state.last_step_llm_usage
             project_usage = ui_state.project_llm_usage
@@ -82,6 +86,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._active_workflow_llm_usage = active_usage
         self._last_step_llm_usage = last_step_usage
         self._project_llm_usage = project_usage
+        self._active_node_started_at = active_node_started_at
         self._update_animation()
 
     def _get_status_label(self) -> str:
@@ -93,6 +98,29 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         if label is not None:
             return label
         return status
+
+    @staticmethod
+    def _format_elapsed(started_at: datetime.datetime | None) -> str:
+        if started_at is None:
+            return ""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if started_at.tzinfo is None:
+            started = started_at.replace(tzinfo=datetime.timezone.utc)
+        else:
+            started = started_at
+        if now <= started:
+            return "0s"
+        delta = now - started
+        total_seconds = int(delta.total_seconds())
+        if total_seconds < 1:
+            return "<1s"
+        minutes, seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}h {minutes}m {seconds}s"
+        if minutes:
+            return f"{minutes}m {seconds}s"
+        return f"{seconds}s"
 
     def _update_animation(self, force: bool = False) -> None:
         terminal = self.terminal
@@ -134,11 +162,17 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
 
         status_text = self._get_status_label()
 
+        elapsed_text = ""
+        if status is vocode_state.RunnerStatus.RUNNING:
+            elapsed_text = self._format_elapsed(self._active_node_started_at)
+
         bracket_parts: list[str] = []
         if status_text:
             bracket_parts.append(status_text)
         if frame_text:
             bracket_parts.append(frame_text)
+        if elapsed_text:
+            bracket_parts.append(elapsed_text)
 
         suffix = ""
         if bracket_parts:

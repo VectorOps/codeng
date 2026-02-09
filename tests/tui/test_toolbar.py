@@ -54,6 +54,7 @@ def test_tui_state_updates_toolbar_from_ui_state() -> None:
     packet = manager_proto.UIServerStatePacket(
         status=manager_proto.UIServerStatus.RUNNING,
         runners=[runner_frame],
+        active_node_started_at=execution.created_at,
     )
 
     ui_state.handle_ui_state(packet)
@@ -163,6 +164,7 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
     packet = manager_proto.UIServerStatePacket(
         status=manager_proto.UIServerStatus.RUNNING,
         runners=[runner_frame1, runner_frame2],
+        active_node_started_at=execution2.created_at,
         active_workflow_llm_usage=active_usage,
         last_step_llm_usage=active_usage,
         project_llm_usage=project_usage,
@@ -178,6 +180,7 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
     assert "ts: 100" in rendered_text
     assert "tr: 50" in rendered_text
     assert "$0.25" in rendered_text
+    assert "s" in rendered_text
 
 
 def test_toolbar_animation_restored_after_autocomplete_pop(

@@ -328,6 +328,7 @@ class UIServer:
 
         # Generate runner stack summary
         runners: list[manager_proto.RunnerStackFrame] = []
+        active_node_started_at = None
         active_workflow_usage: Optional[state.LLMUsageStats] = None
         last_step_usage: Optional[state.LLMUsageStats] = None
         for runner_frame in self._manager.runner_stack:
@@ -336,6 +337,19 @@ class UIServer:
                 continue
             execution = runner_frame.runner.execution
             node_name = stats.current_node_name or ""
+            node_started_at = None
+            if node_name:
+                latest_execution = None
+                for node_execution in execution.node_executions.values():
+                    if node_execution.node != node_name:
+                        continue
+                    if (
+                        latest_execution is None
+                        or node_execution.created_at > latest_execution.created_at
+                    ):
+                        latest_execution = node_execution
+                if latest_execution is not None:
+                    node_started_at = latest_execution.created_at
             runners.append(
                 manager_proto.RunnerStackFrame(
                     workflow_name=execution.workflow_name,
@@ -344,6 +358,8 @@ class UIServer:
                     status=stats.status,
                 )
             )
+            if node_started_at is not None:
+                active_node_started_at = node_started_at
             if execution.llm_usage is not None:
                 active_workflow_usage = execution.llm_usage
             if execution.last_step_llm_usage is not None:
@@ -353,6 +369,7 @@ class UIServer:
         state_packet = manager_proto.UIServerStatePacket(
             status=self._status,
             runners=runners,
+            active_node_started_at=active_node_started_at,
             active_workflow_llm_usage=active_workflow_usage,
             last_step_llm_usage=last_step_usage,
             project_llm_usage=self._manager.project.llm_usage,
