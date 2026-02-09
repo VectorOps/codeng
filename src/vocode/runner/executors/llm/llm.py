@@ -1,6 +1,6 @@
 from typing import AsyncIterator, List, Dict, Any, Optional
 from typing import Final
-
+from collections.abc import Awaitable
 import asyncio
 import json
 import litellm
@@ -263,12 +263,46 @@ class LLMExecutor(runner_base.BaseExecutor):
 
                 task_name = f"llm.acompletion:{cfg.name}"
                 stream_task = asyncio.create_task(completion_coro, name=task_name)
-                stream = await stream_task
+
+                loop = asyncio.get_running_loop()
+                start_deadline: Optional[float] = None
+                if cfg.start_timeout is not None:
+                    start_deadline = loop.time() + float(cfg.start_timeout)
+                response_deadline: Optional[float] = None
+                if cfg.response_timeout is not None:
+                    response_deadline = loop.time() + float(cfg.response_timeout)
+
+                async def _await_with_deadline(
+                    awaitable: Awaitable[Any], deadline: Optional[float]
+                ) -> Any:
+                    if deadline is None:
+                        return await awaitable
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError()
+                    return await asyncio.wait_for(awaitable, timeout=remaining)
+
+                stream = await _await_with_deadline(stream_task, start_deadline)
 
                 chunks = []
                 assistant_partial = ""
+                received_first_chunk = False
+                current_deadline = start_deadline
 
-                async for chunk in stream:
+                stream_iter = stream.__aiter__()
+
+                while True:
+                    try:
+                        chunk = await _await_with_deadline(
+                            stream_iter.__anext__(), current_deadline
+                        )
+                    except StopAsyncIteration:
+                        break
+
+                    if not received_first_chunk:
+                        received_first_chunk = True
+                        current_deadline = response_deadline
+
                     chunks.append(chunk)
                     choice_list = chunk.choices
                     if not choice_list:
@@ -292,6 +326,23 @@ class LLMExecutor(runner_base.BaseExecutor):
                         yield interim_step
 
                 break
+            except asyncio.TimeoutError as e:
+                logger.error("LLM timeout", err=e)
+                if not stream_task.done():
+                    stream_task.cancel()
+                if attempt < max_retries:
+                    attempt += 1
+                    continue
+
+                error_step = self._build_step_from_message(
+                    step,
+                    role=models.Role.SYSTEM,
+                    step_type=state.StepType.REJECTION,
+                    text="LLM timeout",
+                    is_complete=True,
+                )
+                yield error_step
+                return
             except litellm.RateLimitError as e:
                 logger.warning("LLM rate limit retry", exc=e)
                 if attempt < max_retries:

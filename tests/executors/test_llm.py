@@ -1,5 +1,6 @@
 from typing import Any, List, Optional
 
+import asyncio
 import litellm
 import pytest
 
@@ -144,6 +145,61 @@ async def test_llm_executor_with_litellm_mock_response(
     for s in output_steps[:-1]:
         assert s.is_complete is False
     assert final_message_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_timeouts_retry_and_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    call_count = {"n": 0}
+
+    async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
+        call_count["n"] += 1
+
+        async def gen() -> Any:
+            while True:
+                await asyncio.sleep(3600)
+                yield FakeChunk("")
+
+        return gen()
+
+    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
+        return FakeResponse("")
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(litellm, "stream_chunk_builder", fake_stream_chunk_builder)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-timeouts",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        start_timeout=0.01,
+        response_timeout=0.01,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    user_msg = state.Message(role=models.Role.USER, text="Hi")
+    execution = state.NodeExecution(
+        node="node-timeouts",
+        input_messages=[user_msg],
+        status=state.RunStatus.RUNNING,
+    )
+    run = state.WorkflowExecution(
+        workflow_name="wf",
+        node_executions={execution.id: execution},
+        steps=[],
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert call_count["n"] == 4
+    assert steps
+    final_step = steps[-1]
+    assert final_step.type == state.StepType.REJECTION
+    assert final_step.is_complete is True
 
 
 @pytest.mark.asyncio

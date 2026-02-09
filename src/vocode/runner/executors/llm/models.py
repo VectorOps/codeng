@@ -50,3 +50,19 @@ class LLMNode(models.Node):
         ),
     )
     # TODO: validator
+
+    start_timeout: Optional[float] = Field(
+        default=30.0,
+        description=(
+            "Optional time-to-first-token timeout in seconds. "
+            "Set to None to disable this timeout."
+        ),
+    )
+
+    response_timeout: Optional[float] = Field(
+        default=None,
+        description=(
+            "Optional total time limit in seconds for the full LLM response. "
+            "Set to None to disable this timeout."
+        ),
+    )
