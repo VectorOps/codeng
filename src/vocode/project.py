@@ -143,10 +143,10 @@ class Project:
             if name not in disabled_tool_names
         }
 
-        # Know tools
-        for t in self.know.pm.get_enabled_tools():
-            if t.tool_name not in disabled_tool_names:
-                self.tools[t.tool_name] = convert_know_tool(self, t)
+        if self.settings and self.settings.know_enabled and self.settings.know:
+            for t in self.know.pm.get_enabled_tools():
+                if t.tool_name not in disabled_tool_names:
+                    self.tools[t.tool_name] = convert_know_tool(self, t)
 
     # LLM usage totals
     def add_llm_usage(
@@ -163,8 +163,7 @@ class Project:
         """
         Start project subsystems that require async initialization (e.g., MCP).
         """
-        # Initialize knowlt manager before subsystems that might depend on it.
-        if self.settings and self.settings.know:
+        if self.settings and self.settings.know_enabled and self.settings.know:
             await self.know.start(self.settings.know)
         await self.state_manager.start()
 
@@ -214,8 +213,8 @@ class Project:
         # Discover skills
         self.skills = discover_skills(self.base_path)
 
-        # Perform an initial refresh of all 'know' repositories on start
-        await self.know.refresh_all()
+        if self.settings and self.settings.know_enabled and self.settings.know:
+            await self.know.refresh_all()
 
     async def shutdown(self) -> None:
         """Gracefully shut down project components."""
@@ -227,8 +226,8 @@ class Project:
         if self.processes is not None:
             await self.processes.shutdown()
             self.processes = None
-        # Stop know
-        await self.know.shutdown()
+        if self.settings and self.settings.know_enabled and self.settings.know:
+            await self.know.shutdown()
         await self.state_manager.shutdown()
 
 
@@ -300,34 +299,29 @@ def init_project(
     # Load merged settings (supports include + YAML/JSON5)
     settings = load_settings(str(config_path))
 
-    # Initialize `know` project.
-    if settings.know:
-        # Create a mutable copy of know settings to populate defaults.
-        know_settings = settings.know.model_copy(deep=True)
-    else:
-        # Create default settings if 'know' section is missing from config.
-        # Required fields are given placeholder values that will be immediately
-        # cleared to trigger the defaulting logic below.
-        know_settings = KnowProjectSettings(project_name="_", repo_name="_")
-        know_settings.project_name = ""
-        know_settings.repo_name = ""
+    if settings.know_enabled:
+        if settings.know:
+            know_settings = settings.know.model_copy(deep=True)
+        else:
+            know_settings = KnowProjectSettings(project_name="_", repo_name="_")
+            know_settings.project_name = ""
+            know_settings.repo_name = ""
 
-    # Default project/repo names if not set.
-    if not know_settings.project_name:
-        know_settings.project_name = "my-project"
-    if not know_settings.repo_name:
-        know_settings.repo_name = base.name
-    if not know_settings.repo_path:
-        know_settings.repo_path = str(base)
+        if not know_settings.project_name:
+            know_settings.project_name = "my-project"
+        if not know_settings.repo_name:
+            know_settings.repo_name = base.name
+        if not know_settings.repo_path:
+            know_settings.repo_path = str(base)
 
-    # Default database path.
-    if not know_settings.repository_connection:
-        know_data_path = base / ".vocode/data"
-        know_data_path.mkdir(parents=True, exist_ok=True)
-        know_settings.repository_connection = str(know_data_path / "know-ng.duckdb")
+        if not know_settings.repository_connection:
+            know_data_path = base / ".vocode/data"
+            know_data_path.mkdir(parents=True, exist_ok=True)
+            know_settings.repository_connection = str(
+                know_data_path / "know-ng.duckdb"
+            )
 
-    # Persist computed know settings for deferred async initialization in start()
-    settings.know = know_settings
+        settings.know = know_settings
 
     proj = Project(
         base_path=base,
