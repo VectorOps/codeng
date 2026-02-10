@@ -227,6 +227,7 @@ class Settings(BaseModel):
     # Mapping of tool name -> formatter configuration
     tool_call_formatters: Dict[str, ToolCallFormatter] = Field(default_factory=dict)
     know: Optional[KnowProjectSettings] = Field(default=None)
+    know_enabled: bool = True
     process: Optional[ProcessSettings] = Field(default=None)
     logging: Optional[LoggingSettings] = Field(default=None)
     persistence: Optional[PersistenceSettings] = Field(default=None)

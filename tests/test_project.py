@@ -45,3 +45,25 @@ async def test_project_start_initializes_subsystems_and_tools(tmp_path):
     assert "exec" in project.tools
 
     await project.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_project_start_with_know_disabled(tmp_path):
+    settings = Settings()
+    settings.know_enabled = False
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+
+    project.know = _DummyKnowProject()
+
+    await project.start()
+
+    assert project.processes is not None
+    assert project.shells is not None
+    assert isinstance(project.tools, dict)
+    assert "exec" in project.tools
+
+    await project.shutdown()
