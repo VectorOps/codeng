@@ -43,6 +43,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._last_step_llm_usage: vocode_state.LLMUsageStats | None = None
         self._project_llm_usage: vocode_state.LLMUsageStats | None = None
         self._active_node_started_at: datetime.datetime | None = None
+        self._last_user_input_at: datetime.datetime | None = None
 
     @property
     def text(self) -> str:
@@ -64,6 +65,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         last_step_usage: vocode_state.LLMUsageStats | None = None
         project_usage: vocode_state.LLMUsageStats | None = None
         active_node_started_at: datetime.datetime | None = None
+        last_user_input_at: datetime.datetime | None = None
         if ui_state is not None:
             if ui_state.runners:
                 labels: list[str] = []
@@ -78,6 +80,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
                 workflow_label = " > ".join(labels)
                 status = ui_state.runners[-1].status
             active_node_started_at = ui_state.active_node_started_at
+            last_user_input_at = ui_state.last_user_input_at
             active_usage = ui_state.active_workflow_llm_usage
             last_step_usage = ui_state.last_step_llm_usage
             project_usage = ui_state.project_llm_usage
@@ -87,6 +90,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._last_step_llm_usage = last_step_usage
         self._project_llm_usage = project_usage
         self._active_node_started_at = active_node_started_at
+        self._last_user_input_at = last_user_input_at
         self._update_animation()
 
     def _get_status_label(self) -> str:
@@ -164,7 +168,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
 
         elapsed_text = ""
         if status is vocode_state.RunnerStatus.RUNNING:
-            elapsed_text = self._format_elapsed(self._active_node_started_at)
+            elapsed_text = self._format_elapsed(self._last_user_input_at)
 
         bracket_parts: list[str] = []
         if status_text:

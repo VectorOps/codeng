@@ -245,6 +245,10 @@ class WorkflowExecution(BaseModel):
         default=None,
         description="LLM usage stats for the last completed step, if any.",
     )
+    last_user_input_at: Optional[datetime] = Field(
+        default=None,
+        description="Timestamp of the last user input message for this workflow.",
+    )
     state: Dict[str, Any] = {}
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

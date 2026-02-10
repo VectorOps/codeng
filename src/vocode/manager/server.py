@@ -329,6 +329,7 @@ class UIServer:
         # Generate runner stack summary
         runners: list[manager_proto.RunnerStackFrame] = []
         active_node_started_at = None
+        last_user_input_at = None
         active_workflow_usage: Optional[state.LLMUsageStats] = None
         last_step_usage: Optional[state.LLMUsageStats] = None
         for runner_frame in self._manager.runner_stack:
@@ -358,6 +359,8 @@ class UIServer:
             )
             if node_started_at is not None:
                 active_node_started_at = node_started_at
+            if execution.last_user_input_at is not None:
+                last_user_input_at = execution.last_user_input_at
             if execution.llm_usage is not None:
                 active_workflow_usage = execution.llm_usage
             if execution.last_step_llm_usage is not None:
@@ -368,6 +371,7 @@ class UIServer:
             status=self._status,
             runners=runners,
             active_node_started_at=active_node_started_at,
+            last_user_input_at=last_user_input_at,
             active_workflow_llm_usage=active_workflow_usage,
             last_step_llm_usage=last_step_usage,
             project_llm_usage=self._manager.project.llm_usage,

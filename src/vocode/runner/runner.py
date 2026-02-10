@@ -270,6 +270,12 @@ class Runner:
             run_steps[existing_run_index] = step
         else:
             run_steps.append(step)
+        if (
+            step.type == state.StepType.INPUT_MESSAGE
+            and step.message is not None
+            and step.message.role == models.Role.USER
+        ):
+            self.execution.last_user_input_at = step.created_at
         self._touch_execution()
         return step
 

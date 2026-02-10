@@ -11,9 +11,9 @@ from .models import (
     Settings,
     VOCODE_TEMPLATE_BASE,
     TEMPLATE_INCLUDE_KEYS,
-    VAR_PATTERN,
     INCLUDE_KEY,
 )
+from .variables import VAR_PATTERN, VariableRef, InterpolatedString
 
 
 # Workflow files discovered under .vocode/workflows
@@ -567,10 +567,11 @@ def load_settings(path: str) -> Settings:
     # Resolve variable-to-variable references (e.g., a: ${b}) with cycle detection
     vars_map = _resolve_variables(vars_map)
 
-    # Interpolate and build models
-    data = _apply_variables(data_any, vars_map)
-
-    return Settings.model_validate(data)
+    data_any = _apply_variables(data_any, vars_map)
+    settings = Settings.model_validate(data_any)
+    object.__setattr__(settings, "_vars_map", vars_map)
+    _attach_settings_root_and_wrap(settings, settings)
+    return settings
 
 
 def build_model_from_settings(
@@ -587,3 +588,37 @@ def build_model_from_settings(
             f"Expected dict for {model_cls.__name__} settings, got {type(data).__name__}"
         )
     return model_cls.model_validate(data)
+
+
+def _attach_settings_root_and_wrap(obj: Any, root: Settings) -> None:
+    from .models import VariableAwareModel
+
+    if isinstance(obj, VariableAwareModel):
+        object.__setattr__(obj, "_settings_root", root)
+        for name, value in list(obj.__dict__.items()):
+            if name.startswith("_"):
+                continue
+            wrapped = _wrap_value(value, root)
+            if wrapped is not value:
+                object.__setattr__(obj, name, wrapped)
+            child = getattr(obj, name)
+            _attach_settings_root_and_wrap(child, root)
+
+    if isinstance(obj, dict):
+        for v in obj.values():
+            _attach_settings_root_and_wrap(v, root)
+    elif isinstance(obj, list):
+        for v in obj:
+            _attach_settings_root_and_wrap(v, root)
+
+
+def _wrap_value(value: Any, root: Settings) -> Any:
+    if isinstance(value, str):
+        m = VAR_PATTERN.fullmatch(value)
+        if m:
+            return VariableRef(root, m.group(1))
+        if VAR_PATTERN.search(value):
+            return InterpolatedString(root, value)
+        return value
+    return value
+
