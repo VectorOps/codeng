@@ -9,7 +9,7 @@
 ** [ ] Non-interactive mode
 *** [ ] Accept workflow to run via commandline parameter
 *** [ ] Implement TUI that's pipe compatible (rich should support)
-*** [ ] Disable vocode
+*** [X] Disable knowlt
 *** [ ] Fail if user wants a confirmation in non-interactive mode
 ** [ ] Fix up logging
 *** [ ] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery

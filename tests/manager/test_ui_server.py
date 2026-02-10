@@ -178,6 +178,7 @@ async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
     payload2 = envelope2.payload
     assert isinstance(payload2, manager_proto.UIServerStatePacket)
     assert payload2.active_node_started_at == step.created_at
+    assert payload2.last_user_input_at == execution.last_user_input_at
 
     dummy_task.cancel()
     with pytest.raises(asyncio.CancelledError):

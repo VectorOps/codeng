@@ -1,17 +1,19 @@
 from typing import List, Dict, Optional, Any, Union, Set, Final, Type, Literal
-from enum import Enum
 import re
+from enum import Enum
 from pathlib import Path
 from os import PathLike
 import os
 import json
 from importlib import resources
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from pydantic import model_validator, field_validator
 import yaml
 import json5  # type: ignore
 from vocode import models
 from vocode.lib.validators import get_value_by_dotted_key, regex_matches_value
+
+from .variables import VAR_PATTERN, VariableExpression
 
 
 from knowlt.settings import ProjectSettings as KnowProjectSettings
@@ -23,20 +25,31 @@ VOCODE_TEMPLATE_BASE: Path = (resources.files("vocode") / "config_templates").re
 # Include spec keys for bundled templates. Support GitLab 'template', legacy 'vocode', and 'templates'
 TEMPLATE_INCLUDE_KEYS: Final[Set[str]] = {"template", "templates", "vocode"}
 
-# Variable replacement pattern.
-# Supports:
-#   - ${NAME}
-#   - ${env:NAME}
-# Ignores '$${NAME}' so it can be used to escape a literal '${NAME}'.
-VAR_PATTERN = re.compile(
-    r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*(?::[A-Za-z_][A-Za-z0-9_]*)?)\}"
-)
-
 INCLUDE_KEY: Final[str] = "$include"
 
 # Default maximum combined stdout/stderr characters returned by the exec tool.
 # Individual projects can override this via Settings.exec_tool.max_output_chars.
 EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT: Final[int] = 10 * 1024
+
+
+class VariableAwareModel(BaseModel):
+    _settings_root: Optional["Settings"] = PrivateAttr(default=None)
+
+    def __getattribute__(self, name: str) -> Any:
+        value = super().__getattribute__(name)
+        if isinstance(value, VariableExpression):
+            root = super().__getattribute__("_settings_root") or self
+            return value.resolve(root)
+        return value
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            return super().__setattr__(name, value)
+        current = self.__dict__.get(name)
+        if isinstance(current, VariableExpression):
+            current.assign(self, name, value)
+            return
+        return super().__setattr__(name, value)
 
 
 class LogLevel(str, Enum):
@@ -47,7 +60,7 @@ class LogLevel(str, Enum):
     critical = "critical"
 
 
-class WorkflowConfig(BaseModel):
+class WorkflowConfig(VariableAwareModel):
     name: Optional[str] = None
     # Human-readable purpose/summary for this workflow; used in tool descriptions.
     description: Optional[str] = None
@@ -66,7 +79,7 @@ class WorkflowConfig(BaseModel):
         return [models.Node.from_node(item) for item in v]
 
 
-class ToolCallFormatter(BaseModel):
+class ToolCallFormatter(VariableAwareModel):
     """
     Configures how to display a tool call in the terminal.
     - title: what to display as the function name
@@ -84,7 +97,7 @@ class ToolCallFormatter(BaseModel):
     options: Dict[str, Any] = Field(default_factory=dict)
 
 
-class ToolAutoApproveRule(BaseModel):
+class ToolAutoApproveRule(VariableAwareModel):
     """Rule for automatically approving a tool call based on its JSON arguments.
 
     - key: dot-separated path inside the arguments dict (e.g. "resource.action").
@@ -107,14 +120,14 @@ class ToolAutoApproveRule(BaseModel):
         return v
 
 
-class TUIOptions(BaseModel):
+class TUIOptions(VariableAwareModel):
     unicode: bool = True
     ascii_fallback: bool = False
     expand_confirm_tools: bool = True
     submit_with_enter: bool = True
 
 
-class ToolSpec(BaseModel):
+class ToolSpec(VariableAwareModel):
     """
     Tool specification usable both globally (Settings.tools) and per-node (LLMNode.tools).
 
@@ -149,7 +162,7 @@ class ToolSpec(BaseModel):
         return v
 
 
-class LoggingSettings(BaseModel):
+class LoggingSettings(VariableAwareModel):
     # Default level for our primary loggers (vocode, knowlt) if not overridden.
     default_level: LogLevel = LogLevel.info
     # Mapping of logger name -> level override (e.g., {"asyncio": "debug"})
@@ -161,7 +174,7 @@ class ShellMode(str, Enum):
     shell = "shell"
 
 
-class ShellSettings(BaseModel):
+class ShellSettings(VariableAwareModel):
     # How shell commands are executed:
     # - "direct": each command runs in its own subprocess
     # - "shell": commands run via a long-lived shell with wrapped markers
@@ -175,14 +188,14 @@ class ShellSettings(BaseModel):
     default_timeout_s: int = 120
 
 
-class ProcessEnvSettings(BaseModel):
+class ProcessEnvSettings(VariableAwareModel):
     inherit_parent: bool = True
     allowlist: Optional[List[str]] = None
     denylist: Optional[List[str]] = None
     defaults: Dict[str, str] = Field(default_factory=dict)
 
 
-class ProcessSettings(BaseModel):
+class ProcessSettings(VariableAwareModel):
     # Backend key in the process backend registry. The backend is responsible
     # for spawning subprocesses via the EnvPolicy configured below.
     backend: Literal["local"] = "local"
@@ -192,7 +205,7 @@ class ProcessSettings(BaseModel):
     shell: ShellSettings = Field(default_factory=ShellSettings)
 
 
-class ExecToolSettings(BaseModel):
+class ExecToolSettings(VariableAwareModel):
     # Maximum characters of combined stdout/stderr returned by the exec tool.
     # This guards against excessive subprocess output overwhelming callers.
     max_output_chars: int = EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT
@@ -202,22 +215,22 @@ class ExecToolSettings(BaseModel):
     timeout_s: Optional[float] = None
 
 
-class ToolSettings(BaseModel):
+class ToolSettings(VariableAwareModel):
     exec_tool: Optional[ExecToolSettings] = None
 
 
-class PersistenceSettings(BaseModel):
+class PersistenceSettings(VariableAwareModel):
     save_interval_s: float = 120.0
     max_total_log_bytes: int = 1024 * 1024 * 1024
 
 
-class InternalHTTPSettings(BaseModel):
+class InternalHTTPSettings(VariableAwareModel):
     host: str = "127.0.0.1"
     port: Optional[int] = None
     secret_key: Optional[str] = None
 
 
-class Settings(BaseModel):
+class Settings(VariableAwareModel):
     workflows: Dict[str, WorkflowConfig] = Field(default_factory=dict)
     # Optional name of the workflow to auto-start in interactive UIs
     default_workflow: Optional[str] = Field(default=None)

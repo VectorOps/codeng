@@ -88,6 +88,7 @@ class UIServerStatePacket(BaseModel):
     status: UIServerStatus
     runners: list[RunnerStackFrame] = Field(default_factory=list)
     active_node_started_at: Optional[datetime] = Field(default=None)
+    last_user_input_at: Optional[datetime] = Field(default=None)
     active_workflow_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)
     last_step_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)
     project_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)

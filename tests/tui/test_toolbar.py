@@ -55,6 +55,7 @@ def test_tui_state_updates_toolbar_from_ui_state() -> None:
         status=manager_proto.UIServerStatus.RUNNING,
         runners=[runner_frame],
         active_node_started_at=execution.created_at,
+        last_user_input_at=execution.created_at,
     )
 
     ui_state.handle_ui_state(packet)
@@ -165,6 +166,7 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
         status=manager_proto.UIServerStatus.RUNNING,
         runners=[runner_frame1, runner_frame2],
         active_node_started_at=execution2.created_at,
+        last_user_input_at=execution2.created_at,
         active_workflow_llm_usage=active_usage,
         last_step_llm_usage=active_usage,
         project_llm_usage=project_usage,
