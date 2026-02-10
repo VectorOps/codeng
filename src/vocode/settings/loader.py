@@ -6,6 +6,7 @@ import json
 from pydantic import BaseModel
 import yaml
 import json5  # type: ignore
+from vocode import vars as vars_mod
 
 from .models import (
     Settings,
@@ -13,7 +14,7 @@ from .models import (
     TEMPLATE_INCLUDE_KEYS,
     INCLUDE_KEY,
 )
-from .variables import VAR_PATTERN, VariableRef, InterpolatedString
+from vocode.vars import VAR_PATTERN, VarDef
 
 
 # Workflow files discovered under .vocode/workflows
@@ -59,16 +60,16 @@ def _collect_variables(doc: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(vars_spec, dict):
         for k, v in vars_spec.items():
             if isinstance(k, str):
-                out[k] = v  # keep original type (can be list/dict/etc)
+                out[k] = VarDef.from_raw(v)
     elif isinstance(vars_spec, list):
         for item in vars_spec:
             if isinstance(item, dict):
                 if "key" in item and "value" in item and isinstance(item["key"], str):
-                    out[item["key"]] = item["value"]
+                    out[item["key"]] = VarDef.from_raw(item["value"])
                 else:
                     for k, v in item.items():
                         if isinstance(k, str):
-                            out[k] = v
+                            out[k] = VarDef.from_raw(v)
     return out
 
 
@@ -78,32 +79,6 @@ def _apply_var_prefix_to_map(
     if not prefix:
         return dict(vars_map)
     return {f"{prefix}{k}": v for k, v in vars_map.items()}
-
-
-def _lookup_var_value(name: str, vars_map: Dict[str, Any]) -> tuple[bool, Any]:
-    """
-    Resolve a variable or environment-backed placeholder name.
-
-    Supports:
-      - NAME      -> from vars_map
-      - env:NAME  -> from environment (raw string)
-
-    Returns (found, value); callers should leave the placeholder unchanged when
-    found is False.
-    """
-    if name.startswith("env:"):
-        env_name = name[4:]
-        if not env_name:
-            return False, None
-        val = os.getenv(env_name)
-        if val is None:
-            return False, None
-        return True, val
-
-    if name in vars_map:
-        return True, vars_map[name]
-
-    return False, None
 
 
 def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
@@ -116,6 +91,7 @@ def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
     """
     resolved: Dict[str, Any] = {}
     resolving: Set[str] = set()
+    env = vars_mod.VarEnv(vars_map)
 
     def resolve_one(name: str) -> Any:
         if name in resolved:
@@ -124,13 +100,17 @@ def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"Detected variable resolution cycle at '{name}'")
         resolving.add(name)
         val = vars_map.get(name)
+        var_def: Optional[VariableDef] = None
+        if isinstance(val, VarDef):
+            var_def = val
+            val = var_def.value
         # Only resolve if the value is a full-match variable reference
         if isinstance(val, str):
             m = VAR_PATTERN.fullmatch(val)
             if m:
                 ref = m.group(1)
                 if ref.startswith("env:"):
-                    found, env_val = _lookup_var_value(ref, vars_map)
+                    found, env_val = env.lookup(ref)
                     # Unknown env vars are left as the original placeholder string
                     res = env_val if found else val
                 elif ref in vars_map:
@@ -138,11 +118,17 @@ def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
                 else:
                     # Unknown variable refs are left as the placeholder string
                     res = val
-                resolved[name] = res
+                if var_def is not None:
+                    resolved[name] = VarDef(value=res, options=var_def.options, lookup=var_def.lookup)
+                else:
+                    resolved[name] = res
                 resolving.remove(name)
                 return res
         # Non-strings or non-full-match strings are returned as-is
-        resolved[name] = val
+        if var_def is not None:
+            resolved[name] = VarDef(value=val, options=var_def.options, lookup=var_def.lookup)
+        else:
+            resolved[name] = val
         resolving.remove(name)
         return val
 
@@ -151,40 +137,13 @@ def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
     return resolved
 
 
-def _interpolate_string(s: str, vars_map: Dict[str, Any]) -> str:
-    """Interpolate ${...} placeholders inside arbitrary strings.
-
-    Escaping:
-      - '$${NAME}' renders as a literal '${NAME}' with no interpolation.
-      - The leading '$$' is collapsed to a single '$' in the final output.
-    """
-
-    def repl(m: re.Match) -> str:
-        name = m.group(1)
-        found, val = _lookup_var_value(name, vars_map)
-        if not found:
-            return m.group(0)
-        if val is None:
-            return ""
-        if isinstance(val, (dict, list)):
-            return json.dumps(val, ensure_ascii=False)
-        return str(val)
-
-    interpolated = VAR_PATTERN.sub(repl, s)
-    # Turn escaped '$${' sequences into a literal '${' in the final result.
-    return interpolated.replace("$${", "${")
-
-
 def _apply_variables(obj: Any, vars_map: Dict[str, Any]) -> Any:
+    env = vars_mod.VarEnv(vars_map)
     if isinstance(obj, str):
-        m = VAR_PATTERN.fullmatch(obj)
-        if m:
-            name = m.group(1)
-            found, val = _lookup_var_value(name, vars_map)
-            if found:
-                return val
-            return obj
-        return _interpolate_string(obj, vars_map)
+        wrapped = vars_mod.BaseVarModel._wrap_value(obj, env)
+        if isinstance(wrapped, vars_mod.VarExpr):
+            return wrapped.resolve()
+        return obj
     if isinstance(obj, dict):
         return {k: _apply_variables(v, vars_map) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -552,8 +511,11 @@ def load_settings(path: str) -> Settings:
 
     filtered_root_vars: Dict[str, Any] = {}
     for k, v in root_vars.items():
-        if isinstance(v, str):
-            m = VAR_PATTERN.fullmatch(v)
+        value = v
+        if isinstance(v, VarDef):
+            value = v.value
+        if isinstance(value, str):
+            m = VAR_PATTERN.fullmatch(value)
             if m:
                 ref = m.group(1)
                 if ref.startswith("env:"):
@@ -567,10 +529,19 @@ def load_settings(path: str) -> Settings:
     # Resolve variable-to-variable references (e.g., a: ${b}) with cycle detection
     vars_map = _resolve_variables(vars_map)
 
-    data_any = _apply_variables(data_any, vars_map)
+    value_only_map: Dict[str, Any] = {}
+    var_defs_only: Dict[str, VarDef] = {}
+    for k, v in vars_map.items():
+        if isinstance(v, VarDef):
+            value_only_map[k] = v.value
+            var_defs_only[k] = v
+        else:
+            value_only_map[k] = v
+
+    data_any = _apply_variables(data_any, value_only_map)
     settings = Settings.model_validate(data_any)
-    object.__setattr__(settings, "_vars_map", vars_map)
-    _attach_settings_root_and_wrap(settings, settings)
+    settings.set_var_context(value_only_map)
+    settings._set_var_defs(var_defs_only)
     return settings
 
 
@@ -588,37 +559,3 @@ def build_model_from_settings(
             f"Expected dict for {model_cls.__name__} settings, got {type(data).__name__}"
         )
     return model_cls.model_validate(data)
-
-
-def _attach_settings_root_and_wrap(obj: Any, root: Settings) -> None:
-    from .models import VariableAwareModel
-
-    if isinstance(obj, VariableAwareModel):
-        object.__setattr__(obj, "_settings_root", root)
-        for name, value in list(obj.__dict__.items()):
-            if name.startswith("_"):
-                continue
-            wrapped = _wrap_value(value, root)
-            if wrapped is not value:
-                object.__setattr__(obj, name, wrapped)
-            child = getattr(obj, name)
-            _attach_settings_root_and_wrap(child, root)
-
-    if isinstance(obj, dict):
-        for v in obj.values():
-            _attach_settings_root_and_wrap(v, root)
-    elif isinstance(obj, list):
-        for v in obj:
-            _attach_settings_root_and_wrap(v, root)
-
-
-def _wrap_value(value: Any, root: Settings) -> Any:
-    if isinstance(value, str):
-        m = VAR_PATTERN.fullmatch(value)
-        if m:
-            return VariableRef(root, m.group(1))
-        if VAR_PATTERN.search(value):
-            return InterpolatedString(root, value)
-        return value
-    return value
-

@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 
 from vocode.settings.loader import load_settings
+from vocode.runner.executors.llm.models import LLMNode
 
 
 def _write_tmp(tmp_path: Path, text: str) -> Path:
@@ -81,3 +82,35 @@ workflows:
     node = wf.nodes[0]
     assert node.type == "llm"
     assert getattr(node, "model", None) == "gpt-4o"
+
+
+def test_object_mode_variable_definition_with_value(tmp_path: Path) -> None:
+    cfg = """
+variables:
+  HOST:
+    value: localhost
+    options: [localhost, remote]
+internal_http:
+  host: ${HOST}
+"""
+    path = _write_tmp(tmp_path, cfg)
+    settings = load_settings(str(path))
+
+    assert settings.internal_http is not None
+    assert settings.internal_http.host == "localhost"
+
+
+def test_object_mode_variable_definition_without_explicit_value(tmp_path: Path) -> None:
+    cfg = """
+variables:
+  PORT:
+    value: 9000
+    lookup: ports
+internal_http:
+  port: ${PORT}
+"""
+    path = _write_tmp(tmp_path, cfg)
+    settings = load_settings(str(path))
+
+    assert settings.internal_http is not None
+    assert settings.internal_http.port == 9000

@@ -3,8 +3,13 @@
 * [ ] General
 ** [ ] Add dynamic progress indicator for knowlt
 ** [ ] Investigate lag when sending first input message
+** [ ] Remove extra line break from task tool
 ** [ ] Add dynamic variable support that's calculated at runtime
-*** [ ] Allow changing variables at runtime via str-like object that's recalculated
+*** [X] Allow changing variables at runtime via str-like object that's recalculated
+*** [ ] Add a way to change variable setting via TUI
+- List variables
+- Add variable types with lookup manager (LLM models, etc)
+- Pick from the list vs type it in
 ** [X] Terminal resize does not re-render all components correctly
 ** [ ] Non-interactive mode
 *** [ ] Accept workflow to run via commandline parameter
