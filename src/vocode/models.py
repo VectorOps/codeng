@@ -8,6 +8,7 @@ from pydantic import (
 )
 from enum import Enum
 import re
+from vocode import vars as vars_mod
 
 EDGE_ALT_SYNTAX_RE = re.compile(
     r"^\s*([A-Za-z0-9_\-]+)\.([A-Za-z0-9_\-]+)\s*->\s*([A-Za-z0-9_\-]+)(?::([A-Za-z0-9_\-]+))?\s*$"
@@ -66,7 +67,7 @@ class OutcomeStrategy(str, Enum):
     FUNCTION = "function"
 
 
-class PreprocessorSpec(BaseModel):
+class PreprocessorSpec(vars_mod.BaseVarModel):
     name: str
     options: Dict[str, Any] = Field(default_factory=dict)
     mode: Role = Field(
@@ -126,7 +127,7 @@ class PreprocessorSpec(BaseModel):
         )
 
 
-class Node(BaseModel):
+class Node(vars_mod.BaseVarModel):
     name: str = Field(..., description="Unique node name")
     type: str = Field(..., description="Node type identifier")
     description: Optional[str] = Field(
@@ -219,7 +220,7 @@ class Node(BaseModel):
         return model_cls.model_validate(data)
 
 
-class Edge(BaseModel):
+class Edge(vars_mod.BaseVarModel):
     source_node: str = Field(..., description="Name of the source node")
     source_outcome: str = Field(
         ..., description="Name of the outcome slot on the source node"
@@ -252,7 +253,7 @@ class Edge(BaseModel):
         return v
 
 
-class Graph(BaseModel):
+class Graph(vars_mod.BaseVarModel):
     nodes: List[Node] = Field(default_factory=list)
     edges: List[Edge] = Field(default_factory=list)
 
