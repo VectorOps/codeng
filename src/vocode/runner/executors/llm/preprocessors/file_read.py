@@ -67,13 +67,23 @@ def _fileread_preprocessor(
         prepend_template = opts.get("prepend_template") or "User provided {filename}:\n"
 
     parts: List[str] = []
+    base = project.base_path.resolve()
     for rel in paths:
         full = _validate_relpath(rel, project)
         if not full:
             continue
+        try:
+            rel_display = str(full.relative_to(base))
+        except Exception:
+            rel_display = full.name
         if prepend_template is not None:
             try:
-                parts.append(prepend_template.format(filename=full.name))
+                parts.append(
+                    prepend_template.format(
+                        filename=full.name,
+                        path=rel_display,
+                    )
+                )
             except Exception:
                 parts.append(str(prepend_template))
         parts.append(_read_file_text(full))
