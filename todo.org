@@ -5,92 +5,46 @@
 ** [ ] Investigate lag when sending first input message
 ** [ ] Remove extra line break from task tool
 ** [ ] Add dynamic variable support that's calculated at runtime
-*** [X] Allow changing variables at runtime via str-like object that's recalculated
 *** [ ] Add a way to change variable setting via TUI
 - List variables
 - Add variable types with lookup manager (LLM models, etc)
 - Pick from the list vs type it in
-** [X] Terminal resize does not re-render all components correctly
 ** [ ] Non-interactive mode
 *** [ ] Accept workflow to run via commandline parameter
 *** [ ] Implement TUI that's pipe compatible (rich should support)
-*** [X] Disable knowlt
 *** [ ] Fail if user wants a confirmation in non-interactive mode
 ** [ ] Fix up logging
 *** [ ] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
-** [X] Add LLM timeouts
-*** [X] Streaming start timeout, None = unlimited
-*** [X] If LLM times out, retry attempt
-*** [X] Total timeout, None = unlimited
-** [ ] Show how run the step is running in the toolbar. Store step creation time and show delte to current time for running status
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
 ** [ ] Tool call rejection with the message needs format
 ** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
-** [ ] Improve history editing:
-*** [ ] Make replace-last-message also emit step removals to UI
-** [X] Update tool formatter to also signal that no completion confirmation needs to be displayed. Hide it for task tool.
-** [X] Change menu shortcut to ctrl+space
-** [X] Fix apply_patch result formatter to not be JSON
-** [X] Why do we have a lag when we approve a tool call? Is knowlt blocking the main thread?
-*** [X] Store last project refresh timestamp on a project. Use timestamp to cull files to be tested before even running DuckDB query. Add a flag to control behavior and disable pre-filtering on bad filesystems.
-*** [X] Instead of getting all files at once - batch them in 100 and process batches independently.
-*** [X] Fix comparison to be greater than
-*** [X] Move glob and path filtering to a thread, as well as timestamp check
-** [X] Patch tool needs its own formatter
 ** [ ] Know: rename read_files to read_file
-** [X] Never collapse tool output if approval is requested?
-** [X] Unicode support is wonky - write tests for patches using utf-8
 ** [ ] Editing the history message does not re-send it to UI
-** [X] Add support for RateLimit exception with correct timeout
-** [X] Emit LLM usage when tool call steps are returned from LLM executor
 ** [ ] Auto-complete
-*** [X] Tab with single value in the list should auto-select the value
-*** [X] Pressing down with no history should select first item of auto-complete
 *** [ ] Space with selection should auto-complete
-*** [X] Tab with open auto-complete list, but no selection should select first item, but not auto-complete
-*** [X] Pressing up going through the history and when auto-complete is displayed, pressing up should continue the history navigation? Or prevent showing auto-complete list for the current word if cursor is not at the end of it
-** [X] Fix viewer pane
-*** [X] Fix jerkiness on key press
-*** [X] Add top/bottom hotkeys
-*** [X] Start at the bottom always
-** [X] Send LLM stats in tool call rounds as well
 ** [ ] Send LLM stats when executor starts (from old state?)
 ** [ ] Store cached stats in LLM usage stats
-** [X] Add support for edge-level state policy override
-** [X] Fix component addition/removal for help
-** [X] Rework tooltip
-** [X] Benchmark slow apply_patch on Windows
-** [X] Fix rendering full lines - it seems like we're adding delete till end even if line takes whole screen
-** [X] Current context window usage (input) is showing accumulated number instead of last step number
 ** [ ] Create alternative Markdown renderer that only highlights, but does not format
 ** [ ] Need apply_patch formatter with input and output (collapsed)
-** [X] Animation stops after showing/hiding toolbar component
 ** [ ] Assign a number to collapse/expand a specific component and show number in the component view. (bad idea due to repaints?)
 ** [ ] Compact tool call representation, where consequent calls are merged onto a single.
 ** [ ] Hide time indicator for tool calls - it is not helpful
 ** [ ] Limit number of lines actually rendered for full refreshes, make the number configurable
-** [X] Add hidden flag to components to prevent components from being removed from the bottom
 ** [ ] Combine input + toolbar + help + etc to a single component due to dynamic component shifting
 - Move stacking logic out of TUIState
 - Move keyboard logic out of TUIState
-** [X] When inserting component to a specific position, skip deleted items.
 ** [ ] Figure out how to support parallel nested workflows:
 - Remove the single workflow stack or refactor it to contain a list of runners instead of one 
 - Figure out how to drive multiple parallel workflow tasks. Multiple coordinators? Single awaitable for results? 
 - Figure out how does this change data model (if at all) 
 - Figure out how this affects the UI - just change confirmations to be displayed from child workflow and change toolbar around that time?
-** [X] ctrl+x followed by c when everything is collapsed prints a line to output for some reason and breaks rendering
-- Caused by race condition - component already exists, but is marked as deleted.
 ** [ ] Figure out how to show input/http_input nodes as a user input (highlight, etc)
 ** [ ] Figure out why http_input intemediate message is not overridden by new text
 - Rework intermediate messages to be complete and not deltas?
 ** [?] Fix tall input component logic
-*** [X] Cap input component height to 70% of the screen
-*** [X] Make input component support internal scrolling
 *** [ ] If input component is scrolling, show percentage in padding
 ** [ ] Autocomplete
 *** [ ] Figure out why auto-complete might return same file multiple times
-*** [X] Make sure that autocomplete does not interfere with history up
 ** [ ] Add sync exception handler and send it to the log
 ** [ ] Add session log renderer as a separate screen + shortcut
 ** [ ] Need to remove outline from input - it messes up copying
@@ -109,7 +63,6 @@
 *** [ ] Do client-side validation or hide auto-complete if user keeps typing
 ** [ ] Continue after stop needs explicit separator.
 ** [ ] Show node transitions in the UI?
-** [X] Add node visible flag - some are technical and should be hidden from the UI/autocompletion
 ** [ ] Gemini 3 support
 *** [ ] Temperature control
 ** [ ] Add ctrl+r history search

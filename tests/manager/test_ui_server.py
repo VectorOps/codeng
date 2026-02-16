@@ -9,7 +9,7 @@ from vocode import models, state
 from typing import Optional
 
 from vocode import settings as vocode_settings
-from vocode.manager.base import BaseManager, RunnerFrame
+from vocode.manager.base import BaseManager, HistoryEditResult, RunnerFrame
 from vocode.manager.helpers import InMemoryEndpoint
 from vocode.manager.server import UIServer
 from vocode.manager import proto as manager_proto
@@ -73,6 +73,7 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
         execution=execution,
         step=step,
     )
+
     async def dummy_coro() -> None:
         await asyncio.Event().wait()
 
@@ -335,6 +336,7 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
         execution=execution,
         step=step,
     )
+
     async def dummy_coro() -> None:
         await asyncio.Event().wait()
 
@@ -420,6 +422,7 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
         execution=execution,
         step=step,
     )
+
     async def dummy_coro() -> None:
         await asyncio.Event().wait()
 
@@ -621,8 +624,24 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
     class DummyRunner:
         def __init__(self) -> None:
             self.status = state.RunnerStatus.STOPPED
+            self.execution = state.WorkflowExecution(workflow_name="wf-edit")
 
     runner = DummyRunner()
+    node_execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    runner.execution.node_executions[node_execution.id] = node_execution
+    step = state.Step(
+        execution=node_execution,
+        type=state.StepType.INPUT_MESSAGE,
+        message=state.Message(
+            role=models.Role.USER,
+            text="old",
+        ),
+        is_complete=True,
+    )
+    runner.execution.steps.append(step)
     frame = RunnerFrame(
         workflow_name="wf-user-input-edit",
         runner=runner,  # type: ignore[arg-type]
@@ -636,9 +655,17 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
     async def fake_edit_history_with_text(
         self: BaseManager,
         text: str,
-    ) -> bool:
+        *,
+        resume: bool = True,
+    ) -> HistoryEditResult:
+        _ = resume
         called.append(text)
-        return True
+        step.message.text = text
+        return HistoryEditResult(
+            is_edited=True,
+            step=step,
+            deleted_step_ids=[],
+        )
 
     monkeypatch.setattr(
         BaseManager, "edit_history_with_text", fake_edit_history_with_text
@@ -657,6 +684,14 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
 
     assert handled is True
     assert called == ["new input text"]
+
+    upsert_envelope = await client_endpoint.recv()
+    upsert_payload = upsert_envelope.payload
+    assert upsert_payload.kind == manager_proto.BasePacketKind.RUNNER_REQ
+    assert isinstance(upsert_payload, manager_proto.RunnerReqPacket)
+    assert upsert_payload.step.id == step.id
+    assert upsert_payload.step.message is not None
+    assert upsert_payload.step.message.text == "new input text"
 
 
 @pytest.mark.asyncio
@@ -683,8 +718,12 @@ async def test_uiserver_user_input_sends_error_when_edit_fails(
     async def fake_edit_history_with_text(
         self: BaseManager,
         text: str,
-    ) -> bool:
-        return False
+        *,
+        resume: bool = True,
+    ) -> HistoryEditResult:
+        _ = text
+        _ = resume
+        return HistoryEditResult(is_edited=False)
 
     monkeypatch.setattr(
         BaseManager, "edit_history_with_text", fake_edit_history_with_text
@@ -715,3 +754,97 @@ async def test_uiserver_user_input_sends_error_when_edit_fails(
     assert handled is True
     assert messages
     assert "Unable to edit history" in messages[0]
+
+
+@pytest.mark.asyncio
+async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    class DummyRunner:
+        def __init__(self) -> None:
+            self.status = state.RunnerStatus.STOPPED
+            self.execution = state.WorkflowExecution(workflow_name="wf-edit")
+
+    runner = DummyRunner()
+    node_execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    runner.execution.node_executions[node_execution.id] = node_execution
+    step = state.Step(
+        execution=node_execution,
+        type=state.StepType.INPUT_MESSAGE,
+        message=state.Message(
+            role=models.Role.USER,
+            text="old",
+        ),
+        is_complete=True,
+    )
+    runner.execution.steps.append(step)
+    frame = RunnerFrame(
+        workflow_name="wf-user-input-edit-delete",
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    async def fake_edit_history_with_text(
+        self: BaseManager,
+        text: str,
+        *,
+        resume: bool = True,
+    ) -> HistoryEditResult:
+        assert text == "new input text"
+        assert resume is False
+        step.message.text = text
+        return HistoryEditResult(
+            is_edited=True,
+            step=step,
+            deleted_step_ids=["s1", "s2"],
+        )
+
+    called_continue: list[object] = []
+
+    async def fake_continue_current_runner(self: BaseManager) -> object:
+        called_continue.append(object())
+        return object()
+
+    monkeypatch.setattr(
+        BaseManager, "edit_history_with_text", fake_edit_history_with_text
+    )
+    monkeypatch.setattr(
+        BaseManager, "continue_current_runner", fake_continue_current_runner
+    )
+
+    user_message = state.Message(
+        role=models.Role.USER,
+        text="new input text",
+    )
+    packet = manager_proto.UserInputPacket(message=user_message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+
+    deleted_envelope = await client_endpoint.recv()
+    assert deleted_envelope.payload.kind == manager_proto.BasePacketKind.STEP_DELETED
+    deleted_payload = deleted_envelope.payload
+    assert isinstance(deleted_payload, manager_proto.StepDeletedPacket)
+    assert deleted_payload.step_ids == ["s1", "s2"]
+
+    upsert_envelope = await client_endpoint.recv()
+    upsert_payload = upsert_envelope.payload
+    assert upsert_payload.kind == manager_proto.BasePacketKind.RUNNER_REQ
+    assert isinstance(upsert_payload, manager_proto.RunnerReqPacket)
+    assert upsert_payload.step.id == step.id
+    assert upsert_payload.step.message is not None
+    assert upsert_payload.step.message.text == "new input text"
+    assert called_continue

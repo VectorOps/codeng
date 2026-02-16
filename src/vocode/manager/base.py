@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 from collections.abc import Awaitable, Callable, AsyncIterator
 
@@ -34,6 +34,13 @@ class RunnerFrame:
     initial_message: Optional[state.Message]
     agen: Optional[AsyncIterator[RunEventReq]] = None
     last_stats: Optional[runner_proto.RunStats] = None
+
+
+@dataclass
+class HistoryEditResult:
+    is_edited: bool
+    step: Optional[state.Step] = None
+    deleted_step_ids: list[str] = field(default_factory=list)
 
 
 RunnerEventListener = Callable[
@@ -190,9 +197,11 @@ class BaseManager:
         await self.stop_current_runner()
         return await self.start_workflow(workflow_name, message)
 
-    async def edit_history_with_text(self, text: str) -> bool:
+    async def edit_history_with_text(
+        self, text: str, *, resume: bool = True
+    ) -> HistoryEditResult:
         if not self._runner_stack:
-            return False
+            return HistoryEditResult(is_edited=False)
 
         target_index: Optional[int] = None
         target_step: Optional[state.Step] = None
@@ -214,7 +223,7 @@ class BaseManager:
                 break
 
         if target_index is None or target_step is None:
-            return False
+            return HistoryEditResult(is_edited=False)
 
         if target_index + 1 < len(self._runner_stack):
             tail_frames = self._runner_stack[target_index + 1 :]
@@ -235,34 +244,29 @@ class BaseManager:
                 break
 
         if cut_index is None:
-            return False
+            return HistoryEditResult(is_edited=False)
 
-        delete_ids = [step.id for step in execution.steps[cut_index:]]
+        delete_ids = [step.id for step in execution.steps[cut_index + 1 :]]
+        deleted_step_ids = [str(step_id) for step_id in delete_ids]
         if delete_ids:
             execution.delete_steps(delete_ids)
             execution.trim_empty_node_executions()
-            execution.touch()
-            self.project.state_manager.notify_changed(execution)
 
-        base_execution = execution.node_executions.get(
-            target_step.execution.id,
-            target_step.execution,
-        )
+        message = target_step.message
+        if message is None:
+            return HistoryEditResult(is_edited=False)
 
-        new_message = state.Message(
-            role=models.Role.USER,
-            text=text,
-        )
-        new_step = state.Step(
-            execution=base_execution,
-            type=state.StepType.INPUT_MESSAGE,
-            message=new_message,
-            is_complete=True,
-        )
-        runner._persist_step(new_step)
+        message.text = text
+        execution.touch()
+        self.project.state_manager.notify_changed(execution)
 
-        await self.continue_current_runner()
-        return True
+        if resume:
+            await self.continue_current_runner()
+        return HistoryEditResult(
+            is_edited=True,
+            step=target_step,
+            deleted_step_ids=deleted_step_ids,
+        )
 
     async def _emit_run_event(
         self,
