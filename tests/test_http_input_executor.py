@@ -128,8 +128,7 @@ async def test_http_input_executor_waits_for_external_message(tmp_path) -> None:
     ]
     assert output_steps
     assert any(
-        s.message is not None
-        and s.message.text == "```\nfrom-http\n```"
+        s.message is not None and s.message.text == "```\nfrom-http\n```"
         for s in output_steps
     )
 
@@ -140,6 +139,28 @@ async def test_http_input_executor_waits_for_external_message(tmp_path) -> None:
         and e.step.message.text == "Waiting for external input"
         for e in events
     )
+
+    status_events: list[tuple[int, RunEvent]] = [
+        (i, e) for i, e in enumerate(events) if e.step is None and e.stats is not None
+    ]
+    waiting_indices = [
+        idx
+        for idx, ev in status_events
+        if ev.stats is not None
+        and ev.stats.status == state.RunnerStatus.WAITING_INPUT
+        and ev.stats.current_node_name == "http-input-node"
+    ]
+    assert waiting_indices
+    first_wait_idx = waiting_indices[0]
+    running_indices = [
+        idx
+        for idx, ev in status_events
+        if ev.stats is not None
+        and ev.stats.status == state.RunnerStatus.RUNNING
+        and ev.stats.current_node_name == "http-input-node"
+    ]
+    assert running_indices
+    assert any(run_idx > first_wait_idx for run_idx in running_indices)
 
 
 @pytest.mark.asyncio
@@ -222,8 +243,7 @@ async def test_http_input_executor_accepts_markdown_without_wrapping(tmp_path) -
     ]
     assert output_steps
     assert any(
-        s.message is not None and s.message.text == "from-http-md"
-        for s in output_steps
+        s.message is not None and s.message.text == "from-http-md" for s in output_steps
     )
 
     assert any(
