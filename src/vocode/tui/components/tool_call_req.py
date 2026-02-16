@@ -6,6 +6,8 @@ import typing
 from typing import Final
 
 from rich import console as rich_console
+from rich import panel as rich_panel
+from rich import padding as rich_padding
 from rich import text as rich_text
 from rich import markup as rich_markup
 
@@ -227,7 +229,12 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         if len(renderables) == 1:
             return renderables[0]
 
-        return rich_console.Group(*renderables)
+        grouped = rich_console.Group(*renderables)
+        return rich_padding.Padding(
+            grouped,
+            pad=1,
+            style=tui_styles.TOOL_CALL_PANEL_STYLE,
+        )
 
     def render(self, options: rich_console.ConsoleOptions) -> tui_base.Lines:
         terminal = self.terminal
