@@ -90,6 +90,7 @@ class TUIState:
         self._history_manager = tui_history.HistoryManager()
         self._input_keymap = self._create_input_keymap()
         self._step_components: dict[str, tui_markdown_component.MarkdownComponent] = {}
+        self._step_component_ids: set[str] = set()
         self._step_handlers: dict[
             vocode_state.StepType, typing.Callable[[vocode_state.Step], None]
         ] = {
@@ -635,6 +636,7 @@ class TUIState:
             component_style=component_style,
         )
         self._step_components[step_id] = component
+        self._step_component_ids.add(step_id)
         self._terminal.insert_component(-2, component)
 
     def _handle_output_message_step(
@@ -674,10 +676,22 @@ class TUIState:
         else:
             prefixed = "\n".join(lines)
 
-        self.add_rich_text(
-            prefixed,
-            component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
-        )
+        step_id = str(step.id)
+        try:
+            existing = typing.cast(
+                tui_rich_text_component.RichTextComponent,
+                self._terminal.get_component(step_id),
+            )
+            existing.text = prefixed
+            existing.component_style = tui_styles.INPUT_MESSAGE_COMPONENT_STYLE
+        except KeyError:
+            component = tui_rich_text_component.RichTextComponent(
+                prefixed,
+                id=step_id,
+                component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
+            )
+            self._step_component_ids.add(step_id)
+            self._terminal.insert_component(-2, component)
 
     def _handle_prompt_step(
         self,
@@ -695,11 +709,22 @@ class TUIState:
         )
 
     def _handle_approval_step(self, step: vocode_state.Step) -> None:
-        _ = step
-        self.add_rich_text(
-            "User approved.",
-            component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
-        )
+        step_id = str(step.id)
+        try:
+            existing = typing.cast(
+                tui_rich_text_component.RichTextComponent,
+                self._terminal.get_component(step_id),
+            )
+            existing.text = "User approved."
+            existing.component_style = tui_styles.INPUT_MESSAGE_COMPONENT_STYLE
+        except KeyError:
+            component = tui_rich_text_component.RichTextComponent(
+                "User approved.",
+                id=step_id,
+                component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
+            )
+            self._step_component_ids.add(step_id)
+            self._terminal.insert_component(-2, component)
 
     def _handle_rejection_step(self, step: vocode_state.Step) -> None:
         message = step.message
@@ -708,7 +733,9 @@ class TUIState:
             raw = message.text.strip()
             if raw:
                 text = raw
-        self.add_markdown(
+        step_id = str(step.id)
+        self._upsert_markdown_component(
+            step,
             text,
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )
@@ -731,6 +758,7 @@ class TUIState:
                 step=step,
                 component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
             )
+            self._step_component_ids.add(step_id)
             message = step.message
             if message is not None:
                 disable_stats = False
@@ -762,7 +790,22 @@ class TUIState:
         markdown = self._format_message_markdown(step)
         if markdown is None:
             return
-        self.add_markdown(markdown)
+        self._upsert_markdown_component(step, markdown)
+
+    def handle_step_deleted(self, step_ids: list[str]) -> None:
+        terminal = self._terminal
+        with terminal.suspend_auto_render():
+            for step_id in step_ids:
+                if step_id in self._step_components:
+                    component = self._step_components.pop(step_id)
+                    terminal.remove_component(component)
+                if step_id in self._step_component_ids:
+                    self._step_component_ids.remove(step_id)
+                    try:
+                        component = terminal.get_component(step_id)
+                        terminal.remove_component(component)
+                    except KeyError:
+                        pass
 
     def handle_step(
         self,

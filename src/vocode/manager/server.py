@@ -439,8 +439,29 @@ class UIServer:
         if waiter is None:
             runner = self._manager.current_runner
             if runner is not None and runner.status == state.RunnerStatus.STOPPED:
-                edited = await self._manager.edit_history_with_text(text)
-                if not edited:
+                res = await self._manager.edit_history_with_text(
+                    text,
+                    resume=False,
+                )
+                if res.is_edited and res.deleted_step_ids:
+                    await self.send_packet(
+                        manager_proto.StepDeletedPacket(step_ids=res.deleted_step_ids)
+                    )
+                if res.is_edited and res.step is not None:
+                    execution = runner.execution
+                    frame = self._manager.runner_stack[-1]
+                    packet = manager_proto.RunnerReqPacket(
+                        workflow_id=frame.workflow_name,
+                        workflow_name=execution.workflow_name,
+                        workflow_execution_id=str(execution.id),
+                        step=res.step,
+                        input_required=False,
+                        display=None,
+                    )
+                    await self.send_packet(packet)
+                if res.is_edited:
+                    await self._manager.continue_current_runner()
+                if not res.is_edited:
                     await self.send_text_message(
                         "Unable to edit history: no previous user input to replace."
                     )

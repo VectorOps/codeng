@@ -21,6 +21,7 @@ class BasePacketKind(str, Enum):
     ACK = "ack"
     RUNNER_REQ = "runner_req"
     UI_STATE = "ui_state"
+    STEP_DELETED = "step_deleted"
     USER_INPUT = "user_input"
     INPUT_PROMPT = "input_prompt"
     STOP_REQ = "stop_req"
@@ -45,6 +46,13 @@ class RunnerReqPacket(BaseModel):
     step: state.Step
     input_required: bool = Field(default=False)
     display: Optional[RunnerReqDisplayOpts] = Field(default=None)
+
+
+class StepDeletedPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.STEP_DELETED] = Field(
+        default=BasePacketKind.STEP_DELETED
+    )
+    step_ids: list[str] = Field(default_factory=list)
 
 
 class UserInputPacket(BaseModel):
@@ -167,6 +175,7 @@ BasePacket = Annotated[
     typing.Union[
         AckPacket,
         RunnerReqPacket,
+        StepDeletedPacket,
         UserInputPacket,
         InputPromptPacket,
         UIServerStatePacket,
