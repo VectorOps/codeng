@@ -52,9 +52,7 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
 
             text = data.get("text")
             if not isinstance(text, str):
-                return web.json_response(
-                    {"error": "missing_text"}, status=400
-                )
+                return web.json_response({"error": "missing_text"}, status=400)
             header_content_type = request.headers.get("Content-Type")
             if isinstance(header_content_type, str) and header_content_type:
                 effective_content_type: Optional[str] = header_content_type
@@ -111,6 +109,7 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
             type=state.StepType.OUTPUT_MESSAGE,
             message=waiting_message,
             is_complete=False,
+            status_hint=state.RunnerStatus.WAITING_INPUT,
         )
         yield waiting_step
 

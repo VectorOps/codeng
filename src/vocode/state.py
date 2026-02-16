@@ -206,6 +206,12 @@ class Step(BaseModel):
         default=None,
         description="Any internal state that is maintained by the corresponding step runner.",
     )
+    status_hint: Optional[RunnerStatus] = Field(
+        default=None,
+        description=(
+            "Optional hint to the runner about the current status while this step is being processed."
+        ),
+    )
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this step, if any."
     )

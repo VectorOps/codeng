@@ -19,7 +19,6 @@
 ** [ ] Tool call rejection with the message needs format
 ** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
 ** [ ] Know: rename read_files to read_file
-** [ ] Editing the history message does not re-send it to UI
 ** [ ] Auto-complete
 *** [ ] Space with selection should auto-complete
 ** [ ] Send LLM stats when executor starts (from old state?)

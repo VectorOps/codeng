@@ -813,3 +813,12 @@ Archived entries from file /Users/serge/work/codeng/todo.org
 :ARCHIVE_CATEGORY: todo
 :ARCHIVE_TODO: [X]
 :END:
+
+* [X] Editing the history message does not re-send it to UI
+:PROPERTIES:
+:ARCHIVE_TIME: 2026-02-16 Mon 13:31
+:ARCHIVE_FILE: ~/work/misc/codeng/todo.org
+:ARCHIVE_OLPATH: General
+:ARCHIVE_CATEGORY: todo
+:ARCHIVE_TODO: [X]
+:END:

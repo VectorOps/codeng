@@ -574,11 +574,36 @@ class Runner:
                     use_resume_step = None
                 else:
                     async for step in executor.run(executor_input):
+                        if (
+                            self.status == state.RunnerStatus.WAITING_INPUT
+                            and step.status_hint is None
+                        ):
+                            resume_status_event = self._set_running_after_input(
+                                current_execution
+                            )
+                            if resume_status_event is not None:
+                                _ = yield resume_status_event
+
                         node_output_mode = current_runtime_node.model.output_mode
                         if step.output_mode != node_output_mode:
                             step.output_mode = node_output_mode
 
                         persisted_step = self._persist_step(step)
+
+                        if (
+                            step.status_hint is not None
+                            and step.status_hint != self.status
+                            and step.type
+                            not in (
+                                state.StepType.PROMPT,
+                                state.StepType.PROMPT_CONFIRM,
+                            )
+                        ):
+                            hint_event = self.set_status(
+                                step.status_hint,
+                                current_execution=current_execution,
+                            )
+                            _ = yield hint_event
 
                         if step.type in (
                             state.StepType.PROMPT,
@@ -682,9 +707,11 @@ class Runner:
                             persisted_prompt = self._create_tool_prompt_step(
                                 current_execution,
                                 req,
-                                last_complete_step.llm_usage
-                                if last_complete_step is not None
-                                else None,
+                                (
+                                    last_complete_step.llm_usage
+                                    if last_complete_step is not None
+                                    else None
+                                ),
                             )
                             tool_request_steps[id(req)] = persisted_prompt
 
