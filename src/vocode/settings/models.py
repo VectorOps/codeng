@@ -38,6 +38,7 @@ class LogLevel(str, Enum):
     warning = "warning"
     error = "error"
     critical = "critical"
+    disabled = "disabled"
 
 
 class WorkflowConfig(vars_mod.BaseVarModel):

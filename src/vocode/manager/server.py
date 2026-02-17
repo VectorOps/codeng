@@ -77,6 +77,7 @@ class UIServer:
             vocode_settings.LogLevel.warning: logging.WARNING,
             vocode_settings.LogLevel.error: logging.ERROR,
             vocode_settings.LogLevel.critical: logging.CRITICAL,
+            vocode_settings.LogLevel.disabled: logging.CRITICAL + 1,
         }
 
         default_level = level_map.get(logging_settings.default_level, logging.INFO)
