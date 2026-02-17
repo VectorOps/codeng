@@ -22,9 +22,9 @@ from tests.manager.runner_stubs import DummyRunnerWithWorkflow
 @pytest.mark.asyncio
 async def test_uiserver_applies_logging_settings() -> None:
     project_settings = vocode_settings.Settings()
-    project_settings.logging = vocode_settings.LoggingSettings(
-        default_level=vocode_settings.LogLevel.error,
-        enabled_loggers={"custom.logger": vocode_settings.LogLevel.debug},
+    project_settings.logging.default_level = vocode_settings.LogLevel.error
+    project_settings.logging.enabled_loggers["custom.logger"] = (
+        vocode_settings.LogLevel.debug
     )
 
     project = StubProject(settings=project_settings)

@@ -146,7 +146,13 @@ class LoggingSettings(vars_mod.BaseVarModel):
     # Default level for our primary loggers (vocode, knowlt) if not overridden.
     default_level: LogLevel = LogLevel.info
     # Mapping of logger name -> level override (e.g., {"asyncio": "debug"})
-    enabled_loggers: Dict[str, LogLevel] = Field(default_factory=dict)
+    enabled_loggers: Dict[str, LogLevel] = Field(
+        default_factory=lambda: {
+            "LiteLLM": LogLevel.critical,
+            "LiteLLM Proxy": LogLevel.critical,
+            "LiteLLM Router": LogLevel.critical,
+        }
+    )
 
 
 class ShellMode(str, Enum):
@@ -223,7 +229,7 @@ class Settings(vars_mod.BaseVarModel):
     know: Optional[KnowProjectSettings] = Field(default=None)
     know_enabled: bool = True
     process: Optional[ProcessSettings] = Field(default=None)
-    logging: Optional[LoggingSettings] = Field(default=None)
+    logging: Optional[LoggingSettings] = Field(default_factory=LoggingSettings)
     persistence: Optional[PersistenceSettings] = Field(default=None)
     tui: Optional[TUIOptions] = Field(default=None)
     internal_http: Optional[InternalHTTPSettings] = Field(default=None)

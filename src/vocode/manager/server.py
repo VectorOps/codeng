@@ -69,7 +69,7 @@ class UIServer:
 
         logging_settings = project_settings.logging
         if logging_settings is None:
-            return
+            logging_settings = vocode_settings.LoggingSettings()
 
         level_map = {
             vocode_settings.LogLevel.debug: logging.DEBUG,
