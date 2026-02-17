@@ -29,6 +29,10 @@ class LLMStepState(BaseModel):
 
 @runner_base.ExecutorFactory.register("llm")
 class LLMExecutor(runner_base.BaseExecutor):
+    async def init(self):
+        litellm.suppress_debug_info = True
+        litellm.set_verbose = False
+    
     def build_messages(self, inp: runner_base.ExecutorInput) -> List[Dict]:
         """
         Generate an OpenAI-compatible conversation from execution state.
