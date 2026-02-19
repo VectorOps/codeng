@@ -18,6 +18,7 @@ ParsedCommand = tuple[str, list[str], str]
 class _CommandMeta(BaseModel):
     description: str | None
     params: list[str] = []
+    hidden: bool = False
 
 
 class CommandError(Exception):
@@ -158,6 +159,7 @@ class CommandManager:
         *,
         description: str | None = None,
         params: list[str] | None = None,
+        hidden: bool = False,
     ) -> None:
         async def invoker(server: UIServer, args: typing.Sequence[str]) -> None:
             await handler(server, list(args))
@@ -167,6 +169,7 @@ class CommandManager:
             invoker,
             description=description,
             params=params,
+            hidden=hidden,
         )
 
     async def register_invoker(
@@ -176,24 +179,35 @@ class CommandManager:
         *,
         description: str | None = None,
         params: list[str] | None = None,
+        hidden: bool = False,
     ) -> None:
         if name in self._commands:
             raise ValueError(f"Command with name '{name}' already registered.")
         self._commands[name] = invoker
         if params is None:
             params = []
-        self._metadata[name] = _CommandMeta(description=description, params=params)
+        self._metadata[name] = _CommandMeta(
+            description=description,
+            params=params,
+            hidden=hidden,
+        )
 
     async def unregister(self, name: str) -> bool:
         return self._commands.pop(name, None) is not None
 
-    def get_help_entries(self) -> list[tuple[str, str | None, list[str]]]:
+    def get_help_entries(
+        self,
+        *,
+        include_hidden: bool = False,
+    ) -> list[tuple[str, str | None, list[str]]]:
         entries: list[tuple[str, str | None, list[str]]] = []
         for name in sorted(self._commands.keys()):
             meta = self._metadata.get(name)
             if meta is None:
                 entries.append((name, None, []))
             else:
+                if meta.hidden and not include_hidden:
+                    continue
                 entries.append((name, meta.description, list(meta.params)))
         return entries
 

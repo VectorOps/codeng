@@ -204,6 +204,7 @@ async def test_help_command_lists_debug_and_workflows() -> None:
     text = payload.text
     assert "/debug" in text
     assert "/workflows" in text
+    assert "/aa" not in text
 
 
 @pytest.mark.asyncio

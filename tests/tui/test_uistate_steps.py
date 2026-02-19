@@ -526,4 +526,4 @@ async def test_tool_request_confirmation_renders_autoapprove_hint() -> None:
 
     await ui_state.terminal.render()
     output = buffer.getvalue()
-    assert "/aa" in output
+    assert "/aa" not in output
