@@ -112,6 +112,7 @@ class TUIOptions(vars_mod.BaseVarModel):
     expand_confirm_tools: bool = True
     submit_with_enter: bool = True
     markdown_render_mode: MarkdownRenderMode = MarkdownRenderMode.rich_markdown
+    full_refresh_max_lines: Optional[int] = Field(default=None, ge=1)
 
 
 class ToolSpec(vars_mod.BaseVarModel):

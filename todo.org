@@ -1,6 +1,7 @@
 #+title: Todo
 
 * [ ] General
+** [ ] Nicely format tool call rejection text
 ** [X] If tool call is just approved, do not generate component with "User approved." text.
 ** [ ] Update task list error needs to be formatted (or not displayed)
 ** [ ] Add dynamic progress indicator for knowlt
@@ -25,8 +26,8 @@
 *** [ ] Space with selection should auto-complete
 ** [ ] Send LLM stats when executor starts (from old state?)
 ** [ ] Store cached stats in LLM usage stats
-** [ ] Create alternative Markdown renderer that only highlights, but does not format
-** [ ] Need apply_patch formatter with input and output (collapsed)
+** [X] Create alternative Markdown renderer that only highlights, but does not format
+** [X] Need apply_patch formatter with input and output (collapsed)
 ** [ ] Assign a number to collapse/expand a specific component and show number in the component view. (bad idea due to repaints?)
 ** [ ] Compact tool call representation, where consequent calls are merged onto a single.
 ** [ ] Hide time indicator for tool calls - it is not helpful

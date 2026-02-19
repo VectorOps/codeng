@@ -465,18 +465,42 @@ class Terminal:
             lines = component.render(options)
             self._cache[component] = lines
 
-        all_lines: tui_base.Lines = []
-        for component in self._components:
-            lines = self._cache.get(component, [])
-            all_lines.extend(lines)
+        max_lines = self._settings.tui.full_refresh_max_lines
+        all_lines: tui_base.Lines
+        if max_lines is None:
+            all_lines = []
+            for component in self._components:
+                lines = self._cache.get(component, [])
+                all_lines.extend(lines)
+        else:
+            chunks: list[tui_base.Lines] = []
+            remaining = max_lines
+            for component in reversed(self._components):
+                if remaining <= 0:
+                    break
+                lines = self._cache.get(component, [])
+                if not lines:
+                    continue
+                if len(lines) >= remaining:
+                    chunks.append(lines[-remaining:])
+                    remaining = 0
+                    break
+                chunks.append(lines)
+                remaining -= len(lines)
 
+            all_lines = []
+            for chunk in reversed(chunks):
+                all_lines.extend(chunk)
+
+        for component in self._components:
             component.is_visible = False
 
         height = self._console.size.height
-        if height > 0:
+        visible_height = min(height, len(all_lines))
+        if visible_height > 0:
             covered = 0
             for component in reversed(self._components):
-                if covered >= height:
+                if covered >= visible_height:
                     break
                 component.is_visible = True
                 lines = self._cache.get(component, [])
