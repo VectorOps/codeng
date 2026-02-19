@@ -2,6 +2,7 @@
 
 * [ ] General
 ** [ ] If tool call is just approved, do not generate component with "User approved." text.
+** [ ] Update task list error needs to be formatted (or not displayed)
 ** [ ] Add dynamic progress indicator for knowlt
 ** [ ] Investigate lag when sending first input message
 ** [ ] Remove extra line break from task tool

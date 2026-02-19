@@ -96,7 +96,6 @@ class TUIState:
         ] = {
             vocode_state.StepType.OUTPUT_MESSAGE: self._handle_output_message_step,
             vocode_state.StepType.INPUT_MESSAGE: self._handle_input_message_step,
-            vocode_state.StepType.APPROVAL: self._handle_approval_step,
             vocode_state.StepType.REJECTION: self._handle_rejection_step,
             vocode_state.StepType.PROMPT: self._handle_prompt_step,
             vocode_state.StepType.PROMPT_CONFIRM: self._handle_prompt_step,
@@ -708,24 +707,6 @@ class TUIState:
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )
 
-    def _handle_approval_step(self, step: vocode_state.Step) -> None:
-        step_id = str(step.id)
-        try:
-            existing = typing.cast(
-                tui_rich_text_component.RichTextComponent,
-                self._terminal.get_component(step_id),
-            )
-            existing.text = "User approved."
-            existing.component_style = tui_styles.INPUT_MESSAGE_COMPONENT_STYLE
-        except KeyError:
-            component = tui_rich_text_component.RichTextComponent(
-                "User approved.",
-                id=step_id,
-                component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
-            )
-            self._step_component_ids.add(step_id)
-            self._terminal.insert_component(-2, component)
-
     def _handle_rejection_step(self, step: vocode_state.Step) -> None:
         message = step.message
         text = "User declined."
@@ -813,6 +794,8 @@ class TUIState:
         display: manager_proto.RunnerReqDisplayOpts | None = None,
     ) -> None:
         if display is not None and display.visible is False:
+            return
+        if step.type is vocode_state.StepType.APPROVAL:
             return
         mode = step.output_mode
         if mode == vocode_models.OutputMode.HIDE_ALL:

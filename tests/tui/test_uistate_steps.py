@@ -218,7 +218,7 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tui_state_renders_approval_and_rejection_steps() -> None:
+async def test_tui_state_renders_rejection_steps() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
 
@@ -244,12 +244,6 @@ async def test_tui_state_renders_approval_and_rejection_steps() -> None:
         status=state.RunStatus.RUNNING,
     )
 
-    approval_step = state.Step(
-        execution=execution,
-        type=state.StepType.APPROVAL,
-    )
-    ui_state.handle_step(approval_step)
-
     rejection_message = state.Message(
         role=models.Role.USER,
         text="Rejected because of reasons.",
@@ -263,7 +257,6 @@ async def test_tui_state_renders_approval_and_rejection_steps() -> None:
 
     await terminal.render()
     output = buffer.getvalue()
-    assert "User approved." in output
     assert "Rejected because of reasons." in output
 
 
