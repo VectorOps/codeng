@@ -192,12 +192,12 @@ class Runner:
             approved.append(req)
             return True
         if response_step.type == state.StepType.REJECTION:
-            parts: list[str] = ["A user rejected the tool call."]
+            user_text = ""
             if response_step.message is not None:
-                text = response_step.message.text.strip()
-                if text:
-                    parts.append(text)
-            rejection_text = " ".join(parts)
+                user_text = response_step.message.text.strip()
+            rejection_text = (
+                f"The tool call was rejected by the user. User provided reason: {user_text}"
+            )
             tool_responses.append(
                 state.ToolCallResp(
                     id=req.id,

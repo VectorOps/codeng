@@ -232,7 +232,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         grouped = rich_console.Group(*renderables)
         return rich_padding.Padding(
             grouped,
-            pad=1,
+            pad=(0, 1),
             style=tui_styles.TOOL_CALL_PANEL_STYLE,
         )
 
