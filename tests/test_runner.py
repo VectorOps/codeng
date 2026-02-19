@@ -1207,6 +1207,47 @@ async def test_runner_emits_waiting_input_status_for_prompt_steps():
 
 
 @pytest.mark.asyncio
+async def test_runner_session_autoapprove_skips_tool_confirmation_waiting_input():
+    project = StubProject()
+    recording_tool = RecordingTool()
+    project.tools["test-tool"] = recording_tool
+    project.project_state.autoapprove.add_tool("test-tool")
+
+    node = models.Node(
+        name="tool-node",
+        type="tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-session-autoapprove", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    agen = runner.run()
+
+    def handler(_: RunEvent) -> RunEventResp:
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(agen, handler, ignore_non_step=False)
+    assert not any(
+        e.stats is not None and e.stats.status == state.RunnerStatus.WAITING_INPUT
+        for e in events
+    )
+    assert recording_tool.calls
+
+
+@pytest.mark.asyncio
 async def test_runner_tool_round_carries_llm_usage_on_tool_request():
     node = models.Node(
         name="tool-llm-node",

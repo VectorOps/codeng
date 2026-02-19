@@ -188,6 +188,11 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
             and status is vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION
         ):
             renderables.append(rich_text.Text("Please confirm the tool call:"))
+            renderables.append(
+                rich_text.Text(
+                    "Tip: type /aa to auto-approve similar calls for this session"
+                )
+            )
 
         if terminal is not None and (tool_calls or tool_responses):
             manager = tui_tcf.ToolCallFormatterManager.instance()
