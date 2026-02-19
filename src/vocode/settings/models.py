@@ -101,11 +101,17 @@ class ToolAutoApproveRule(vars_mod.BaseVarModel):
         return v
 
 
+class MarkdownRenderMode(str, Enum):
+    rich_markdown = "rich_markdown"
+    syntax = "syntax"
+
+
 class TUIOptions(vars_mod.BaseVarModel):
     unicode: bool = True
     ascii_fallback: bool = False
     expand_confirm_tools: bool = True
     submit_with_enter: bool = True
+    markdown_render_mode: MarkdownRenderMode = MarkdownRenderMode.rich_markdown
 
 
 class ToolSpec(vars_mod.BaseVarModel):

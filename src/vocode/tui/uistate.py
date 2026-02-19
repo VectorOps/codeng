@@ -62,6 +62,17 @@ class TUIState:
         self._on_open_logs = on_open_logs
         self._on_stop = on_stop
         self._on_eof = on_eof
+        self._markdown_render_mode = (
+            tui_markdown_component.MarkdownRenderMode.RICH_MARKDOWN
+        )
+        if tui_options is not None:
+            if (
+                tui_options.markdown_render_mode
+                is vocode_settings.MarkdownRenderMode.syntax
+            ):
+                self._markdown_render_mode = (
+                    tui_markdown_component.MarkdownRenderMode.SYNTAX
+                )
         if input_handler is None:
             input_handler = input_handler_mod.PosixInputHandler()
         self._input_handler = input_handler
@@ -75,7 +86,11 @@ class TUIState:
             settings=settings,
         )
 
-        header = tui_markdown_component.MarkdownComponent("# Vocode TUI\n", id="header")
+        header = tui_markdown_component.MarkdownComponent(
+            "# Vocode TUI\n",
+            id="header",
+            render_mode=self._markdown_render_mode,
+        )
         input_component = tui_input_component.InputComponent(
             "",
             id="input",
@@ -559,6 +574,7 @@ class TUIState:
             compact_lines=collapse_lines,
             collapsed=collapsed,
             component_style=component_style,
+            render_mode=self._markdown_render_mode,
         )
         self._terminal.insert_component(-2, component)
 
@@ -633,6 +649,7 @@ class TUIState:
             collapsed=collapsed,
             id=step_id,
             component_style=component_style,
+            render_mode=self._markdown_render_mode,
         )
         self._step_components[step_id] = component
         self._step_component_ids.add(step_id)

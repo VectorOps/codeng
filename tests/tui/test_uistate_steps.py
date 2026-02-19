@@ -107,6 +107,37 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tui_state_uses_markdown_render_mode_setting() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    tui_opts = vocode_settings.TUIOptions(
+        markdown_render_mode=vocode_settings.MarkdownRenderMode.syntax,
+    )
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+        tui_options=tui_opts,
+    )
+
+    header = ui_state.terminal.components[0]
+    assert isinstance(header, tui_markdown_component.MarkdownComponent)
+    assert header.render_mode is tui_markdown_component.MarkdownRenderMode.SYNTAX
+
+
+@pytest.mark.asyncio
 async def test_tui_state_hides_all_output_mode_hide_all() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)

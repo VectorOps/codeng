@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import enum
 import typing
 
 from rich import console as rich_console
 from rich import markdown as rich_markdown
+from rich import syntax as rich_syntax
 
 from vocode.tui.lib import base as tui_base
+
+
+class MarkdownRenderMode(str, enum.Enum):
+    RICH_MARKDOWN = "rich_markdown"
+    SYNTAX = "syntax"
 
 
 class MarkdownComponent(tui_base.Component):
@@ -16,6 +23,7 @@ class MarkdownComponent(tui_base.Component):
         collapsed: bool | None = False,
         id: str | None = None,
         component_style: tui_base.ComponentStyle | None = None,
+        render_mode: MarkdownRenderMode = MarkdownRenderMode.RICH_MARKDOWN,
     ) -> None:
         super().__init__(
             id=id,
@@ -24,6 +32,18 @@ class MarkdownComponent(tui_base.Component):
         self._markdown = markdown
         self.compact_lines = compact_lines
         self._collapsed = collapsed
+        self._render_mode = render_mode
+
+    @property
+    def render_mode(self) -> MarkdownRenderMode:
+        return self._render_mode
+
+    @render_mode.setter
+    def render_mode(self, value: MarkdownRenderMode) -> None:
+        if value == self._render_mode:
+            return
+        self._render_mode = value
+        self._mark_dirty()
 
     @property
     def markdown(self) -> str:
@@ -46,7 +66,15 @@ class MarkdownComponent(tui_base.Component):
         if self._markdown == "":
             return []
         console = terminal.console
-        renderable: tui_base.Renderable = rich_markdown.Markdown(self._markdown)
+        if self._render_mode is MarkdownRenderMode.SYNTAX:
+            renderable = rich_syntax.Syntax(
+                self._markdown,
+                "markdown",
+                word_wrap=True,
+                background_color="default",
+            )
+        else:
+            renderable = rich_markdown.Markdown(self._markdown)
         styled = self.apply_style(renderable)
         rendered = console.render_lines(
             styled,
