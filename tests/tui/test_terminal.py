@@ -14,6 +14,7 @@ from vocode.tui import uistate as tui_uistate
 from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.input import base as input_base
+from vocode import settings as vocode_settings
 import pytest
 
 
@@ -953,6 +954,49 @@ async def test_terminal_full_render_triggered_by_resize_event() -> None:
     output = buffer.getvalue()
     assert output == first_output
     assert tui_controls.ERASE_SCROLLBACK in output
+
+
+@pytest.mark.asyncio
+async def test_terminal_full_refresh_max_lines_limits_output() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+    )
+    tui_options = vocode_settings.TUIOptions(full_refresh_max_lines=2)
+    settings = tui_terminal.TerminalSettings(auto_render=False, tui=tui_options)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    component = MultiLineComponent(["one", "two", "three"])
+
+    terminal.append_component(component)
+    await terminal.render()
+
+    output = buffer.getvalue()
+    assert "three" in output
+    assert "two" in output
+    assert "one" not in output
+
+
+@pytest.mark.asyncio
+async def test_terminal_full_refresh_max_lines_unlimited_by_default() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+    )
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    component = MultiLineComponent(["one", "two", "three"])
+
+    terminal.append_component(component)
+    await terminal.render()
+
+    output = buffer.getvalue()
+    assert "three" in output
+    assert "two" in output
+    assert "one" in output
 
 
 def test_component_style_panel_extended_properties() -> None:
