@@ -902,6 +902,9 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
     prompt_envelope = await client_endpoint.recv()
     prompt_payload = prompt_envelope.payload
     assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
+    assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
+    assert prompt_payload.subtitle is not None
+    assert "/aa" in prompt_payload.subtitle
 
     user_message = state.Message(
         role=models.Role.USER,

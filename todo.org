@@ -18,8 +18,8 @@
 ** [X] Fix up logging
 *** [X] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
-** [ ] Tool call rejection with the message needs format
-** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
+** [X] Tool call rejection with the message needs format
+** [X] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
 ** [ ] Know: rename read_files to read_file
 ** [ ] Auto-complete
 *** [ ] Space with selection should auto-complete

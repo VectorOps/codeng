@@ -198,6 +198,7 @@ class UIServer:
             aa,
             description="Auto-approve similar tool calls for this session",
             params=[],
+            hidden=True,
         )
 
         async def autoapprove(server: "UIServer", args: list[str]) -> None:
@@ -375,7 +376,10 @@ class UIServer:
         elif step.type == state.StepType.TOOL_REQUEST and needs_confirmation:
             input_required = True
             input_title = "Please confirm the tool call"
-            input_subtitle = "Empty line confirms, any text to reject with a message"
+            input_subtitle = (
+                "Empty line confirms, any text to reject with a message. "
+                "Tip: type /aa to auto-approve similar calls for this session"
+            )
             self._pending_input_step = step
 
         packet = manager_proto.RunnerReqPacket(
