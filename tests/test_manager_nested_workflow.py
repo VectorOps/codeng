@@ -10,6 +10,7 @@ from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.settings import Settings, WorkflowConfig, ToolSpec
 from vocode.tools import base as tools_base
 from vocode.persistence import state_manager as persistence_state_manager
+from vocode.project import ProjectState
 
 
 class NestedWorkflowTestProject:
@@ -18,6 +19,7 @@ class NestedWorkflowTestProject:
         self.tools: dict[str, tools_base.BaseTool] = {}
         self.current_workflow: str | None = None
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
+        self.project_state = ProjectState()
 
     async def start(self) -> None:
         return None

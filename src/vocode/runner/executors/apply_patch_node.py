@@ -104,7 +104,7 @@ class ApplyPatchExecutor(BaseExecutor):
             return
 
         try:
-            from vocode.project import FileChangeModel, FileChangeType
+            from vocode.project_state import FileChangeModel, FileChangeType
 
             summary, outcome_name, changes_map, _statuses, _errs = apply_patch(
                 fmt,

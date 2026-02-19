@@ -1,11 +1,11 @@
 #+title: Todo
 
 * [ ] General
-** [ ] If tool call is just approved, do not generate component with "User approved." text.
+** [X] If tool call is just approved, do not generate component with "User approved." text.
 ** [ ] Update task list error needs to be formatted (or not displayed)
 ** [ ] Add dynamic progress indicator for knowlt
-** [ ] Investigate lag when sending first input message
-** [ ] Remove extra line break from task tool
+** [X] Investigate lag when sending first input message
+** [X] Remove extra line break from task tool
 ** [ ] Add dynamic variable support that's calculated at runtime
 *** [ ] Add a way to change variable setting via TUI
 - List variables
@@ -15,8 +15,8 @@
 *** [ ] Accept workflow to run via commandline parameter
 *** [ ] Implement TUI that's pipe compatible (rich should support)
 *** [ ] Fail if user wants a confirmation in non-interactive mode
-** [ ] Fix up logging
-*** [ ] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
+** [X] Fix up logging
+*** [X] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
 ** [ ] Tool call rejection with the message needs format
 ** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)

@@ -1,7 +1,5 @@
 from pathlib import Path
 from typing import Optional, Union, Dict, Any, TYPE_CHECKING, List
-from enum import Enum
-from pydantic import BaseModel
 from asyncio import Queue
 import uuid
 
@@ -19,42 +17,9 @@ from .proc.manager import ProcessManager
 from .proc.base import EnvPolicy
 from .proc.shell import ShellManager
 from .skills import Skill, discover_skills
+from .project_state import FileChangeModel, ProjectState
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
-
-
-class ProjectState:
-    """
-    Ephemeral, process-local project-level state shared across executors.
-    Not persisted across runs.
-    """
-
-    def __init__(self) -> None:
-        self._data: Dict[str, Any] = {}
-
-    def set(self, key: str, value: Any) -> None:
-        self._data[key] = value
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._data.get(key, default)
-
-    def delete(self, key: str) -> None:
-        self._data.pop(key, None)
-
-    def clear(self) -> None:
-        self._data.clear()
-
-
-class FileChangeType(str, Enum):
-    CREATED = "created"
-    UPDATED = "updated"
-    DELETED = "deleted"
-
-
-class FileChangeModel(BaseModel):
-    type: FileChangeType
-    # Relative filename within the project root
-    relative_filename: str
 
 
 class Project:
@@ -317,9 +282,7 @@ def init_project(
         if not know_settings.repository_connection:
             know_data_path = base / ".vocode/data"
             know_data_path.mkdir(parents=True, exist_ok=True)
-            know_settings.repository_connection = str(
-                know_data_path / "know-ng.duckdb"
-            )
+            know_settings.repository_connection = str(know_data_path / "know-ng.duckdb")
 
         settings.know = know_settings
 

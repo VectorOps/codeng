@@ -76,6 +76,10 @@ class Runner:
         return None
 
     def _is_tool_call_auto_approved(self, req: state.ToolCallReq) -> bool:
+        if self.project.project_state.autoapprove.should_auto_approve(
+            req.name, req.arguments
+        ):
+            return True
         spec = self._get_tool_spec_for_request(req)
         if spec is None:
             return False
@@ -195,9 +199,7 @@ class Runner:
             user_text = ""
             if response_step.message is not None:
                 user_text = response_step.message.text.strip()
-            rejection_text = (
-                f"The tool call was rejected by the user. User provided reason: {user_text}"
-            )
+            rejection_text = f"The tool call was rejected by the user. User provided reason: {user_text}"
             tool_responses.append(
                 state.ToolCallResp(
                     id=req.id,

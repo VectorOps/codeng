@@ -848,3 +848,83 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
     assert upsert_payload.step.message is not None
     assert upsert_payload.step.message.text == "new input text"
     assert called_continue
+
+
+@pytest.mark.asyncio
+async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    node_execution = state.NodeExecution(
+        node="node1",
+        status=state.RunStatus.RUNNING,
+    )
+    execution = state.WorkflowExecution(workflow_name="wf-ui-aa")
+    execution.node_executions[node_execution.id] = node_execution
+
+    tool_req = state.ToolCallReq(
+        id="call-1",
+        name="test-tool",
+        arguments={"x": 1},
+        status=state.ToolCallReqStatus.REQUIRES_CONFIRMATION,
+    )
+    step = state.Step(
+        execution=node_execution,
+        type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[tool_req],
+        ),
+        is_complete=True,
+    )
+    execution.steps.append(step)
+    event = runner_proto.RunEventReq(
+        kind=runner_proto.RunEventReqKind.STEP,
+        execution=execution,
+        step=step,
+    )
+
+    dummy_task = asyncio.create_task(asyncio.Event().wait())
+    runner = DummyRunnerWithWorkflow(["node1"])
+    frame = RunnerFrame(
+        workflow_name="wf-ui-aa",
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+
+    await server.start()
+    response_task = asyncio.create_task(server.on_runner_event(frame, event))
+
+    _ = await client_endpoint.recv()
+    prompt_envelope = await client_endpoint.recv()
+    prompt_payload = prompt_envelope.payload
+    assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
+
+    user_message = state.Message(
+        role=models.Role.USER,
+        text="/aa",
+    )
+    user_input_packet = manager_proto.UserInputPacket(
+        message=user_message,
+    )
+    response_envelope = manager_proto.BasePacketEnvelope(
+        msg_id=prompt_envelope.msg_id + 1,
+        payload=user_input_packet,
+    )
+    await client_endpoint.send(response_envelope)
+
+    server_incoming = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_incoming)
+    assert handled is True
+
+    resp = await response_task
+    assert resp is not None
+    assert resp.resp_type == runner_proto.RunEventResponseType.APPROVE
+    assert project.project_state.autoapprove.should_auto_approve("test-tool", {"x": 1})
+
+    dummy_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await dummy_task

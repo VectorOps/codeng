@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from vocode import state, settings as vocode_settings
-from vocode.project import ProjectState
+from vocode.project_state import ProjectState
 from vocode.proc.manager import ProcessManager
 from vocode.proc.shell import ShellManager
 from vocode.persistence import state_manager as persistence_state_manager

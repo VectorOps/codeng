@@ -56,7 +56,7 @@ class ApplyPatchTool(tools_base.BaseTool):
             )
             # Build refresh payload if project exposes refresh API
             try:
-                from vocode.project import FileChangeModel, FileChangeType  # type: ignore
+                from vocode.project_state import FileChangeModel, FileChangeType
 
                 change_type_map = {
                     "created": FileChangeType.CREATED,
