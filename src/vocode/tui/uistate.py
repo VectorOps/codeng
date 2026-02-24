@@ -582,10 +582,12 @@ class TUIState:
         self,
         text: str,
         component_style: tui_terminal.ComponentStyle | None = None,
+        markup: bool = True,
     ) -> None:
         component = tui_rich_text_component.RichTextComponent(
             text,
             component_style=component_style,
+            markup=markup,
         )
         self._terminal.insert_component(-2, component)
 
@@ -599,6 +601,8 @@ class TUIState:
             component_style = tui_styles.OUTPUT_MESSAGE_STYLE
         if text_format == "markdown":
             self.add_markdown(text, component_style=component_style)
+        elif text_format == "plain":
+            self.add_rich_text(text, component_style=component_style, markup=False)
         else:
             self.add_rich_text(text, component_style=component_style)
 

@@ -3,6 +3,7 @@ import os
 
 from vocode.settings.loader import load_settings
 from vocode.runner.executors.llm.models import LLMNode
+from vocode import vars_values as vars_values_mod
 
 
 def _write_tmp(tmp_path: Path, text: str) -> Path:
@@ -114,3 +115,45 @@ internal_http:
 
     assert settings.internal_http is not None
     assert settings.internal_http.port == 9000
+
+
+def test_variable_definition_with_type_field_and_choices(tmp_path: Path) -> None:
+    cfg = """
+variables:
+  LLM_MODEL:
+    value: gpt-4o
+    type: llm_models
+workflows:
+  wf:
+    nodes:
+      - name: llm-node
+        type: llm
+        model: ${LLM_MODEL}
+    edges: []
+"""
+    path = _write_tmp(tmp_path, cfg)
+    settings = load_settings(str(path))
+
+    var_def = settings.get_variable_def("LLM_MODEL")
+    assert var_def is not None
+    assert var_def.type == "llm_models"
+
+    choices = settings.list_variable_value_choices("LLM_MODEL", needle="gpt")
+    assert choices
+    assert all(isinstance(c, vars_values_mod.VarValueChoice) for c in choices)
+
+
+def test_variable_value_choices_from_explicit_options(tmp_path: Path) -> None:
+    cfg = """
+variables:
+  HOST:
+    value: localhost
+    options: [localhost, remote]
+internal_http:
+  host: ${HOST}
+"""
+    path = _write_tmp(tmp_path, cfg)
+    settings = load_settings(str(path))
+
+    choices = settings.list_variable_value_choices("HOST", needle="rem")
+    assert [c.value for c in choices] == ["remote"]

@@ -13,6 +13,7 @@ import json5  # type: ignore
 from vocode import models
 from vocode.lib.validators import get_value_by_dotted_key, regex_matches_value
 from vocode import vars as vars_mod
+from vocode import vars_values as vars_values_mod
 from vocode.vars import VAR_PATTERN
 
 
@@ -281,3 +282,25 @@ class Settings(vars_mod.BaseVarModel):
         if env is not None:
             env.vars_map.pop(name, None)
         self._var_defs.pop(name, None)
+
+    def list_variable_value_choices(
+        self, name: str, needle: str = ""
+    ) -> List[vars_values_mod.VarValueChoice]:
+        var_def = self._var_defs.get(name)
+        if var_def is None:
+            return []
+
+        needle_norm = (needle or "").casefold()
+        if var_def.options is not None:
+            out: List[vars_values_mod.VarValueChoice] = []
+            for opt in var_def.options:
+                opt_name = opt if isinstance(opt, str) else str(opt)
+                if needle_norm and needle_norm not in opt_name.casefold():
+                    continue
+                out.append(vars_values_mod.VarValueChoice(name=opt_name, value=opt))
+            return out
+
+        provider_key = var_def.lookup or var_def.type
+        if provider_key is None:
+            return []
+        return vars_values_mod.list_var_type_values(provider_key, needle)

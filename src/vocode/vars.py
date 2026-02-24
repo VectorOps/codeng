@@ -17,6 +17,7 @@ class VarDef(BaseModel):
     value: Any = None
     options: Optional[List[Any]] = None
     lookup: Optional[str] = None
+    type: Optional[str] = None
 
     @model_validator(mode="after")
     def _validate_mutual_exclusive(self) -> "VarDef":
@@ -27,12 +28,14 @@ class VarDef(BaseModel):
     @classmethod
     def from_raw(cls, raw: Any) -> "VarDef":
         if isinstance(raw, dict):
-            if any(k in raw for k in ("value", "options", "lookup")):
+            if any(k in raw for k in ("value", "options", "lookup", "type")):
                 data: Dict[str, Any] = {"value": raw.get("value")}
                 if "options" in raw:
                     data["options"] = raw["options"]
                 if "lookup" in raw:
                     data["lookup"] = raw["lookup"]
+                if "type" in raw:
+                    data["type"] = raw["type"]
                 return cls.model_validate(data)
         return cls(value=raw)
 
@@ -152,7 +155,11 @@ class BaseVarModel(BaseModel):
     @classmethod
     def _wrap_value(cls, value: Any, env: VarEnv) -> Any:
         if isinstance(value, str):
-            if value.startswith("${") and value.endswith("}") and VAR_PATTERN.fullmatch(value):
+            if (
+                value.startswith("${")
+                and value.endswith("}")
+                and VAR_PATTERN.fullmatch(value)
+            ):
                 name = value[2:-1]
                 return VarRef(env, name)
             if VAR_PATTERN.search(value):
