@@ -3,6 +3,7 @@ from __future__ import annotations
 import typing
 
 from rich import console as rich_console
+from rich import text as rich_text
 
 from vocode.tui.lib import base as tui_base
 
@@ -11,6 +12,7 @@ class RichTextComponent(tui_base.Component):
     def __init__(
         self,
         text: str = "",
+        markup: bool = True,
         compact_lines: int = 10,
         id: str | None = None,
         component_style: tui_base.ComponentStyle | None = None,
@@ -20,6 +22,7 @@ class RichTextComponent(tui_base.Component):
             component_style=component_style,
         )
         self._text = text
+        self._markup = markup
         self.compact_lines = compact_lines
         self._collapsed = False
 
@@ -42,7 +45,11 @@ class RichTextComponent(tui_base.Component):
         if terminal is None:
             return []
         console = terminal.console
-        renderable: tui_base.Renderable = self._text
+        renderable: tui_base.Renderable
+        if self._markup:
+            renderable = rich_text.Text.from_markup(self._text)
+        else:
+            renderable = rich_text.Text(self._text)
         styled = self.apply_style(renderable)
         rendered = console.render_lines(
             styled,

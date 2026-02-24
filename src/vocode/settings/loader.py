@@ -26,6 +26,7 @@ WORKFLOW_FILE_GLOBS: Final[List[str]] = [
     "*.jsonc",
 ]
 
+
 # Configuration loading
 def _deep_merge_dicts(
     a: Dict[str, Any], b: Dict[str, Any], *, concat_lists: bool = False
@@ -119,14 +120,24 @@ def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
                     # Unknown variable refs are left as the placeholder string
                     res = val
                 if var_def is not None:
-                    resolved[name] = VarDef(value=res, options=var_def.options, lookup=var_def.lookup)
+                    resolved[name] = VarDef(
+                        value=res,
+                        options=var_def.options,
+                        lookup=var_def.lookup,
+                        type=var_def.type,
+                    )
                 else:
                     resolved[name] = res
                 resolving.remove(name)
                 return res
         # Non-strings or non-full-match strings are returned as-is
         if var_def is not None:
-            resolved[name] = VarDef(value=val, options=var_def.options, lookup=var_def.lookup)
+            resolved[name] = VarDef(
+                value=val,
+                options=var_def.options,
+                lookup=var_def.lookup,
+                type=var_def.type,
+            )
         else:
             resolved[name] = val
         resolving.remove(name)
@@ -457,7 +468,9 @@ def _discover_workflow_files(config_path: Path) -> List[Path]:
     return out
 
 
-def _load_workflows_from_dir(config_path: Path) -> tuple[Dict[str, Any], Dict[str, Any]]:
+def _load_workflows_from_dir(
+    config_path: Path,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
     workflows: Dict[str, Any] = {}
     vars_map: Dict[str, Any] = {}
 
@@ -485,7 +498,6 @@ def _load_workflows_from_dir(config_path: Path) -> tuple[Dict[str, Any], Dict[st
             workflows[wf_path.stem] = wf_any
 
     return workflows, vars_map
-
 
 
 def load_settings(path: str) -> Settings:

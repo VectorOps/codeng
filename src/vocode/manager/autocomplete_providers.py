@@ -1,16 +1,19 @@
 from __future__ import annotations
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Optional
 
 from vocode.logger import logger
 from .autocomplete import AutocompleteManager, AutocompleteItem
+from vocode import settings as vocode_settings
 
 if TYPE_CHECKING:
     from .server import UIServer
 
 
 MIN_FILE_AUTOCOMPLETE_LEN = 2
+MAX_VAR_AUTOCOMPLETE_ITEMS = 10
 
 
 def _clamp_cursor(text: str, cursor: int) -> int:
@@ -130,6 +133,135 @@ async def command_autocomplete_provider(
             )
         )
 
+    return _filter_noop(text, items) or None
+
+
+@AutocompleteManager.register_default
+async def var_autocomplete_provider(
+    server: "UIServer",
+    text: str,
+    row: int,
+    col: int,
+) -> list[AutocompleteItem] | None:
+    if not text:
+        return None
+    if row != 0:
+        return None
+    if not text.startswith("/var"):
+        return None
+
+    if text != "/var" and not text.startswith("/var "):
+        return None
+
+    cursor = _clamp_cursor(text, col)
+    start, end = _token_span(text, cursor)
+    word = text[start:end]
+
+    tokens = text.split()
+    has_trailing_space = text.endswith(" ")
+
+    def make_items(values: list[str], *, replace_text: str) -> list[AutocompleteItem]:
+        out: list[AutocompleteItem] = []
+        for val in values:
+            out.append(
+                AutocompleteItem(
+                    title=val,
+                    replace_start=start,
+                    replace_text=replace_text,
+                    insert_text=val,
+                )
+            )
+        return out
+
+    if len(tokens) <= 1:
+        needle = ""
+        if word.startswith("/var"):
+            needle = word[len("/var") :]
+        items = []
+        for sub in ("list", "set"):
+            if needle and not sub.startswith(needle):
+                continue
+            items.append(
+                AutocompleteItem(
+                    title=f"/var {sub}",
+                    replace_start=0,
+                    replace_text=text,
+                    insert_text=f"/var {sub} ",
+                )
+            )
+        return _filter_noop(text, items) or None
+
+    sub = tokens[1]
+    if sub != "set":
+        return None
+
+    settings = server.manager.project.settings
+    if settings is None or not isinstance(settings, vocode_settings.Settings):
+        return None
+
+    var_defs = settings.list_variables()
+    var_names = sorted(var_defs.keys())
+    if len(tokens) == 2 or (len(tokens) == 3 and not has_trailing_space):
+        needle = ""
+        replace = word
+        if len(tokens) >= 3:
+            needle = tokens[2]
+        if not replace and len(tokens) == 2 and has_trailing_space:
+            replace = ""
+        items: list[AutocompleteItem] = []
+        for name in var_names:
+            if needle and not name.startswith(needle):
+                continue
+            insert = name
+            if not insert.endswith(" "):
+                insert += " "
+            items.append(
+                AutocompleteItem(
+                    title=f"{name} - variable",
+                    replace_start=start,
+                    replace_text=replace,
+                    insert_text=insert,
+                )
+            )
+        return _filter_noop(text, items[:MAX_VAR_AUTOCOMPLETE_ITEMS]) or None
+
+    if len(tokens) >= 3:
+        var_name = tokens[2]
+    else:
+        return None
+
+    needle = ""
+    replace_text = word
+    if len(tokens) >= 4 and not has_trailing_space:
+        needle = tokens[3]
+    elif has_trailing_space:
+        replace_text = ""
+
+    choices = settings.list_variable_value_choices(var_name, needle=needle)
+    if not choices:
+        return None
+
+    def _stringify_choice_value(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            except Exception:
+                return str(value)
+        return str(value)
+
+    items: list[AutocompleteItem] = []
+    for choice in choices[:MAX_VAR_AUTOCOMPLETE_ITEMS]:
+        insert = _stringify_choice_value(choice.value)
+        items.append(
+            AutocompleteItem(
+                title=choice.name,
+                replace_start=start,
+                replace_text=replace_text,
+                insert_text=insert,
+            )
+        )
     return _filter_noop(text, items) or None
 
 
