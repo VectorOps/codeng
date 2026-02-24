@@ -19,6 +19,14 @@ INCLUDED_STEP_TYPES: Final = (
 )
 
 
+def _min_deadline(a: Optional[float], b: Optional[float]) -> Optional[float]:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if a <= b else b
+
+
 class ToolCallProviderState(BaseModel):
     provider_state: Optional[Dict[str, Any]] = None
 
@@ -32,7 +40,7 @@ class LLMExecutor(runner_base.BaseExecutor):
     async def init(self):
         litellm.suppress_debug_info = True
         litellm.set_verbose = False
-    
+
     def build_messages(self, inp: runner_base.ExecutorInput) -> List[Dict]:
         """
         Generate an OpenAI-compatible conversation from execution state.
@@ -286,26 +294,27 @@ class LLMExecutor(runner_base.BaseExecutor):
                         raise asyncio.TimeoutError()
                     return await asyncio.wait_for(awaitable, timeout=remaining)
 
-                stream = await _await_with_deadline(stream_task, start_deadline)
+                phase_deadline = _min_deadline(start_deadline, response_deadline)
+                stream = await _await_with_deadline(stream_task, phase_deadline)
 
                 chunks = []
                 assistant_partial = ""
-                received_first_chunk = False
-                current_deadline = start_deadline
+                has_visible_content = False
 
                 stream_iter = stream.__aiter__()
+
+                def _effective_deadline() -> Optional[float]:
+                    if has_visible_content:
+                        return response_deadline
+                    return _min_deadline(start_deadline, response_deadline)
 
                 while True:
                     try:
                         chunk = await _await_with_deadline(
-                            stream_iter.__anext__(), current_deadline
+                            stream_iter.__anext__(), _effective_deadline()
                         )
                     except StopAsyncIteration:
                         break
-
-                    if not received_first_chunk:
-                        received_first_chunk = True
-                        current_deadline = response_deadline
 
                     chunks.append(chunk)
                     choice_list = chunk.choices
@@ -320,6 +329,8 @@ class LLMExecutor(runner_base.BaseExecutor):
                     content_piece = delta.content
 
                     if isinstance(content_piece, str) and content_piece:
+                        if not has_visible_content:
+                            has_visible_content = True
                         assistant_partial += content_piece
                         interim_step = self._build_step_from_message(
                             step,
@@ -425,7 +436,7 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         # Prefer the streamed text as the final assistant message,
         # but capture the assembled content for comparison / fallback.
-        response_text: str = ''
+        response_text: str = ""
         if isinstance(content, str):
             response_text = content
 
