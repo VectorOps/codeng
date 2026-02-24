@@ -1,6 +1,8 @@
 from pathlib import Path
 import os
 
+import pytest
+
 from vocode.settings.loader import load_settings
 from vocode.runner.executors.llm.models import LLMNode
 from vocode import vars_values as vars_values_mod
@@ -43,8 +45,8 @@ internal_http:
     assert settings.internal_http is not None
     assert settings.internal_http.host == "hello world"
 
-    settings.internal_http.host = "plain"
-    assert settings.internal_http.host == "plain"
+    with pytest.raises(ValueError):
+        settings.internal_http.host = "plain"
 
 
 def test_multiple_interpolated_variables(tmp_path: Path) -> None:
@@ -83,6 +85,28 @@ workflows:
     node = wf.nodes[0]
     assert node.type == "llm"
     assert getattr(node, "model", None) == "gpt-4o"
+
+
+def test_runtime_var_update_updates_workflow_llm_node_fields(tmp_path: Path) -> None:
+    cfg = """
+variables:
+  LLM_MODEL: gpt-4o
+workflows:
+  wf:
+    nodes:
+      - name: llm-node
+        type: llm
+        model: ${LLM_MODEL}
+    edges: []
+"""
+    path = _write_tmp(tmp_path, cfg)
+    settings = load_settings(str(path))
+
+    node = settings.workflows["wf"].nodes[0]
+    assert getattr(node, "model", None) == "gpt-4o"
+
+    settings.set_variable_value("LLM_MODEL", "gpt-4.1")
+    assert getattr(node, "model", None) == "gpt-4.1"
 
 
 def test_object_mode_variable_definition_with_value(tmp_path: Path) -> None:

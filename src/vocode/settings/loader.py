@@ -151,10 +151,18 @@ def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
 def _apply_variables(obj: Any, vars_map: Dict[str, Any]) -> Any:
     env = vars_mod.VarEnv(vars_map)
     if isinstance(obj, str):
-        wrapped = vars_mod.BaseVarModel._wrap_value(obj, env)
-        if isinstance(wrapped, vars_mod.VarExpr):
-            return wrapped.resolve()
-        return obj
+        m = VAR_PATTERN.fullmatch(obj)
+        if not m:
+            return obj
+
+        name = m.group(1)
+        found, val = env.lookup(name)
+        if not found:
+            return obj
+
+        if isinstance(val, str):
+            return obj
+        return val
     if isinstance(obj, dict):
         return {k: _apply_variables(v, vars_map) for k, v in obj.items()}
     if isinstance(obj, list):
