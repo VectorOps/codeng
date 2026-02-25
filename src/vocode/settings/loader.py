@@ -1,4 +1,5 @@
 from typing import List, Dict, Optional, Any, Union, Set, Final, Type
+import dataclasses
 import re
 from pathlib import Path
 import os
@@ -7,13 +8,7 @@ from pydantic import BaseModel
 import yaml
 import json5  # type: ignore
 from vocode import vars as vars_mod
-
-from .models import (
-    Settings,
-    VOCODE_TEMPLATE_BASE,
-    TEMPLATE_INCLUDE_KEYS,
-    INCLUDE_KEY,
-)
+import vocode.settings.models as settings_models
 from vocode.vars import VAR_PATTERN, VarDef
 
 
@@ -101,7 +96,7 @@ def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"Detected variable resolution cycle at '{name}'")
         resolving.add(name)
         val = vars_map.get(name)
-        var_def: Optional[VariableDef] = None
+        var_def: Optional[VarDef] = None
         if isinstance(val, VarDef):
             var_def = val
             val = var_def.value
@@ -148,26 +143,105 @@ def _resolve_variables(vars_map: Dict[str, Any]) -> Dict[str, Any]:
     return resolved
 
 
-def _apply_variables(obj: Any, vars_map: Dict[str, Any]) -> Any:
-    env = vars_mod.VarEnv(vars_map)
+VarPathPart = Union[str, int]
+
+
+@dataclasses.dataclass(frozen=True)
+class _BindingSpec:
+    path: List[VarPathPart]
+    kind: str
+    payload: str
+
+
+def _prepare_data_and_collect_bindings(
+    obj: Any,
+    env: vars_mod.VarEnv,
+    path: List[VarPathPart],
+    specs: List[_BindingSpec],
+) -> Any:
     if isinstance(obj, str):
         m = VAR_PATTERN.fullmatch(obj)
-        if not m:
+        if m:
+            name = m.group(1)
+            specs.append(_BindingSpec(path=list(path), kind="ref", payload=name))
+            found, val = env.lookup(name)
+            if found:
+                return val
             return obj
 
-        name = m.group(1)
-        found, val = env.lookup(name)
-        if not found:
+        if VAR_PATTERN.search(obj):
+            specs.append(
+                _BindingSpec(path=list(path), kind="interpolated", payload=obj)
+            )
             return obj
 
-        if isinstance(val, str):
-            return obj
-        return val
+        return obj
+
     if isinstance(obj, dict):
-        return {k: _apply_variables(v, vars_map) for k, v in obj.items()}
+        out: Dict[str, Any] = {}
+        for k, v in obj.items():
+            key = str(k)
+            out[key] = _prepare_data_and_collect_bindings(
+                v,
+                env,
+                [*path, key],
+                specs,
+            )
+        return out
+
     if isinstance(obj, list):
-        return [_apply_variables(v, vars_map) for v in obj]
+        out_list: List[Any] = []
+        for i, v in enumerate(obj):
+            out_list.append(
+                _prepare_data_and_collect_bindings(
+                    v,
+                    env,
+                    [*path, i],
+                    specs,
+                )
+            )
+        return out_list
+
     return obj
+
+
+def _make_binding_target(
+    root: BaseModel, path: List[VarPathPart]
+) -> vars_mod.VarBindTarget:
+    if not path:
+        raise ValueError("Binding path may not be empty")
+
+    cur: Any = root
+    for part in path[:-1]:
+        if isinstance(cur, BaseModel):
+            if not isinstance(part, str):
+                raise TypeError("Expected string path part for model attribute")
+            cur = object.__getattribute__(cur, part)
+        elif isinstance(cur, dict):
+            if not isinstance(part, str):
+                raise TypeError("Expected string path part for dict key")
+            cur = cur[part]
+        elif isinstance(cur, list):
+            if not isinstance(part, int):
+                raise TypeError("Expected int path part for list index")
+            cur = cur[part]
+        else:
+            raise TypeError(f"Unsupported binding traversal type: {type(cur).__name__}")
+
+    last = path[-1]
+    if isinstance(cur, BaseModel):
+        if not isinstance(last, str):
+            raise TypeError("Expected string path part for model attribute")
+        return vars_mod.VarBindTargetAttr(cur, last)
+    if isinstance(cur, dict):
+        if not isinstance(last, str):
+            raise TypeError("Expected string path part for dict key")
+        return vars_mod.VarBindTargetDictKey(cur, last)
+    if isinstance(cur, list):
+        if not isinstance(last, int):
+            raise TypeError("Expected int path part for list index")
+        return vars_mod.VarBindTargetListIndex(cur, last)
+    raise TypeError(f"Unsupported binding target container type: {type(cur).__name__}")
 
 
 def _expand_include_patterns(base: Path, pattern: str) -> List[Path]:
@@ -248,14 +322,24 @@ def _collect_include_paths(
                         paths.extend(_expand_include_patterns(base_dir, p))
                 else:
                     paths.extend(_expand_include_patterns(base_dir, loc))
-            elif any(k in item for k in TEMPLATE_INCLUDE_KEYS):
-                key = next(k for k in TEMPLATE_INCLUDE_KEYS if k in item)
+            elif any(k in item for k in settings_models.TEMPLATE_INCLUDE_KEYS):
+                key = next(
+                    k for k in settings_models.TEMPLATE_INCLUDE_KEYS if k in item
+                )
                 loc = item[key]
                 if isinstance(loc, list):
                     for p in loc:
-                        paths.extend(_expand_include_patterns(VOCODE_TEMPLATE_BASE, p))
+                        paths.extend(
+                            _expand_include_patterns(
+                                settings_models.VOCODE_TEMPLATE_BASE, p
+                            )
+                        )
                 else:
-                    paths.extend(_expand_include_patterns(VOCODE_TEMPLATE_BASE, loc))
+                    paths.extend(
+                        _expand_include_patterns(
+                            settings_models.VOCODE_TEMPLATE_BASE, loc
+                        )
+                    )
             elif "file" in item:
                 loc = item["file"]
                 if isinstance(loc, list):
@@ -305,8 +389,8 @@ def _preprocess_includes(
 ) -> tuple[Any, Dict[str, Any]]:
     if isinstance(node, dict):
         # If this dict contains a $include, expand it and merge/replace as appropriate
-        if INCLUDE_KEY in node:
-            include_spec = node[INCLUDE_KEY]
+        if settings_models.INCLUDE_KEY in node:
+            include_spec = node[settings_models.INCLUDE_KEY]
             # Resolve include entries relative to this file's base_dir (or templates base)
             entries = _collect_include_paths(include_spec, base_dir)
             included_payloads: List[Any] = []
@@ -365,7 +449,7 @@ def _preprocess_includes(
                     )
 
             # Process the rest of this dict (other keys beside $include)
-            rest = {k: v for k, v in node.items() if k != INCLUDE_KEY}
+            rest = {k: v for k, v in node.items() if k != settings_models.INCLUDE_KEY}
 
             # If multiple includes and additional keys are present, merge included dicts
             if len(included_payloads) == 1:
@@ -508,7 +592,7 @@ def _load_workflows_from_dir(
     return workflows, vars_map
 
 
-def load_settings(path: str) -> Settings:
+def load_settings(path: str) -> settings_models.Settings:
     config_path = Path(path).resolve()
     data_any, included_vars, root_vars = _load_and_preprocess(config_path)
     if not isinstance(data_any, dict):
@@ -557,11 +641,33 @@ def load_settings(path: str) -> Settings:
             var_defs_only[k] = v
         else:
             value_only_map[k] = v
+    env = vars_mod.VarEnv(value_only_map)
+    specs: List[_BindingSpec] = []
+    data_for_validation = _prepare_data_and_collect_bindings(data_any, env, [], specs)
 
-    data_any = _apply_variables(data_any, value_only_map)
-    settings = Settings.model_validate(data_any)
-    settings.set_var_context(value_only_map)
+    settings = settings_models.Settings.model_validate(data_for_validation)
+    settings._var_env = env
     settings._set_var_defs(var_defs_only)
+
+    bindings: List[vars_mod.VarBinding] = []
+    for spec in specs:
+        target = _make_binding_target(settings, spec.path)
+        if spec.kind == "ref":
+            bindings.append(vars_mod.VarRefBinding(target, spec.payload))
+        elif spec.kind == "interpolated":
+            bindings.append(vars_mod.VarInterpolatedBinding(target, spec.payload))
+        else:
+            raise ValueError(f"Unknown binding spec kind: {spec.kind!r}")
+
+    bindings_map: Dict[str, List[vars_mod.VarBinding]] = {}
+    for b in bindings:
+        for dep in b.dependencies():
+            bindings_map.setdefault(dep, []).append(b)
+    settings._set_var_bindings(bindings_map)
+
+    for b in bindings:
+        b.apply(env)
+
     return settings
 
 

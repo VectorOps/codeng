@@ -5,7 +5,7 @@ import json
 import os
 import re
 
-from pydantic import BaseModel, PrivateAttr, model_validator
+from pydantic import BaseModel, PrivateAttr, model_validator, TypeAdapter
 
 
 VAR_PATTERN = re.compile(
@@ -170,7 +170,7 @@ class BaseVarModel(BaseModel):
     def _propagate_var_context(cls, obj: Any, env: VarEnv) -> None:
         if isinstance(obj, BaseVarModel):
             BaseModel.__setattr__(obj, "_var_env", env)
-            for field_name, field_info in obj.model_fields.items():
+            for field_name, field_info in obj.__class__.model_fields.items():
                 value = getattr(obj, field_name)
                 wrapped = cls._wrap_container(value, env)
                 if wrapped is not value:
@@ -207,3 +207,102 @@ class BaseVarModel(BaseModel):
             current.assign(self, name, value)
             return
         return super().__setattr__(name, value)
+
+
+class VarBindTarget:
+    def set(self, value: Any) -> None:
+        raise NotImplementedError
+
+
+class VarBindTargetAttr(VarBindTarget):
+    def __init__(self, owner: Any, attr_name: str) -> None:
+        self._owner = owner
+        self._attr_name = attr_name
+        self._adapter: Optional[TypeAdapter] = None
+
+        if isinstance(owner, BaseModel):
+            field_info = owner.__class__.model_fields.get(attr_name)
+            if field_info is not None and field_info.annotation is not None:
+                self._adapter = TypeAdapter(field_info.annotation)
+
+    def set(self, value: Any) -> None:
+        if self._adapter is not None:
+            value = self._adapter.validate_python(value)
+        setattr(self._owner, self._attr_name, value)
+
+
+class VarBindTargetDictKey(VarBindTarget):
+    def __init__(self, owner: Dict[str, Any], key: str) -> None:
+        self._owner = owner
+        self._key = key
+
+    def set(self, value: Any) -> None:
+        self._owner[self._key] = value
+
+
+class VarBindTargetListIndex(VarBindTarget):
+    def __init__(self, owner: List[Any], index: int) -> None:
+        self._owner = owner
+        self._index = index
+
+    def set(self, value: Any) -> None:
+        self._owner[self._index] = value
+
+
+class VarBinding:
+    def dependencies(self) -> List[str]:
+        raise NotImplementedError
+
+    def apply(self, env: VarEnv) -> None:
+        raise NotImplementedError
+
+
+class VarRefBinding(VarBinding):
+    def __init__(self, target: VarBindTarget, name: str) -> None:
+        self._target = target
+        self._name = name
+
+    def dependencies(self) -> List[str]:
+        return [self._name]
+
+    def apply(self, env: VarEnv) -> None:
+        found, val = env.lookup(self._name)
+        if not found:
+            self._target.set("${" + self._name + "}")
+            return
+        self._target.set(val)
+
+
+class VarInterpolatedBinding(VarBinding):
+    def __init__(self, target: VarBindTarget, template: str) -> None:
+        self._target = target
+        self._template = template
+        self._parts: List[Tuple[str, str]] = []
+        self._deps: List[str] = []
+
+        seen: Dict[str, None] = {}
+        last_end = 0
+        for m in VAR_PATTERN.finditer(template):
+            if m.start() > last_end:
+                self._parts.append(("text", template[last_end : m.start()]))
+            var_name = m.group(1)
+            self._parts.append(("var", var_name))
+            if var_name not in seen:
+                seen[var_name] = None
+                self._deps.append(var_name)
+            last_end = m.end()
+        if last_end < len(template):
+            self._parts.append(("text", template[last_end:]))
+
+    def dependencies(self) -> List[str]:
+        return list(self._deps)
+
+    def apply(self, env: VarEnv) -> None:
+        out: List[str] = []
+        for kind, payload in self._parts:
+            if kind == "text":
+                out.append(payload)
+            else:
+                out.append(env.resolve_placeholder(payload))
+        result = "".join(out).replace("$${", "${")
+        self._target.set(result)
