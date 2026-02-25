@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 from pydantic import model_validator, field_validator
 import yaml
 import json5  # type: ignore
-from vocode import models
+from vocode import models as vocode_models
 from vocode.lib.validators import get_value_by_dotted_key, regex_matches_value
 from vocode import vars as vars_mod
 from vocode import vars_values as vars_values_mod
@@ -49,8 +49,8 @@ class WorkflowConfig(vars_mod.BaseVarModel):
     need_input: bool = True
     need_input_prompt: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
-    nodes: List[models.Node] = Field(default_factory=list)
-    edges: List[models.Edge] = Field(default_factory=list)
+    nodes: List[vocode_models.Node] = Field(default_factory=list)
+    edges: List[vocode_models.Edge] = Field(default_factory=list)
     agent_workflows: Optional[List[str]] = None
 
     @field_validator("nodes", mode="before")
@@ -58,7 +58,7 @@ class WorkflowConfig(vars_mod.BaseVarModel):
     def normalize_nodes(cls, v):
         if not isinstance(v, list):
             return v
-        return [models.Node.from_node(item) for item in v]
+        return [vocode_models.Node.from_node(item) for item in v]
 
 
 class ToolCallFormatter(vars_mod.BaseVarModel):
@@ -251,6 +251,20 @@ class Settings(vars_mod.BaseVarModel):
 
     def _set_var_defs(self, defs: Dict[str, vars_mod.VarDef]) -> None:
         self._var_defs = dict(defs)
+    _var_bindings: Dict[str, List[vars_mod.VarBinding]] = PrivateAttr(default_factory=dict)
+
+    def _set_var_bindings(self, bindings: Dict[str, List[vars_mod.VarBinding]]) -> None:
+        self._var_bindings = {k: list(v) for k, v in bindings.items()}
+
+    def _apply_var_bindings_for(self, name: str) -> None:
+        env = self._var_env
+        if env is None:
+            return
+        bindings = self._var_bindings.get(name)
+        if not bindings:
+            return
+        for b in bindings:
+            b.apply(env)
 
     def list_variables(self) -> Dict[str, vars_mod.VarDef]:
         return dict(self._var_defs)
@@ -270,18 +284,20 @@ class Settings(vars_mod.BaseVarModel):
     def set_variable_value(self, name: str, value: Any) -> None:
         env = self._var_env
         if env is None:
-            self.set_var_context({name: value})
-        else:
-            env.vars_map[name] = value
+            env = vars_mod.VarEnv({})
+            self._var_env = env
+        env.vars_map[name] = value
         existing = self._var_defs.get(name)
         if existing is not None:
             existing.value = value
+        self._apply_var_bindings_for(name)
 
     def delete_variable(self, name: str) -> None:
         env = self._var_env
         if env is not None:
             env.vars_map.pop(name, None)
         self._var_defs.pop(name, None)
+        self._apply_var_bindings_for(name)
 
     def list_variable_value_choices(
         self, name: str, needle: str = ""

@@ -32,7 +32,9 @@ internal_http:
     assert settings.internal_http.port == 8080
 
 
-def test_interpolated_string_resolution_and_assignment(tmp_path: Path) -> None:
+def test_interpolated_string_resolution_and_var_update_propagation(
+    tmp_path: Path,
+) -> None:
     cfg = """
 variables:
   NAME: world
@@ -45,8 +47,8 @@ internal_http:
     assert settings.internal_http is not None
     assert settings.internal_http.host == "hello world"
 
-    with pytest.raises(ValueError):
-        settings.internal_http.host = "plain"
+    settings.set_variable_value("NAME", "friend")
+    assert settings.internal_http.host == "hello friend"
 
 
 def test_multiple_interpolated_variables(tmp_path: Path) -> None:
@@ -131,6 +133,21 @@ variables:
   PORT:
     value: 9000
     lookup: ports
+internal_http:
+  port: ${PORT}
+"""
+    path = _write_tmp(tmp_path, cfg)
+    settings = load_settings(str(path))
+
+    assert settings.internal_http is not None
+    assert settings.internal_http.port == 9000
+
+
+def test_env_var_used_in_typed_int_field(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("TEST_PORT", "9000")
+    cfg = """
+variables:
+  PORT: ${env:TEST_PORT}
 internal_http:
   port: ${PORT}
 """
