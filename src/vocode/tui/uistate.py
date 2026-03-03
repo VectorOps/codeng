@@ -18,6 +18,7 @@ from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
+from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.components import select_list as tui_select_list
 from vocode.tui.components import command_manager_help as command_manager_help_component
 from vocode.tui.components import tool_call_req as tool_call_req_component
@@ -104,7 +105,7 @@ class TUIState:
         self._input_component = input_component
         self._history_manager = tui_history.HistoryManager()
         self._input_keymap = self._create_input_keymap()
-        self._step_components: dict[str, tui_markdown_component.MarkdownComponent] = {}
+        self._step_components: dict[str, tui_step_output_component.StepOutputComponent] = {}
         self._step_component_ids: set[str] = set()
         self._step_handlers: dict[
             vocode_state.StepType, typing.Callable[[vocode_state.Step], None]
@@ -624,6 +625,47 @@ class TUIState:
             return None
         return message.text
 
+    def _upsert_step_output_component(
+        self,
+        step: vocode_state.Step,
+        text: str,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
+        component_style: tui_terminal.ComponentStyle | None = None,
+    ) -> None:
+        step_id = str(step.id)
+        existing = self._step_components.get(step_id)
+        if existing is not None:
+            existing.markdown_render_mode = self._markdown_render_mode
+            existing.set_value(text=text, content_type=step.content_type)
+            if display is not None:
+                if display.collapse_lines is not None:
+                    existing.compact_lines = display.collapse_lines
+                if display.collapse is not None:
+                    existing.set_collapsed(display.collapse)
+            if component_style is not None:
+                existing.component_style = component_style
+            return
+
+        collapse_lines: int = 10
+        collapsed: bool = False
+        if display is not None:
+            if display.collapse_lines is not None:
+                collapse_lines = display.collapse_lines
+            collapsed = display.collapse
+
+        component = tui_step_output_component.StepOutputComponent(
+            text=text,
+            content_type=step.content_type,
+            compact_lines=collapse_lines,
+            collapsed=collapsed,
+            id=step_id,
+            component_style=component_style,
+            markdown_render_mode=self._markdown_render_mode,
+        )
+        self._step_components[step_id] = component
+        self._step_component_ids.add(step_id)
+        self._terminal.insert_component(-2, component)
+
     def _format_prompt_markdown(self, step: vocode_state.Step) -> str | None:
         message = step.message
         if message is None:
@@ -676,14 +718,13 @@ class TUIState:
         step: vocode_state.Step,
         display: manager_proto.RunnerReqDisplayOpts | None = None,
     ) -> None:
-        markdown = self._format_message_markdown(step)
-        if markdown is None:
+        message = step.message
+        if message is None:
             return
 
-        trimmed = markdown.strip()
-        self._upsert_markdown_component(
+        self._upsert_step_output_component(
             step,
-            trimmed,
+            message.text,
             display=display,
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )

@@ -36,6 +36,7 @@ class ProcessManager:
         env_overlay: Optional[dict[str, str]] = None,
         shell: bool = True,
         use_pty: bool = False,
+        stdin_to_null: bool = True,
     ) -> ProcessHandle:
         opts = SpawnOptions(
             command=command,
@@ -44,6 +45,7 @@ class ProcessManager:
             env_overlay=env_overlay,
             shell=shell,
             use_pty=use_pty,
+            stdin_to_null=stdin_to_null,
         )
         handle = await self._backend.spawn(opts)
         self._procs[handle.id] = handle

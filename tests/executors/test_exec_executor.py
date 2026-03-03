@@ -25,7 +25,7 @@ def test_exec_executor_streaming(tmp_path: Path) -> None:
         node = ExecNode(
             name="exec1",
             type="exec",
-            command="printf 'a'; sleep 0.1; printf 'b'",
+            command="printf '\\033[31ma\\033[0m'; sleep 0.1; printf 'b'",
             outcomes=[models.OutcomeSlot(name="done")],
         )
 
@@ -52,6 +52,8 @@ def test_exec_executor_streaming(tmp_path: Path) -> None:
 
         final = steps[-1]
         final_text = final.message.text if final.message else ""
+        assert final.content_type is models.StepContentType.RAW
+        assert "\x1b[31m" in final_text
         assert "a" in final_text
         assert "b" in final_text
 

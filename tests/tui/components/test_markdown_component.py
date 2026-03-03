@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from rich import console as rich_console
 
+from vocode import models as vocode_models
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib.components import (
     markdown_component as components_markdown_component,
+    step_output_component as components_step_output_component,
 )
 
 
@@ -36,3 +38,28 @@ def test_markdown_component_compacts_when_collapsed() -> None:
     rendered_lines = _render_text(component, console)
     assert len(rendered_lines) == 11
     assert rendered_lines[-1].startswith("... (")
+
+
+def test_step_output_component_appends_reset_when_raw() -> None:
+    console = rich_console.Console(width=60, height=200, record=True)
+    component = components_step_output_component.StepOutputComponent(
+        text="\x1b[31mRED",
+        content_type=vocode_models.StepContentType.RAW,
+    )
+    rendered_lines = _render_text(component, console)
+    assert rendered_lines
+    assert rendered_lines[-1].endswith("\x1b[0m")
+
+
+def test_step_output_component_appends_reset_when_raw_and_collapsed() -> None:
+    console = rich_console.Console(width=60, height=200, record=True)
+    text = "\n".join([f"\x1b[31mline {i}" for i in range(20)])
+    component = components_step_output_component.StepOutputComponent(
+        text=text,
+        content_type=vocode_models.StepContentType.RAW,
+        compact_lines=1,
+    )
+    component.set_collapsed(True)
+    rendered_lines = _render_text(component, console)
+    assert len(rendered_lines) == 2
+    assert rendered_lines[-1].endswith("\x1b[0m")

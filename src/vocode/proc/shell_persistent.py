@@ -337,6 +337,7 @@ class PersistentShellProcessor(ShellProcessor):
             name="shell",
             cwd=self._default_cwd,
             env_overlay=self._env_overlay or None,
+            stdin_to_null=False,
         )
 
     def _start_command(self) -> str:
@@ -359,7 +360,7 @@ class PersistentShellProcessor(ShellProcessor):
         # Emit a single marker line as "<marker>:<rc>"
         return (
             "__rc=127; "
-            f"{{ {inner}; __rc=$?; }}; "
+            f"{{ {inner} < /dev/null; __rc=$?; }}; "
             "printf '\\n%s:%s\\n' \"" + shlex.quote(marker) + '" "$__rc";\n'
         )
 

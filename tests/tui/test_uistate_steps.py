@@ -11,6 +11,7 @@ from vocode import settings as vocode_settings
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
+from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.input import base as input_base
 
 
@@ -60,8 +61,9 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
 
     assert header is not step_component
     assert input_component is not step_component
-    assert isinstance(step_component, tui_markdown_component.MarkdownComponent)
-    assert step_component.markdown == "first"
+    assert isinstance(step_component, tui_step_output_component.StepOutputComponent)
+    assert step_component.content_type is models.StepContentType.MARKDOWN
+    assert step_component.text == "first"
 
     message2 = state.Message(role=models.Role.USER, text="second\n\n")
     step2 = state.Step(
@@ -76,7 +78,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
     components_after_update = terminal.components
     assert len(components_after_update) == 4
     assert components_after_update[1] is step_component
-    assert step_component.markdown == "second"
+    assert step_component.text == "second"
 
     step_no_message = state.Step(
         id=uuid4(),
@@ -98,7 +100,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
 
     ui_state.handle_step(step_empty_text)
     assert len(terminal.components) == 4
-    assert step_component.markdown == ""
+    assert step_component.text == ""
 
     await terminal.render()
     output = buffer.getvalue()
@@ -222,8 +224,8 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
     components = terminal.components
     assert len(components) == 4
     step_component = components[1]
-    assert isinstance(step_component, tui_markdown_component.MarkdownComponent)
-    assert step_component.markdown == "interim"
+    assert isinstance(step_component, tui_step_output_component.StepOutputComponent)
+    assert step_component.text == "interim"
 
     message2 = state.Message(role=models.Role.USER, text="final")
     step2 = state.Step(
@@ -240,7 +242,7 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
     components_after_update = terminal.components
     assert len(components_after_update) == 4
     assert components_after_update[1] is step_component
-    assert step_component.markdown == "interim"
+    assert step_component.text == "interim"
 
     await terminal.render()
     output = buffer.getvalue()

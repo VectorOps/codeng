@@ -19,6 +19,7 @@ class SpawnOptions:
     cwd: Optional[Path] = None
     env_overlay: Optional[Dict[str, str]] = None
     shell: bool = True
+    stdin_to_null: bool = True
     # Reserved for future PTY support
     use_pty: bool = False
     # When True, the subprocess should be placed into its own process group

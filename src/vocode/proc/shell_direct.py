@@ -16,7 +16,9 @@ class DirectShellCommand(ShellCommandHandle):
     Simple adapter that forwards all operations to the underlying ProcessHandle.
     """
 
-    def __init__(self, handle: ProcessHandle, processor: "DirectShellProcessor") -> None:
+    def __init__(
+        self, handle: ProcessHandle, processor: "DirectShellProcessor"
+    ) -> None:
         self._handle = handle
         self._processor = processor
         self.id = handle.id
@@ -107,6 +109,7 @@ class DirectShellProcessor(ShellProcessor):
             cwd=self._default_cwd,
             env_overlay=self._env_overlay or None,
             shell=True,
+            stdin_to_null=True,
         )
         self._handles[handle.id] = handle
         return DirectShellCommand(handle, self)
