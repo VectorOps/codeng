@@ -24,8 +24,8 @@ class RunAgentTool(BaseTool):
         settings = prj.settings
         if parent_name and settings and settings.workflows:
             parent_cfg = settings.workflows.get(parent_name)
-            if parent_cfg and parent_cfg.agent_workflows is not None:
-                if workflow not in parent_cfg.agent_workflows:
+            if parent_cfg and parent_cfg.agents is not None:
+                if workflow not in parent_cfg.agents:
                     raise ValueError(
                         f"Workflow '{workflow}' is not allowed to be executed by '{parent_name}'"
                     )
@@ -56,7 +56,7 @@ class RunAgentTool(BaseTool):
                         "description": "Free-form text to pass to an agent.",
                     },
                 },
-                "required": ["workflow"],
+                "required": ["name"],
                 "additionalProperties": False,
             },
         }

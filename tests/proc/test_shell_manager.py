@@ -42,6 +42,56 @@ def test_shell_manager_direct_mode_runs_command(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_shell_manager_commands_do_not_wait_for_stdin_direct_mode(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        settings = ShellSettings(mode=ShellMode.direct)
+        manager = ShellManager(
+            process_manager=pm,
+            settings=settings,
+            default_cwd=tmp_path,
+        )
+
+        cmd = await manager.run("cat")
+        out = await _read_all_stdout(cmd)
+        rc = await cmd.wait()
+
+        assert out == ""
+        assert rc == 0
+
+        await manager.stop()
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_shell_manager_commands_do_not_wait_for_stdin_shell_mode(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        settings = ShellSettings(mode=ShellMode.shell)
+        manager = ShellManager(
+            process_manager=pm,
+            settings=settings,
+            default_cwd=tmp_path,
+        )
+
+        cmd = await manager.run("cat")
+        out = await _read_all_stdout(cmd)
+        rc = await cmd.wait()
+
+        assert out == ""
+        assert rc == 0
+
+        await manager.stop()
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_shell_manager_accepts_timeout_argument(tmp_path: Path) -> None:
     async def scenario() -> None:
         pm = ProcessManager(backend_name="local", default_cwd=tmp_path)

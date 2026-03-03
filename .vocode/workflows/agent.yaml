@@ -1,7 +1,7 @@
 workflows:
   agent:
     description: "End-to-end development loop: discover requirements, design a plan, write code, apply patches, and run tests with retries."
-    agent_workflows:
+    agents:
       - agent-discovery
     nodes:
       - $include:
@@ -10,7 +10,7 @@ workflows:
         max_rounds: 0
         preprocessors:
           - name: system_details
-          - name: child_workflows
+          - name: agents
           - name: skills
           - name: file_read
             options:

@@ -51,7 +51,7 @@ class WorkflowConfig(vars_mod.BaseVarModel):
     config: Dict[str, Any] = Field(default_factory=dict)
     nodes: List[vocode_models.Node] = Field(default_factory=list)
     edges: List[vocode_models.Edge] = Field(default_factory=list)
-    agent_workflows: Optional[List[str]] = None
+    agents: Optional[List[str]] = None
 
     @field_validator("nodes", mode="before")
     @classmethod
@@ -251,7 +251,10 @@ class Settings(vars_mod.BaseVarModel):
 
     def _set_var_defs(self, defs: Dict[str, vars_mod.VarDef]) -> None:
         self._var_defs = dict(defs)
-    _var_bindings: Dict[str, List[vars_mod.VarBinding]] = PrivateAttr(default_factory=dict)
+
+    _var_bindings: Dict[str, List[vars_mod.VarBinding]] = PrivateAttr(
+        default_factory=dict
+    )
 
     def _set_var_bindings(self, bindings: Dict[str, List[vars_mod.VarBinding]]) -> None:
         self._var_bindings = {k: list(v) for k, v in bindings.items()}
