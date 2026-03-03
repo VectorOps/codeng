@@ -37,7 +37,6 @@ class Runner:
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
         self._last_final_message: Optional[state.Message] = None
-        self._last_final_message: Optional[state.Message] = None
 
         self._executors: Dict[str, BaseExecutor] = {
             n.name: ExecutorFactory.create_for_node(n, project=self.project)
@@ -318,14 +317,29 @@ class Runner:
             return [user_message]
 
         if mode == models.ResultMode.CONCATENATE_FINAL:
-            merged_messages: list[state.Message] = []
-            if execution.input_messages:
-                merged_messages.extend(execution.input_messages)
-            if final_message is not None:
-                merged_messages.append(final_message)
+            initial_user_message: Optional[state.Message] = None
+            for m in execution.input_messages:
+                if m.role == models.Role.USER and (m.text or "").strip():
+                    initial_user_message = m
+                    break
+            if initial_user_message is None:
+                for s in execution.steps:
+                    if s.type != state.StepType.INPUT_MESSAGE:
+                        continue
+                    if s.message is None:
+                        continue
+                    if s.message.role != models.Role.USER:
+                        continue
+                    if not (s.message.text or "").strip():
+                        continue
+                    initial_user_message = s.message
+                    break
 
+            inputs: list[state.Message] = []
+            if initial_user_message is not None:
+                inputs.append(initial_user_message)
             combined_message = message_helpers.concatenate_messages(
-                merged_messages,
+                inputs,
                 tool_message=final_message,
                 default_role=models.Role.USER,
             )
