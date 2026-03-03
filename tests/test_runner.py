@@ -291,6 +291,85 @@ class DummyWorkflow:
         self.need_input_prompt = need_input_prompt
 
 
+@pytest.mark.asyncio
+async def test_result_mode_concatenate_final_includes_initial_user_input_step_only():
+    node1 = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[models.OutcomeSlot(name="branch")],
+        confirmation=models.Confirmation.MANUAL,
+        message_mode=models.ResultMode.CONCATENATE_FINAL,
+    )
+    node2 = models.Node(
+        name="node2",
+        type="initial-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    edges = [
+        models.Edge(
+            source_node="node1",
+            source_outcome="branch",
+            target_node="node2",
+        ),
+    ]
+    graph = models.Graph(nodes=[node1, node2], edges=edges)
+    workflow = InitialInputWorkflow(name="wf-concat-final-initial-step", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=None,
+    )
+
+    agen = runner.run()
+    prompt_count = 0
+
+    def handler(event: RunEvent) -> RunEventResp:
+        nonlocal prompt_count
+        step = event.step
+        if step is None:
+            return RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        if step.type == state.StepType.PROMPT and step.execution.node == "node1":
+            prompt_count += 1
+            text = "initial" if prompt_count == 1 else "intermediate"
+            return RunEventResp(
+                resp_type=RunEventResponseType.MESSAGE,
+                message=state.Message(
+                    role=models.Role.USER,
+                    text=text,
+                ),
+            )
+        if (
+            step.type == state.StepType.PROMPT_CONFIRM
+            and step.execution.node == "node1"
+        ):
+            return RunEventResp(
+                resp_type=RunEventResponseType.APPROVE,
+                message=None,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    await drive_runner(agen, handler, ignore_non_step=True)
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    node2_exec = node_execs_by_name["node2"]
+    assert len(node2_exec.input_messages) == 1
+    forwarded = node2_exec.input_messages[0]
+    assert forwarded.role == models.Role.USER
+    assert forwarded.text.startswith("initial\n\n")
+    assert "intermediate" not in forwarded.text
+
+
 @ExecutorFactory.register("no-complete")
 class NoCompleteExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:

@@ -158,6 +158,8 @@ class TUIState:
             tui_input_component.KeyBinding("c", shift=True),
         }
 
+        self._suppress_history_update: int = 0
+
     @property
     def terminal(self) -> tui_terminal.Terminal:
         return self._terminal
@@ -364,15 +366,20 @@ class TUIState:
         component = self._input_component
         if component.cursor_row != 0:
             return False
+        self._history_manager.update_current(component.text)
         new_text = self._history_manager.navigate_previous(component.text)
         if new_text is None:
             return False
-        component.text = new_text
-        lines = component.lines
-        if lines:
-            last_row = len(lines) - 1
-            last_col = len(lines[last_row])
-            component.set_cursor_position(last_row, last_col)
+        self._suppress_history_update += 1
+        try:
+            component.text = new_text
+            lines = component.lines
+            if lines:
+                last_row = len(lines) - 1
+                last_col = len(lines[last_row])
+                component.set_cursor_position(last_row, last_col)
+        finally:
+            self._suppress_history_update -= 1
         return True
 
     def _maybe_history_down(self) -> tuple[bool, bool]:
@@ -383,13 +390,18 @@ class TUIState:
         last_row = len(lines) - 1
         if component.cursor_row != last_row:
             return False, False
+        self._history_manager.update_current(component.text)
         new_text = self._history_manager.navigate_next()
         if new_text is None:
             return False, True
-        component.text = new_text
-        lines = component.lines
-        if lines:
-            component.set_cursor_position(0, 0)
+        self._suppress_history_update += 1
+        try:
+            component.text = new_text
+            lines = component.lines
+            if lines:
+                component.set_cursor_position(0, 0)
+        finally:
+            self._suppress_history_update -= 1
         return True, False
 
     def _handle_history_down(self, event: input_base.KeyEvent) -> bool:
@@ -939,7 +951,9 @@ class TUIState:
             return
         self._schedule_autocomplete_request()
 
-    def _handle_change(self, _: str) -> None:
+    def _handle_change(self, value: str) -> None:
+        if self._suppress_history_update <= 0:
+            self._history_manager.update_current(value)
         if self._on_autocomplete_request is None:
             return
         row = self._input_component.cursor_row
