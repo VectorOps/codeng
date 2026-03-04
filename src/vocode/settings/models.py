@@ -112,6 +112,8 @@ class TUIOptions(vars_mod.BaseVarModel):
     ascii_fallback: bool = False
     expand_confirm_tools: bool = True
     submit_with_enter: bool = True
+    banner_text: str = "VOCODE"
+    banner_font: str = "spliff"
     markdown_render_mode: MarkdownRenderMode = MarkdownRenderMode.rich_markdown
     full_refresh_max_lines: Optional[int] = Field(default=None, ge=1)
 

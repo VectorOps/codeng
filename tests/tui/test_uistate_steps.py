@@ -5,12 +5,14 @@ from uuid import uuid4
 
 import pytest
 from rich import console as rich_console
+import pyfiglet
 
 from vocode import models, state
 from vocode import settings as vocode_settings
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
+from vocode.tui.lib.components import renderable as tui_renderable_component
 from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.input import base as input_base
 
@@ -135,8 +137,70 @@ async def test_tui_state_uses_markdown_render_mode_setting() -> None:
     )
 
     header = ui_state.terminal.components[0]
-    assert isinstance(header, tui_markdown_component.MarkdownComponent)
-    assert header.render_mode is tui_markdown_component.MarkdownRenderMode.SYNTAX
+    assert isinstance(header, tui_renderable_component.CallbackComponent)
+
+    ui_state.add_markdown("hello")
+    markdown_component = ui_state.terminal.components[1]
+    assert isinstance(markdown_component, tui_markdown_component.MarkdownComponent)
+    assert (
+        markdown_component.render_mode
+        is tui_markdown_component.MarkdownRenderMode.SYNTAX
+    )
+
+
+@pytest.mark.asyncio
+async def test_tui_state_banner_uses_pyfiglet_and_is_centered() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=80,
+        height=200,
+    )
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    tui_opts = vocode_settings.TUIOptions(
+        banner_text="VOCODE",
+        banner_font="chunky",
+    )
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+        tui_options=tui_opts,
+    )
+
+    header = ui_state.terminal.components[0]
+    assert isinstance(header, tui_renderable_component.CallbackComponent)
+
+    lines = header.render(console.options)
+    output: list[str] = []
+    for line in lines:
+        output.append("".join([seg.text for seg in line]))
+
+    fig = pyfiglet.Figlet(font="chunky")
+    expected_first_line = fig.renderText("VOCODE").splitlines()[0].rstrip("\n")
+
+    matching_line = None
+    for line in output:
+        if expected_first_line.strip() in line:
+            matching_line = line
+            break
+    assert matching_line is not None
+
+    left_padding = len(matching_line) - len(matching_line.lstrip(" "))
+    assert left_padding > 0
 
 
 @pytest.mark.asyncio
