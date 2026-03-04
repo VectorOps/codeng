@@ -6,6 +6,9 @@ import enum
 import typing
 from rich import console as rich_console
 from rich import control as rich_control
+from rich import align as rich_align
+from rich import text as rich_text
+import pyfiglet
 from vocode import state as vocode_state
 from vocode import models as vocode_models
 from vocode import settings as vocode_settings
@@ -19,6 +22,7 @@ from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.components import composite_component as tui_composite_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
+from vocode.tui.lib.components import renderable as tui_renderable_component
 from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.components import select_list as tui_select_list
 from vocode.tui.components import command_manager_help as command_manager_help_component
@@ -89,10 +93,9 @@ class TUIState:
             settings=settings,
         )
 
-        header = tui_markdown_component.MarkdownComponent(
-            "# Vocode TUI\n",
+        header = tui_renderable_component.CallbackComponent(
+            self._render_banner,
             id="header",
-            render_mode=self._markdown_render_mode,
         )
         input_component = tui_input_component.InputComponent(
             "",
@@ -172,6 +175,20 @@ class TUIState:
         }
 
         self._suppress_history_update: int = 0
+
+    def _render_banner(
+        self, console: rich_console.Console
+    ) -> rich_console.RenderableType:
+        tui_settings = self._terminal.settings.tui
+        text = tui_settings.banner_text.strip() if tui_settings.banner_text else ""
+        if not text:
+            return rich_text.Text("")
+        try:
+            fig = pyfiglet.Figlet(font=tui_settings.banner_font)
+            raw = fig.renderText(text).rstrip("\n")
+        except Exception:
+            raw = text
+        return rich_align.Align(rich_text.Text(raw), align="center")
 
     @property
     def terminal(self) -> tui_terminal.Terminal:
