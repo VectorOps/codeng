@@ -4,6 +4,8 @@ variables:
 name: coder
 type: llm
 model: ${LLM_CODER_MODEL}
+collapse: true
+collapse_lines: 5
 preprocessors:
   - name: diff
     options:
