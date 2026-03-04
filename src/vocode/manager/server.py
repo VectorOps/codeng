@@ -531,16 +531,27 @@ class UIServer:
         event: runner_proto.RunEventReq,
     ):
         payload = event.start_workflow
-        # TODO: Return error instead
         if payload is None:
             return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.NOOP,
-                message=None,
+                resp_type=runner_proto.RunEventResponseType.MESSAGE,
+                message=state.Message(
+                    role=models.Role.SYSTEM,
+                    text="Start-workflow event is missing payload.",
+                ),
             )
-        await self._manager.start_workflow(
-            payload.workflow_name,
-            initial_message=payload.initial_message,
-        )
+        try:
+            await self._manager.start_workflow(
+                payload.workflow_name,
+                initial_message=payload.initial_message,
+            )
+        except Exception as ex:
+            return runner_proto.RunEventResp(
+                resp_type=runner_proto.RunEventResponseType.MESSAGE,
+                message=state.Message(
+                    role=models.Role.SYSTEM,
+                    text=f"Failed to start workflow '{payload.workflow_name}': {ex}",
+                ),
+            )
 
         # We don't expect anything to be passed to next iteration
         return None

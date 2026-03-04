@@ -328,14 +328,48 @@ class BaseManager:
                             )
                         else:
                             send = RunEventResp(
-                                resp_type=RunEventResponseType.NOOP,
-                                message=None,
+                                resp_type=RunEventResponseType.MESSAGE,
+                                message=state.Message(
+                                    role=models.Role.SYSTEM,
+                                    text=(
+                                        f"Subworkflow '{finished_frame.workflow_name}' finished without a final message."
+                                    ),
+                                ),
                             )
                         self.project.current_workflow = parent_frame.workflow_name
                     else:
                         send = None
                         self.project.current_workflow = None
 
+                    continue
+
+                except Exception as ex:
+                    failed_frame = self._runner_stack.pop()
+                    failed_frame.agen = None
+                    failed_frame.runner.status = state.RunnerStatus.STOPPED
+                    logger.exception(
+                        "BaseManager._run_runner_task runner exception",
+                        exc=ex,
+                    )
+
+                    error_message = state.Message(
+                        role=models.Role.SYSTEM,
+                        text=(
+                            f"Subworkflow '{failed_frame.workflow_name}' failed: {ex}"
+                        ),
+                    )
+
+                    if self._runner_stack:
+                        parent_frame = self._runner_stack[-1]
+                        send = RunEventResp(
+                            resp_type=RunEventResponseType.MESSAGE,
+                            message=error_message,
+                        )
+                        self.project.current_workflow = parent_frame.workflow_name
+                        continue
+
+                    send = None
+                    self.project.current_workflow = None
                     continue
 
                 send = await self._emit_run_event(frame, event)

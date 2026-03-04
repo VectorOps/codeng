@@ -690,15 +690,23 @@ class Runner:
                     )
                     resp = yield req
 
-                    if resp and resp.message:
-                        result_step = state.Step(
-                            execution=current_execution,
-                            type=state.StepType.WORKFLOW_RESULT,
-                            message=resp.message,
-                            is_complete=True,
+                    result_message = resp.message if resp is not None else None
+                    if result_message is None:
+                        result_message = state.Message(
+                            role=models.Role.SYSTEM,
+                            text=(
+                                f"Subworkflow '{start_payload.workflow_name}' did not return a message."
+                            ),
                         )
-                        self._persist_step(result_step)
-                        continue
+
+                    result_step = state.Step(
+                        execution=current_execution,
+                        type=state.StepType.WORKFLOW_RESULT,
+                        message=result_message,
+                        is_complete=True,
+                    )
+                    self._persist_step(result_step)
+                    continue
 
                 if last_complete_step is not None and last_complete_step.type in (
                     state.StepType.PROMPT,
@@ -789,7 +797,7 @@ class Runner:
                             _ = yield status_event
 
                         exec_results = await self._execute_approved_tool_calls(approved)
-                        for exec_result in exec_results:
+                        for tool_req, exec_result in zip(approved, exec_results):
                             if (
                                 exec_result.kind
                                 == runner_proto.ToolExecResultKind.RESPONSE
@@ -809,19 +817,44 @@ class Runner:
                                     start_workflow=start_payload,
                                 )
                                 child_final = yield event
-                                assert (
-                                    child_final.resp_type
-                                    == RunEventResponseType.MESSAGE
-                                )
-                                assert child_final.message is not None
+                                if child_final is None or child_final.message is None:
+                                    tool_responses.append(
+                                        state.ToolCallResp(
+                                            id=tool_req.id,
+                                            status=state.ToolCallStatus.FAILED,
+                                            name=tool_req.name,
+                                            result={
+                                                "error": (
+                                                    "Subagent did not return a message."
+                                                )
+                                            },
+                                        )
+                                    )
+                                    continue
+
+                                child_message = child_final.message
+                                if child_message.role == models.Role.SYSTEM:
+                                    tool_responses.append(
+                                        state.ToolCallResp(
+                                            id=tool_req.id,
+                                            status=state.ToolCallStatus.FAILED,
+                                            name=tool_req.name,
+                                            result={
+                                                "agent_name": start_payload.workflow_name,
+                                                "error": child_message.text,
+                                            },
+                                        )
+                                    )
+                                    continue
+
                                 tool_responses.append(
                                     state.ToolCallResp(
-                                        id=req.id,
+                                        id=tool_req.id,
                                         status=state.ToolCallStatus.COMPLETED,
-                                        name=req.name,
+                                        name=tool_req.name,
                                         result={
                                             "agent_name": start_payload.workflow_name,
-                                            "response": child_final.message.text,
+                                            "response": child_message.text,
                                         },
                                     )
                                 )
