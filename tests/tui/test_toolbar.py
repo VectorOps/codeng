@@ -361,7 +361,7 @@ def test_autocomplete_tab_activates_then_accepts() -> None:
     assert input_component.text == "hello"
 
 
-def test_reverse_search_previews_history_and_accepts() -> None:
+def test_history_search_shows_matches_and_accepts() -> None:
     ui_state = _make_tui_state_with_console()
     ui_state.history.add("echo hello")
     ui_state.history.add("echo world")
@@ -378,7 +378,7 @@ def test_reverse_search_previews_history_and_accepts() -> None:
         shift=False,
     )
     ui_state._handle_input_event(event_ctrl_r)
-    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.REVERSE_SEARCH
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.HISTORY_SEARCH
 
     event_o = input_base.KeyEvent(
         action="down",
@@ -389,10 +389,22 @@ def test_reverse_search_previews_history_and_accepts() -> None:
         text="o",
     )
     ui_state._handle_input_event(event_o)
-    assert input_component.text == "echo world"
+    terminal = ui_state.terminal
+    container = terminal.components[-1]
+    select_component = container.children[1]
+    assert select_component.items
+    assert select_component.items[0].text == "echo world"
 
-    ui_state._handle_input_event(event_ctrl_r)
-    assert input_component.text == "echo hello"
+    event_down = input_base.KeyEvent(
+        action="down",
+        key="down",
+        ctrl=False,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_down)
+    assert select_component.selected_item is not None
+    assert select_component.selected_item.text == "echo world"
 
     event_enter = input_base.KeyEvent(
         action="down",
@@ -404,10 +416,10 @@ def test_reverse_search_previews_history_and_accepts() -> None:
     )
     ui_state._handle_input_event(event_enter)
     assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
-    assert input_component.text == "echo hello"
+    assert input_component.text == "echo world"
 
 
-def test_reverse_search_escape_restores_original_buffer() -> None:
+def test_history_search_escape_keeps_original_buffer() -> None:
     ui_state = _make_tui_state_with_console()
     ui_state.history.add("one")
     ui_state.history.add("two")
@@ -424,7 +436,7 @@ def test_reverse_search_escape_restores_original_buffer() -> None:
         shift=False,
     )
     ui_state._handle_input_event(event_ctrl_r)
-    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.REVERSE_SEARCH
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.HISTORY_SEARCH
 
     event_o = input_base.KeyEvent(
         action="down",
@@ -435,7 +447,11 @@ def test_reverse_search_escape_restores_original_buffer() -> None:
         text="o",
     )
     ui_state._handle_input_event(event_o)
-    assert input_component.text == "two"
+    terminal = ui_state.terminal
+    container = terminal.components[-1]
+    select_component = container.children[1]
+    assert select_component.items
+    assert select_component.items[0].text == "two"
 
     event_esc = input_base.KeyEvent(
         action="down",

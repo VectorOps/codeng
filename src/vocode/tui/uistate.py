@@ -16,6 +16,7 @@ from vocode.tui import styles as tui_styles
 from vocode.tui import history as tui_history
 from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib.components import input_component as tui_input_component
+from vocode.tui.lib.components import composite_component as tui_composite_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
 from vocode.tui.lib.components import step_output_component as tui_step_output_component
@@ -35,7 +36,7 @@ class ActionKind(str, enum.Enum):
     DEFAULT = "default"
     AUTOCOMPLETE = "autocomplete"
     COMMAND_MANAGER = "command_manager"
-    REVERSE_SEARCH = "reverse_search"
+    HISTORY_SEARCH = "history_search"
 
 
 @dataclasses.dataclass
@@ -152,11 +153,13 @@ class TUIState:
         self._autocomplete_items: list[manager_proto.AutocompleteItem] | None = None
         self._ui_state: manager_proto.UIServerStatePacket | None = None
 
-        self._reverse_search_query: str = ""
-        self._reverse_search_match: str | None = None
-        self._reverse_search_original_text: str | None = None
-        self._reverse_search_original_row: int | None = None
-        self._reverse_search_original_col: int | None = None
+        self._history_search_query: str = ""
+        self._history_search_list: typing.Optional[
+            tui_select_list.SelectListComponent
+        ] = None
+        self._history_search_query_view: typing.Optional[
+            tui_rich_text_component.RichTextComponent
+        ] = None
 
         self._progressive_hotkey: tui_input_component.KeyBinding | None = None
         self._progressive_count: int = 0
@@ -192,7 +195,7 @@ class TUIState:
             tui_input_component.KeyBinding("p", ctrl=True): self._handle_history_up,
             tui_input_component.KeyBinding("down"): self._handle_history_down,
             tui_input_component.KeyBinding("n", ctrl=True): self._handle_history_down,
-            tui_input_component.KeyBinding("r", ctrl=True): self._handle_reverse_search,
+            tui_input_component.KeyBinding("r", ctrl=True): self._handle_history_search,
             tui_input_component.KeyBinding(
                 "space", ctrl=True
             ): self._handle_open_command_manager,
@@ -203,113 +206,16 @@ class TUIState:
     def _handle_input_key_event(self, event: input_base.KeyEvent) -> bool:
         top = self._action_stack[-1]
 
-        if top.kind is ActionKind.REVERSE_SEARCH:
-            if event.action != "down":
-                return True
-            key = event.key
-            if key in ("esc", "escape"):
-                self._reverse_search_cancel()
-                return True
-            if key == "g" and event.ctrl:
-                self._reverse_search_cancel()
-                return True
-            if key == "enter":
-                self._reverse_search_accept()
-                return True
-            if key == "r" and event.ctrl:
-                self._reverse_search_next_match()
-                return True
-            if key == "backspace":
-                if self._reverse_search_query:
-                    self._reverse_search_set_query(self._reverse_search_query[:-1])
-                else:
-                    self._reverse_search_update_view()
-                return True
-            if event.text and not event.ctrl and not event.alt:
-                self._reverse_search_set_query(self._reverse_search_query + event.text)
-                return True
-
-            self._reverse_search_accept()
-            return False
+        if top.kind is ActionKind.HISTORY_SEARCH:
+            return self._handle_history_search_key_event(event)
 
         if top.kind is ActionKind.AUTOCOMPLETE:
             component = typing.cast(tui_select_list.SelectListComponent, top.component)
-            key = event.key
-            is_ctrl_nav = key in ("n", "p") and event.ctrl
-            mapped_nav_key: typing.Optional[str] = None
-            if is_ctrl_nav:
-                mapped_nav_key = "down" if key == "n" else "up"
-            if (
-                key in ("up", "down", "tab", "enter", "esc", "escape")
-                or mapped_nav_key is not None
-            ):
-                if event.action != "down":
-                    return True
-                selected_index = component.selected_index
-                if key in ("esc", "escape"):
-                    mapped_event = input_base.KeyEvent(
-                        action="down",
-                        key=key,
-                        ctrl=False,
-                        alt=False,
-                        shift=False,
-                    )
-                    component.on_key_event(mapped_event)
-                    return True
-                if key == "tab" and not event.ctrl and not event.alt:
-                    items = component.items
-                    if not items:
-                        return True
-                    if selected_index is None:
-                        if len(items) == 1:
-                            component.set_selected_index(0)
-                            component.select_current()
-                            return True
-                        component.set_selected_index(0)
-                        return True
-                    component.select_current()
-                    return True
-                nav_key = mapped_nav_key or key
-                if nav_key in ("up", "down"):
-                    items = component.items
-                    if not items:
-                        return True
-
-                    if selected_index is None:
-                        if nav_key == "up":
-                            return self._handle_history_up(event)
-                        component.set_selected_index(0)
-                        return True
-
-                    if nav_key == "down" and selected_index >= len(items) - 1:
-                        component.set_selected_index(None)
-                        handled, _ = self._maybe_history_down()
-                        if handled:
-                            return True
-                        return True
-
-                    mapped_event = input_base.KeyEvent(
-                        action="down",
-                        key=nav_key,
-                        ctrl=False,
-                        alt=False,
-                        shift=False,
-                    )
-                    component.on_key_event(mapped_event)
-                    return True
-                if key == "enter":
-                    if selected_index is None:
-                        self._pop_action(ActionKind.AUTOCOMPLETE)
-                        return False
-                    mapped_event = input_base.KeyEvent(
-                        action="down",
-                        key="enter",
-                        ctrl=False,
-                        alt=False,
-                        shift=False,
-                    )
-                    component.on_key_event(mapped_event)
-                    return True
+            return self._handle_select_list_key_event(
+                component,
+                event,
+                allow_history_fallback=True,
+            )
 
         if top.kind is ActionKind.COMMAND_MANAGER:
             if event.action != "down":
@@ -347,51 +253,42 @@ class TUIState:
             return False
         return handler(event)
 
-    def _reverse_search_update_view(self) -> None:
-        query = self._reverse_search_query
-        match = self._reverse_search_match
-        top = self._action_stack[-1]
-        if top.kind is not ActionKind.REVERSE_SEARCH:
-            return
-        component = typing.cast(
-            tui_rich_text_component.RichTextComponent, top.component
-        )
-        if not query:
-            component.text = "(reverse-i-search)`':"
-            return
-        if match is None:
-            component.text = f"(reverse-i-search)`{query}': (no match)"
-            return
-        component.text = f"(reverse-i-search)`{query}': {match}"
+    def _history_search_set_query(self, query: str) -> None:
+        self._history_search_query = query
+        query_view = self._history_search_query_view
+        if query_view is not None:
+            query_view.text = f"History search: {query}"
+        self._history_search_update_items()
 
-    def _reverse_search_set_query(self, query: str) -> None:
-        self._reverse_search_query = query
-        self._history_manager.reset_search()
-        match: str | None = None
-        if query:
-            match = self._history_manager.search_backward(query)
-        self._reverse_search_match = match
-
-        if match is None:
-            self._reverse_search_preview_restore_original()
-        else:
-            self._reverse_search_preview_set(match)
-        self._reverse_search_update_view()
-
-    def _reverse_search_next_match(self) -> None:
-        query = self._reverse_search_query
-        if not query:
-            self._reverse_search_update_view()
+    def _history_search_update_items(self) -> None:
+        component = self._history_search_list
+        if component is None:
             return
-        match = self._history_manager.search_backward(query)
-        if match is None:
-            self._reverse_search_update_view()
-            return
-        self._reverse_search_match = match
-        self._reverse_search_preview_set(match)
-        self._reverse_search_update_view()
+        query = self._history_search_query.strip()
+        entries = list(self._history_manager.entries)
+        items: list[dict[str, str]] = []
+        q = query.casefold()
+        for index, entry in enumerate(reversed(entries)):
+            if q and q not in entry.casefold():
+                continue
+            items.append(
+                {
+                    "id": str(index),
+                    "text": entry,
+                    "value": entry,
+                }
+            )
+            if len(items) >= 5:
+                break
+        component.set_items(items)
 
-    def _reverse_search_preview_set(self, value: str) -> None:
+    def _history_search_cancel(self) -> None:
+        self._history_search_query = ""
+        self._history_search_list = None
+        self._history_search_query_view = None
+        self._pop_action(ActionKind.HISTORY_SEARCH)
+
+    def _history_search_accept(self, value: str) -> None:
         component = self._input_component
         self._suppress_history_update += 1
         try:
@@ -403,70 +300,217 @@ class TUIState:
                 component.set_cursor_position(last_row, last_col)
         finally:
             self._suppress_history_update -= 1
+        self._history_search_cancel()
 
-    def _reverse_search_preview_restore_original(self) -> None:
-        original = self._reverse_search_original_text
-        if original is None:
-            original = ""
-        component = self._input_component
-        self._suppress_history_update += 1
-        try:
-            component.text = original
-            row = self._reverse_search_original_row
-            col = self._reverse_search_original_col
-            if row is not None and col is not None:
-                component.set_cursor_position(row, col)
-        finally:
-            self._suppress_history_update -= 1
+    def _handle_history_search_key_event(self, event: input_base.KeyEvent) -> bool:
+        if event.action != "down":
+            return True
+        key = event.key
+        if key in ("esc", "escape") or (key == "g" and event.ctrl):
+            self._history_search_cancel()
+            return True
+        if key == "r" and event.ctrl:
+            self._history_search_cancel()
+            return True
+        if key == "backspace":
+            if self._history_search_query:
+                self._history_search_set_query(self._history_search_query[:-1])
+            return True
+        if key == "tab" and not event.ctrl and not event.alt:
+            if self._history_search_list is None:
+                self._history_search_cancel()
+                return True
+            items = self._history_search_list.items
+            if not items:
+                self._history_search_cancel()
+                return True
+            if self._history_search_list.selected_index is None:
+                if len(items) == 1:
+                    self._history_search_accept(items[0].text)
+                    return True
+                self._history_search_list.set_selected_index(0)
+                return True
+            selected = self._history_search_list.selected_item
+            if selected is None or selected.value is None:
+                self._history_search_cancel()
+                return True
+            self._history_search_accept(selected.value)
+            return True
+        if key == "enter":
+            if self._history_search_list is None:
+                self._history_search_cancel()
+                return False
+            selected = self._history_search_list.selected_item
+            if selected is None or selected.value is None:
+                self._history_search_cancel()
+                return False
+            self._history_search_accept(selected.value)
+            return True
 
-    def _reverse_search_cancel(self) -> None:
-        self._history_manager.reset_search()
-        self._reverse_search_query = ""
-        self._reverse_search_match = None
-        self._reverse_search_preview_restore_original()
-        self._pop_action(ActionKind.REVERSE_SEARCH)
+        if key in ("up", "down") or (key in ("n", "p") and event.ctrl):
+            if self._history_search_list is None:
+                return True
+            mapped = key
+            if key == "n" and event.ctrl:
+                mapped = "down"
+            elif key == "p" and event.ctrl:
+                mapped = "up"
+            if self._history_search_list.selected_index is None:
+                if mapped == "up":
+                    return True
+                self._history_search_list.set_selected_index(0)
+                return True
+            mapped_event = input_base.KeyEvent(
+                action="down",
+                key=mapped,
+                ctrl=False,
+                alt=False,
+                shift=False,
+            )
+            self._history_search_list.on_key_event(mapped_event)
+            return True
 
-    def _reverse_search_accept(self) -> None:
-        match = self._reverse_search_match
-        if match is not None:
-            self._reverse_search_preview_set(match)
-        self._history_manager.reset_search()
-        self._reverse_search_query = ""
-        self._reverse_search_match = None
-        self._reverse_search_original_text = None
-        self._reverse_search_original_row = None
-        self._reverse_search_original_col = None
-        self._pop_action(ActionKind.REVERSE_SEARCH)
+        if event.text and not event.ctrl and not event.alt:
+            self._history_search_set_query(self._history_search_query + event.text)
+            return True
 
-    def _handle_reverse_search(self, event: input_base.KeyEvent) -> bool:
-        _ = event
+        self._history_search_cancel()
+        return False
+
+    def _handle_history_search(self, event: input_base.KeyEvent) -> bool:
         if event.action != "down":
             return True
         top = self._action_stack[-1]
-        if top.kind is ActionKind.REVERSE_SEARCH:
-            self._reverse_search_next_match()
+        if top.kind is ActionKind.HISTORY_SEARCH:
+            self._history_search_cancel()
             return True
 
         if top.kind is ActionKind.AUTOCOMPLETE:
             self._pop_action(ActionKind.AUTOCOMPLETE)
 
-        self._reverse_search_original_text = self._input_component.text
-        self._reverse_search_original_row = self._input_component.cursor_row
-        self._reverse_search_original_col = self._input_component.cursor_col
-
-        self._history_manager.reset_search()
-        self._reverse_search_query = ""
-        self._reverse_search_match = None
-
-        component = tui_rich_text_component.RichTextComponent(
+        query_view = tui_rich_text_component.RichTextComponent(
             "",
-            id="reverse_search",
+            id="history_search_query",
             markup=False,
             component_style=tui_styles.TOOLBAR_COMPONENT_STYLE,
         )
-        self._push_action(ActionKind.REVERSE_SEARCH, component)
-        self._reverse_search_update_view()
+        select = tui_select_list.SelectListComponent(
+            id="history_search",
+            allow_no_selection=True,
+        )
+
+        def _on_select(item: tui_select_list.SelectItem | None) -> None:
+            if item is None:
+                self._history_search_cancel()
+                return
+            if item.value is None:
+                self._history_search_cancel()
+                return
+            self._history_search_accept(item.value)
+
+        select.subscribe_select(_on_select)
+        select.set_selected_index(None)
+        composite = tui_composite_component.CompositeComponent(
+            id="history_search_container",
+            component_style=tui_styles.TOOLBAR_COMPONENT_STYLE,
+        )
+        composite.add_child(query_view)
+        composite.add_child(select)
+
+        self._history_search_list = select
+        self._history_search_query_view = query_view
+        self._push_action(ActionKind.HISTORY_SEARCH, composite)
+        self._history_search_set_query("")
         return True
+
+    def _handle_select_list_key_event(
+        self,
+        component: tui_select_list.SelectListComponent,
+        event: input_base.KeyEvent,
+        *,
+        allow_history_fallback: bool,
+    ) -> bool:
+        if event.action != "down":
+            return True
+        key = event.key
+        is_ctrl_nav = key in ("n", "p") and event.ctrl
+        mapped_nav_key: typing.Optional[str] = None
+        if is_ctrl_nav:
+            mapped_nav_key = "down" if key == "n" else "up"
+        if (
+            key in ("up", "down", "tab", "enter", "esc", "escape")
+            or mapped_nav_key is not None
+        ):
+            selected_index = component.selected_index
+            if key in ("esc", "escape"):
+                mapped_event = input_base.KeyEvent(
+                    action="down",
+                    key=key,
+                    ctrl=False,
+                    alt=False,
+                    shift=False,
+                )
+                component.on_key_event(mapped_event)
+                return True
+            if key == "tab" and not event.ctrl and not event.alt:
+                items = component.items
+                if not items:
+                    return True
+                if selected_index is None:
+                    if len(items) == 1:
+                        component.set_selected_index(0)
+                        component.select_current()
+                        return True
+                    component.set_selected_index(0)
+                    return True
+                component.select_current()
+                return True
+            nav_key = mapped_nav_key or key
+            if nav_key in ("up", "down"):
+                items = component.items
+                if not items:
+                    return True
+
+                if selected_index is None:
+                    if nav_key == "up" and allow_history_fallback:
+                        return self._handle_history_up(event)
+                    component.set_selected_index(0)
+                    return True
+
+                if (
+                    allow_history_fallback
+                    and nav_key == "down"
+                    and selected_index >= len(items) - 1
+                ):
+                    component.set_selected_index(None)
+                    handled, _ = self._maybe_history_down()
+                    if handled:
+                        return True
+                    return True
+
+                mapped_event = input_base.KeyEvent(
+                    action="down",
+                    key=nav_key,
+                    ctrl=False,
+                    alt=False,
+                    shift=False,
+                )
+                component.on_key_event(mapped_event)
+                return True
+            if key == "enter":
+                if selected_index is None:
+                    self._pop_action(ActionKind.AUTOCOMPLETE)
+                    return False
+                mapped_event = input_base.KeyEvent(
+                    action="down",
+                    key="enter",
+                    ctrl=False,
+                    alt=False,
+                    shift=False,
+                )
+                component.on_key_event(mapped_event)
+                return True
+        return False
 
     def _handle_open_command_manager(self, event: input_base.KeyEvent) -> bool:
         _ = event
@@ -1142,7 +1186,7 @@ class TUIState:
         self._autocomplete_task = loop.create_task(_throttled())
 
     def _handle_cursor_event(self, row: int, col: int) -> None:
-        if self._action_stack[-1].kind is ActionKind.REVERSE_SEARCH:
+        if self._action_stack[-1].kind is ActionKind.HISTORY_SEARCH:
             return
         if self._on_autocomplete_request is None:
             return
@@ -1154,7 +1198,7 @@ class TUIState:
     def _handle_change(self, value: str) -> None:
         if self._suppress_history_update <= 0:
             self._history_manager.update_current(value)
-        if self._action_stack[-1].kind is ActionKind.REVERSE_SEARCH:
+        if self._action_stack[-1].kind is ActionKind.HISTORY_SEARCH:
             return
         if self._on_autocomplete_request is None:
             return
@@ -1169,7 +1213,7 @@ class TUIState:
         self,
         items: list[manager_proto.AutocompleteItem] | None,
     ) -> None:
-        if self._action_stack[-1].kind is ActionKind.REVERSE_SEARCH:
+        if self._action_stack[-1].kind is ActionKind.HISTORY_SEARCH:
             return
         self._autocomplete_items = items
         if not items:
