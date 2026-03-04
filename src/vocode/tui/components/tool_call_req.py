@@ -97,7 +97,10 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         terminal = self.terminal
         if terminal is None:
             return
-        should_animate = status is vocode_state.ToolCallReqStatus.EXECUTING
+        should_animate = (
+            self._show_execution_stats
+            and status is vocode_state.ToolCallReqStatus.EXECUTING
+        )
         if should_animate == self._animated:
             return
         self._animated = should_animate

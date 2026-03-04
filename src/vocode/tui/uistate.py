@@ -35,6 +35,7 @@ class ActionKind(str, enum.Enum):
     DEFAULT = "default"
     AUTOCOMPLETE = "autocomplete"
     COMMAND_MANAGER = "command_manager"
+    REVERSE_SEARCH = "reverse_search"
 
 
 @dataclasses.dataclass
@@ -151,6 +152,12 @@ class TUIState:
         self._autocomplete_items: list[manager_proto.AutocompleteItem] | None = None
         self._ui_state: manager_proto.UIServerStatePacket | None = None
 
+        self._reverse_search_query: str = ""
+        self._reverse_search_match: str | None = None
+        self._reverse_search_original_text: str | None = None
+        self._reverse_search_original_row: int | None = None
+        self._reverse_search_original_col: int | None = None
+
         self._progressive_hotkey: tui_input_component.KeyBinding | None = None
         self._progressive_count: int = 0
 
@@ -185,6 +192,7 @@ class TUIState:
             tui_input_component.KeyBinding("p", ctrl=True): self._handle_history_up,
             tui_input_component.KeyBinding("down"): self._handle_history_down,
             tui_input_component.KeyBinding("n", ctrl=True): self._handle_history_down,
+            tui_input_component.KeyBinding("r", ctrl=True): self._handle_reverse_search,
             tui_input_component.KeyBinding(
                 "space", ctrl=True
             ): self._handle_open_command_manager,
@@ -194,6 +202,35 @@ class TUIState:
 
     def _handle_input_key_event(self, event: input_base.KeyEvent) -> bool:
         top = self._action_stack[-1]
+
+        if top.kind is ActionKind.REVERSE_SEARCH:
+            if event.action != "down":
+                return True
+            key = event.key
+            if key in ("esc", "escape"):
+                self._reverse_search_cancel()
+                return True
+            if key == "g" and event.ctrl:
+                self._reverse_search_cancel()
+                return True
+            if key == "enter":
+                self._reverse_search_accept()
+                return True
+            if key == "r" and event.ctrl:
+                self._reverse_search_next_match()
+                return True
+            if key == "backspace":
+                if self._reverse_search_query:
+                    self._reverse_search_set_query(self._reverse_search_query[:-1])
+                else:
+                    self._reverse_search_update_view()
+                return True
+            if event.text and not event.ctrl and not event.alt:
+                self._reverse_search_set_query(self._reverse_search_query + event.text)
+                return True
+
+            self._reverse_search_accept()
+            return False
 
         if top.kind is ActionKind.AUTOCOMPLETE:
             component = typing.cast(tui_select_list.SelectListComponent, top.component)
@@ -309,6 +346,127 @@ class TUIState:
         if handler is None:
             return False
         return handler(event)
+
+    def _reverse_search_update_view(self) -> None:
+        query = self._reverse_search_query
+        match = self._reverse_search_match
+        top = self._action_stack[-1]
+        if top.kind is not ActionKind.REVERSE_SEARCH:
+            return
+        component = typing.cast(
+            tui_rich_text_component.RichTextComponent, top.component
+        )
+        if not query:
+            component.text = "(reverse-i-search)`':"
+            return
+        if match is None:
+            component.text = f"(reverse-i-search)`{query}': (no match)"
+            return
+        component.text = f"(reverse-i-search)`{query}': {match}"
+
+    def _reverse_search_set_query(self, query: str) -> None:
+        self._reverse_search_query = query
+        self._history_manager.reset_search()
+        match: str | None = None
+        if query:
+            match = self._history_manager.search_backward(query)
+        self._reverse_search_match = match
+
+        if match is None:
+            self._reverse_search_preview_restore_original()
+        else:
+            self._reverse_search_preview_set(match)
+        self._reverse_search_update_view()
+
+    def _reverse_search_next_match(self) -> None:
+        query = self._reverse_search_query
+        if not query:
+            self._reverse_search_update_view()
+            return
+        match = self._history_manager.search_backward(query)
+        if match is None:
+            self._reverse_search_update_view()
+            return
+        self._reverse_search_match = match
+        self._reverse_search_preview_set(match)
+        self._reverse_search_update_view()
+
+    def _reverse_search_preview_set(self, value: str) -> None:
+        component = self._input_component
+        self._suppress_history_update += 1
+        try:
+            component.text = value
+            lines = component.lines
+            if lines:
+                last_row = len(lines) - 1
+                last_col = len(lines[last_row])
+                component.set_cursor_position(last_row, last_col)
+        finally:
+            self._suppress_history_update -= 1
+
+    def _reverse_search_preview_restore_original(self) -> None:
+        original = self._reverse_search_original_text
+        if original is None:
+            original = ""
+        component = self._input_component
+        self._suppress_history_update += 1
+        try:
+            component.text = original
+            row = self._reverse_search_original_row
+            col = self._reverse_search_original_col
+            if row is not None and col is not None:
+                component.set_cursor_position(row, col)
+        finally:
+            self._suppress_history_update -= 1
+
+    def _reverse_search_cancel(self) -> None:
+        self._history_manager.reset_search()
+        self._reverse_search_query = ""
+        self._reverse_search_match = None
+        self._reverse_search_preview_restore_original()
+        self._pop_action(ActionKind.REVERSE_SEARCH)
+
+    def _reverse_search_accept(self) -> None:
+        match = self._reverse_search_match
+        if match is not None:
+            self._reverse_search_preview_set(match)
+        self._history_manager.reset_search()
+        self._reverse_search_query = ""
+        self._reverse_search_match = None
+        self._reverse_search_original_text = None
+        self._reverse_search_original_row = None
+        self._reverse_search_original_col = None
+        self._pop_action(ActionKind.REVERSE_SEARCH)
+
+    def _handle_reverse_search(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        if event.action != "down":
+            return True
+        top = self._action_stack[-1]
+        if top.kind is ActionKind.REVERSE_SEARCH:
+            self._reverse_search_next_match()
+            return True
+
+        if top.kind is ActionKind.AUTOCOMPLETE:
+            self._pop_action(ActionKind.AUTOCOMPLETE)
+
+        self._reverse_search_original_text = self._input_component.text
+        self._reverse_search_original_row = self._input_component.cursor_row
+        self._reverse_search_original_col = self._input_component.cursor_col
+
+        self._history_manager.reset_search()
+        self._reverse_search_query = ""
+        self._reverse_search_match = None
+
+        component = tui_rich_text_component.RichTextComponent(
+            "",
+            id="reverse_search",
+            markup=False,
+            component_style=tui_styles.TOOLBAR_COMPONENT_STYLE,
+        )
+        self._push_action(ActionKind.REVERSE_SEARCH, component)
+        self._reverse_search_update_view()
+        return True
 
     def _handle_open_command_manager(self, event: input_base.KeyEvent) -> bool:
         _ = event
@@ -984,6 +1142,8 @@ class TUIState:
         self._autocomplete_task = loop.create_task(_throttled())
 
     def _handle_cursor_event(self, row: int, col: int) -> None:
+        if self._action_stack[-1].kind is ActionKind.REVERSE_SEARCH:
+            return
         if self._on_autocomplete_request is None:
             return
         ok = self._capture_autocomplete_context(row, col)
@@ -994,6 +1154,8 @@ class TUIState:
     def _handle_change(self, value: str) -> None:
         if self._suppress_history_update <= 0:
             self._history_manager.update_current(value)
+        if self._action_stack[-1].kind is ActionKind.REVERSE_SEARCH:
+            return
         if self._on_autocomplete_request is None:
             return
         row = self._input_component.cursor_row
@@ -1007,6 +1169,8 @@ class TUIState:
         self,
         items: list[manager_proto.AutocompleteItem] | None,
     ) -> None:
+        if self._action_stack[-1].kind is ActionKind.REVERSE_SEARCH:
+            return
         self._autocomplete_items = items
         if not items:
             self._pop_action(ActionKind.AUTOCOMPLETE)

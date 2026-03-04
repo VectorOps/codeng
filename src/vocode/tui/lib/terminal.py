@@ -665,15 +665,16 @@ class Terminal:
         visible_budget = self._cursor_line
         new_first_visible = None
         for index in range(n_components - 1, -1, -1):
+            component = self._components[index]
+            component.is_visible = False
+
             if visible_budget <= 0:
                 break
 
-            component = self._components[index]
             cached_lines = self._cache.get(component, ())
             line_count = len(cached_lines)
 
             if line_count <= 0:
-                component.is_visible = False
                 continue
 
             component.is_visible = True
