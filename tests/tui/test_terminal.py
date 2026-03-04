@@ -106,6 +106,7 @@ async def test_hidden_component_skipped_in_render_and_cache() -> None:
     assert "hello" not in hidden_output
     cache_lines = terminal._cache.get(component)
     assert cache_lines == []
+    assert component.is_visible is False
 
     buffer.truncate(0)
     buffer.seek(0)

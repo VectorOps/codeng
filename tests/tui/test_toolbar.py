@@ -359,3 +359,91 @@ def test_autocomplete_tab_activates_then_accepts() -> None:
     assert select_component.terminal is None
     assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
     assert input_component.text == "hello"
+
+
+def test_reverse_search_previews_history_and_accepts() -> None:
+    ui_state = _make_tui_state_with_console()
+    ui_state.history.add("echo hello")
+    ui_state.history.add("echo world")
+
+    input_component = ui_state._input_component
+    input_component.text = "draft"
+    input_component.set_cursor_position(0, 5)
+
+    event_ctrl_r = input_base.KeyEvent(
+        action="down",
+        key="r",
+        ctrl=True,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_ctrl_r)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.REVERSE_SEARCH
+
+    event_o = input_base.KeyEvent(
+        action="down",
+        key="o",
+        ctrl=False,
+        alt=False,
+        shift=False,
+        text="o",
+    )
+    ui_state._handle_input_event(event_o)
+    assert input_component.text == "echo world"
+
+    ui_state._handle_input_event(event_ctrl_r)
+    assert input_component.text == "echo hello"
+
+    event_enter = input_base.KeyEvent(
+        action="down",
+        key="enter",
+        ctrl=False,
+        alt=False,
+        shift=False,
+        text="\n",
+    )
+    ui_state._handle_input_event(event_enter)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
+    assert input_component.text == "echo hello"
+
+
+def test_reverse_search_escape_restores_original_buffer() -> None:
+    ui_state = _make_tui_state_with_console()
+    ui_state.history.add("one")
+    ui_state.history.add("two")
+
+    input_component = ui_state._input_component
+    input_component.text = "draft"
+    input_component.set_cursor_position(0, 3)
+
+    event_ctrl_r = input_base.KeyEvent(
+        action="down",
+        key="r",
+        ctrl=True,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_ctrl_r)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.REVERSE_SEARCH
+
+    event_o = input_base.KeyEvent(
+        action="down",
+        key="o",
+        ctrl=False,
+        alt=False,
+        shift=False,
+        text="o",
+    )
+    ui_state._handle_input_event(event_o)
+    assert input_component.text == "two"
+
+    event_esc = input_base.KeyEvent(
+        action="down",
+        key="esc",
+        ctrl=False,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_esc)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
+    assert input_component.text == "draft"
