@@ -105,7 +105,9 @@ class TUIState:
         self._input_component = input_component
         self._history_manager = tui_history.HistoryManager()
         self._input_keymap = self._create_input_keymap()
-        self._step_components: dict[str, tui_step_output_component.StepOutputComponent] = {}
+        self._step_components: dict[
+            str, tui_step_output_component.StepOutputComponent
+        ] = {}
         self._step_component_ids: set[str] = set()
         self._step_handlers: dict[
             vocode_state.StepType, typing.Callable[[vocode_state.Step], None]
@@ -197,7 +199,13 @@ class TUIState:
             component = typing.cast(tui_select_list.SelectListComponent, top.component)
             key = event.key
             is_ctrl_nav = key in ("n", "p") and event.ctrl
-            if key in ("up", "down", "tab", "enter", "esc", "escape") or is_ctrl_nav:
+            mapped_nav_key: typing.Optional[str] = None
+            if is_ctrl_nav:
+                mapped_nav_key = "down" if key == "n" else "up"
+            if (
+                key in ("up", "down", "tab", "enter", "esc", "escape")
+                or mapped_nav_key is not None
+            ):
                 if event.action != "down":
                     return True
                 selected_index = component.selected_index
@@ -224,37 +232,28 @@ class TUIState:
                         return True
                     component.select_current()
                     return True
-                if is_ctrl_nav:
+                nav_key = mapped_nav_key or key
+                if nav_key in ("up", "down"):
                     items = component.items
                     if not items:
                         return True
-                    mapped_key = "down" if key == "n" else "up"
-                    mapped_event = input_base.KeyEvent(
-                        action="down",
-                        key=mapped_key,
-                        ctrl=False,
-                        alt=False,
-                        shift=False,
-                    )
-                    component.on_key_event(mapped_event)
-                    return True
-                if key in ("up", "down"):
+
                     if selected_index is None:
-                        if key == "up":
+                        if nav_key == "up":
                             return self._handle_history_up(event)
-                        handled, exhausted = self._maybe_history_down()
+                        component.set_selected_index(0)
+                        return True
+
+                    if nav_key == "down" and selected_index >= len(items) - 1:
+                        component.set_selected_index(None)
+                        handled, _ = self._maybe_history_down()
                         if handled:
                             return True
-                        if exhausted:
-                            items = component.items
-                            if not items:
-                                return True
-                            component.set_selected_index(0)
-                            return True
-                        return False
+                        return True
+
                     mapped_event = input_base.KeyEvent(
                         action="down",
-                        key=key,
+                        key=nav_key,
                         ctrl=False,
                         alt=False,
                         shift=False,

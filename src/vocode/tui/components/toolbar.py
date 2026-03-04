@@ -73,7 +73,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
                     workflow_name = frame.workflow_name
                     node_name = frame.node_name
                     if node_name:
-                        label = f"{workflow_name}@{node_name}"
+                        label = f"{node_name}@{workflow_name}"
                     else:
                         label = workflow_name
                     labels.append(label)
