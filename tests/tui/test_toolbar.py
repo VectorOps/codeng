@@ -60,10 +60,10 @@ def test_tui_state_updates_toolbar_from_ui_state() -> None:
 
     ui_state.handle_ui_state(packet)
 
-    assert toolbar.text == "wf-toolbar@node-toolbar"
+    assert toolbar.text == "node-toolbar@wf-toolbar"
     renderable = toolbar._build_renderable(rich_console.Console())
     rendered_text = str(renderable)
-    assert "wf-toolbar@node-toolbar" in rendered_text
+    assert "node-toolbar@wf-toolbar" in rendered_text
     assert "running" in rendered_text
 
 
@@ -174,10 +174,10 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
 
     ui_state.handle_ui_state(packet)
 
-    assert toolbar.text == "wf1@node1 > wf2@node2"
+    assert toolbar.text == "node1@wf1 > node2@wf2"
     renderable = toolbar._build_renderable(rich_console.Console())
     rendered_text = str(renderable)
-    assert "wf1@node1 > wf2@node2" in rendered_text
+    assert "node1@wf1 > node2@wf2" in rendered_text
     assert "10/1k (1%)" in rendered_text
     assert "ts: 100" in rendered_text
     assert "tr: 50" in rendered_text
