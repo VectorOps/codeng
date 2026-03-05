@@ -30,6 +30,7 @@ class BasePacketKind(str, Enum):
     TEXT_MESSAGE = "text_message"
     LOG_REQ = "log_req"
     LOG_RESP = "log_resp"
+    PROGRESS = "progress"
 
 
 class AckPacket(BaseModel):
@@ -171,6 +172,41 @@ class LogRespPacket(BaseModel):
     entries: list[LogEntry] = Field(default_factory=list)
 
 
+class ProgressMode(str, Enum):
+    DETERMINISTIC = "deterministic"
+    INDETERMINATE = "indeterminate"
+
+
+class ProgressBarType(str, Enum):
+    BAR = "bar"
+    SPINNER = "spinner"
+    PULSE = "pulse"
+
+
+class ProgressStatus(str, Enum):
+    START = "start"
+    UPDATE = "update"
+    END = "end"
+
+
+class ProgressPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.PROGRESS] = Field(
+        default=BasePacketKind.PROGRESS
+    )
+    progress_id: str
+    status: ProgressStatus
+    title: Optional[str] = Field(default=None)
+    message: Optional[str] = Field(default=None)
+    fields: dict[str, str] = Field(default_factory=dict)
+    mode: ProgressMode = Field(default=ProgressMode.DETERMINISTIC)
+    bar_type: ProgressBarType = Field(default=ProgressBarType.BAR)
+    completed: Optional[float] = Field(default=None)
+    total: Optional[float] = Field(default=None)
+    unit: Optional[str] = Field(default=None)
+    eta_seconds: Optional[float] = Field(default=None)
+    elapsed_seconds: Optional[float] = Field(default=None)
+
+
 BasePacket = Annotated[
     typing.Union[
         AckPacket,
@@ -185,6 +221,7 @@ BasePacket = Annotated[
         TextMessagePacket,
         LogReqPacket,
         LogRespPacket,
+        ProgressPacket,
     ],
     Field(discriminator="kind"),
 ]
