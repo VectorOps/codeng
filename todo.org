@@ -1,10 +1,11 @@
 #+title: Todo
 
 * [ ] General
+** [ ] knowlt: reject virtual path writes
 ** [ ] Nicely format tool call rejection text
 ** [X] If tool call is just approved, do not generate component with "User approved." text.
 ** [ ] Update task list error needs to be formatted (or not displayed)
-** [ ] Add dynamic progress indicator for knowlt
+** [X] Add dynamic progress indicator for knowlt
 ** [X] Investigate lag when sending first input message
 ** [X] Remove extra line break from task tool
 ** [ ] Add a way to hide subagent output and make it non-interactive

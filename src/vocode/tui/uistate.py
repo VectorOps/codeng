@@ -26,6 +26,7 @@ from vocode.tui.lib.components import renderable as tui_renderable_component
 from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.components import select_list as tui_select_list
 from vocode.tui.components import command_manager_help as command_manager_help_component
+from vocode.tui.components import progress as progress_component
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.components import toolbar as toolbar_component
 from vocode.tui import command_manager as tui_command_manager
@@ -34,6 +35,7 @@ from vocode.tui.lib.input import handler as input_handler_mod
 
 
 AUTOCOMPLETE_DEBOUNCE_MS: typing.Final[int] = 100
+PROGRESS_VISIBILITY_DELAY_S: typing.Final[float] = 2.0
 
 
 class ActionKind(str, enum.Enum):
@@ -135,6 +137,8 @@ class TUIState:
         self._toolbar_component = toolbar
         self._terminal.append_component(toolbar)
 
+        self._progress_component: progress_component.ProgressComponent | None = None
+
         self._action_stack: list[ActionItem] = [
             ActionItem(kind=ActionKind.DEFAULT, component=toolbar)
         ]
@@ -155,6 +159,11 @@ class TUIState:
         self._autocomplete_pending: bool = False
         self._autocomplete_items: list[manager_proto.AutocompleteItem] | None = None
         self._ui_state: manager_proto.UIServerStatePacket | None = None
+
+        self._progress_by_id: dict[str, manager_proto.ProgressPacket] = {}
+        self._progress_visible_by_id: set[str] = set()
+        self._progress_gate_tasks: dict[str, asyncio.Task[None]] = {}
+        self._active_progress_id: str | None = None
 
         self._history_search_query: str = ""
         self._history_search_list: typing.Optional[
@@ -1117,6 +1126,73 @@ class TUIState:
     def handle_ui_state(self, packet: manager_proto.UIServerStatePacket) -> None:
         self._ui_state = packet
         self._update_toolbar_from_ui_state()
+
+    def handle_progress(self, packet: manager_proto.ProgressPacket) -> None:
+        pid = packet.progress_id
+        status = packet.status
+        if status is manager_proto.ProgressStatus.START:
+            self._progress_by_id[pid] = packet
+            self._active_progress_id = pid
+            gate = self._progress_gate_tasks.pop(pid, None)
+            if gate is not None and not gate.done():
+                gate.cancel()
+
+            async def _gate() -> None:
+                try:
+                    await asyncio.sleep(PROGRESS_VISIBILITY_DELAY_S)
+                except asyncio.CancelledError:
+                    return
+                if pid not in self._progress_by_id:
+                    return
+                self._progress_visible_by_id.add(pid)
+                self._update_progress_component()
+
+            loop = asyncio.get_running_loop()
+            self._progress_gate_tasks[pid] = loop.create_task(_gate())
+            return
+
+        if status is manager_proto.ProgressStatus.UPDATE:
+            self._progress_by_id[pid] = packet
+            if pid in self._progress_visible_by_id and pid == self._active_progress_id:
+                self._update_progress_component()
+            return
+
+        if status is manager_proto.ProgressStatus.END:
+            self._progress_by_id.pop(pid, None)
+            self._progress_visible_by_id.discard(pid)
+            gate = self._progress_gate_tasks.pop(pid, None)
+            if gate is not None and not gate.done():
+                gate.cancel()
+            if self._active_progress_id == pid:
+                self._active_progress_id = None
+                if self._progress_visible_by_id:
+                    self._active_progress_id = next(iter(self._progress_visible_by_id))
+            self._update_progress_component()
+            return
+
+    def _update_progress_component(self) -> None:
+        terminal = self._terminal
+        pid = self._active_progress_id
+        visible = pid is not None and pid in self._progress_visible_by_id
+        packet = self._progress_by_id.get(pid) if visible and pid is not None else None
+
+        component = self._progress_component
+        if packet is None:
+            if component is None:
+                return
+            terminal.remove_component(component)
+            self._progress_component = None
+            return
+
+        if component is None:
+            component = progress_component.ProgressComponent(
+                id="progress",
+                component_style=tui_styles.TOOLBAR_COMPONENT_STYLE,
+            )
+            self._progress_component = component
+            terminal.insert_component(-2, component)
+
+        component.set_progress(packet)
 
     def set_input_panel_title(
         self,

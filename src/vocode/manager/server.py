@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Optional, cast
+import time
 
 from vocode import settings as vocode_settings
 from vocode import models
@@ -42,6 +43,8 @@ class UIServer:
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
         self._pending_input_step: Optional[state.Step] = None
+        self._progress_last_sent_at_by_id: dict[str, float] = {}
+        self._know_repo_label_by_id: dict[str, str] = {}
 
         self._router.register(
             manager_proto.BasePacketKind.USER_INPUT,
@@ -135,7 +138,40 @@ class UIServer:
 
         self._apply_logging_settings()
 
-        await self._manager.start()
+        project = self._manager.project
+        settings = project.settings
+        enable_know_progress = False
+        if settings is not None and settings.know_enabled and settings.know is not None:
+            try:
+                _ = project.know
+            except Exception:
+                enable_know_progress = False
+            else:
+                enable_know_progress = True
+
+        if enable_know_progress:
+            progress_id = "know:init"
+            await self._emit_progress_start(
+                progress_id=progress_id,
+                title="Initializing knowledge base",
+                message=None,
+                mode=manager_proto.ProgressMode.INDETERMINATE,
+                bar_type=manager_proto.ProgressBarType.PULSE,
+            )
+            previous_default_cb = project.know.default_progress_callback
+            project.know.default_progress_callback = (
+                self._make_knowlt_progress_callback(
+                    progress_id=progress_id,
+                    title="Indexing repositories",
+                )
+            )
+            try:
+                await self._manager.start()
+            finally:
+                project.know.default_progress_callback = previous_default_cb
+                await self._emit_progress_end(progress_id=progress_id)
+        else:
+            await self._manager.start()
         self._status = manager_proto.UIServerStatus.RUNNING
 
         self._recv_task = asyncio.create_task(self._recv_loop())
@@ -150,6 +186,211 @@ class UIServer:
                 asyncio.create_task(self._manager.start_workflow(default_workflow))
 
         self._started = True
+
+    async def _emit_progress_start(
+        self,
+        *,
+        progress_id: str,
+        title: Optional[str],
+        message: Optional[str],
+        mode: manager_proto.ProgressMode,
+        bar_type: manager_proto.ProgressBarType,
+        fields: Optional[dict[str, str]] = None,
+    ) -> None:
+        packet = manager_proto.ProgressPacket(
+            progress_id=progress_id,
+            status=manager_proto.ProgressStatus.START,
+            title=title,
+            message=message,
+            fields={} if fields is None else dict(fields),
+            mode=mode,
+            bar_type=bar_type,
+        )
+        await self.send_packet(packet)
+
+    def _make_knowlt_progress_callback(
+        self,
+        *,
+        progress_id: str,
+        title: str,
+        message: Optional[str] = None,
+        fields: Optional[dict[str, str]] = None,
+        unit: Optional[str] = "files",
+    ):
+        initial_fields: dict[str, str] = {} if fields is None else dict(fields)
+
+        def _cb(evt) -> None:
+            async def _emit() -> None:
+                try:
+                    processed = float(evt.processed_files)
+                except Exception:
+                    processed = None
+                try:
+                    total_files = float(evt.total_files)
+                except Exception:
+                    total_files = None
+                try:
+                    elapsed = float(evt.elapsed_seconds)
+                except Exception:
+                    elapsed = None
+
+                mode = manager_proto.ProgressMode.INDETERMINATE
+                bar_type = manager_proto.ProgressBarType.PULSE
+                total = None
+                if total_files is not None and total_files > 0:
+                    total = total_files
+                    mode = manager_proto.ProgressMode.DETERMINISTIC
+                    bar_type = manager_proto.ProgressBarType.BAR
+
+                update_fields = dict(initial_fields)
+                try:
+                    repo_id = str(evt.repo_id)
+                except Exception:
+                    repo_id = None
+                if repo_id:
+                    update_fields["repo_id"] = repo_id
+
+                label = update_fields.get("repo_name")
+                if not label and repo_id:
+                    cached = self._know_repo_label_by_id.get(repo_id)
+                    if cached:
+                        label = cached
+                    else:
+                        try:
+                            repo_list = await self._manager.project.know.pm.data.repo.get_by_ids(
+                                [repo_id]
+                            )
+                        except Exception:
+                            repo_list = None
+                        if repo_list:
+                            repo = repo_list[0]
+                            root = repo.root_path or ""
+                            if root:
+                                label = f"{repo.name} ({root})"
+                            else:
+                                label = repo.name
+                            self._know_repo_label_by_id[repo_id] = label
+                            update_fields["repo_name"] = repo.name
+                            if root:
+                                update_fields["repo_path"] = root
+
+                resolved_message = message
+                if resolved_message is None:
+                    if label:
+                        resolved_message = label
+                    elif repo_id is not None:
+                        resolved_message = repo_id
+
+                await self.emit_progress_update(
+                    progress_id=progress_id,
+                    title=title,
+                    message=resolved_message,
+                    fields=update_fields,
+                    mode=mode,
+                    bar_type=bar_type,
+                    completed=processed,
+                    total=total,
+                    unit=unit,
+                    elapsed_seconds=elapsed,
+                )
+
+            asyncio.create_task(_emit())
+
+        return _cb
+
+    async def refresh_know_repo_with_progress(self, repo) -> None:
+        progress_id = f"know:scan:{repo.name}"
+        await self._emit_progress_start(
+            progress_id=progress_id,
+            title="Indexing repository",
+            message=repo.name,
+            mode=manager_proto.ProgressMode.INDETERMINATE,
+            bar_type=manager_proto.ProgressBarType.PULSE,
+            fields={
+                "repo_name": repo.name,
+                "repo_id": repo.id,
+            },
+        )
+        cb = self._make_knowlt_progress_callback(
+            progress_id=progress_id,
+            title="Indexing repository",
+            message=repo.name,
+            fields={
+                "repo_name": repo.name,
+                "repo_id": repo.id,
+            },
+        )
+        try:
+            await self._manager.project.know.refresh(repo, progress_callback=cb)
+        finally:
+            await self._emit_progress_end(progress_id=progress_id)
+
+    async def refresh_know_all_with_progress(self) -> None:
+        progress_id = "know:refresh_all"
+        await self._emit_progress_start(
+            progress_id=progress_id,
+            title="Indexing repositories",
+            message=None,
+            mode=manager_proto.ProgressMode.INDETERMINATE,
+            bar_type=manager_proto.ProgressBarType.PULSE,
+        )
+        cb = self._make_knowlt_progress_callback(
+            progress_id=progress_id,
+            title="Indexing repositories",
+            message=None,
+            fields=None,
+        )
+        try:
+            await self._manager.project.know.refresh_all(progress_callback=cb)
+        finally:
+            await self._emit_progress_end(progress_id=progress_id)
+
+    async def _emit_progress_end(self, *, progress_id: str) -> None:
+        packet = manager_proto.ProgressPacket(
+            progress_id=progress_id,
+            status=manager_proto.ProgressStatus.END,
+        )
+        await self.send_packet(packet)
+
+    async def emit_progress_update(
+        self,
+        *,
+        progress_id: str,
+        title: Optional[str] = None,
+        message: Optional[str] = None,
+        fields: Optional[dict[str, str]] = None,
+        mode: Optional[manager_proto.ProgressMode] = None,
+        bar_type: Optional[manager_proto.ProgressBarType] = None,
+        completed: Optional[float] = None,
+        total: Optional[float] = None,
+        unit: Optional[str] = None,
+        eta_seconds: Optional[float] = None,
+        elapsed_seconds: Optional[float] = None,
+        min_interval_s: float = 0.25,
+    ) -> None:
+        now = time.monotonic()
+        last = self._progress_last_sent_at_by_id.get(progress_id)
+        if last is not None and (now - last) < min_interval_s:
+            return
+        self._progress_last_sent_at_by_id[progress_id] = now
+
+        packet = manager_proto.ProgressPacket(
+            progress_id=progress_id,
+            status=manager_proto.ProgressStatus.UPDATE,
+            title=title,
+            message=message,
+            fields={} if fields is None else dict(fields),
+            mode=mode if mode is not None else manager_proto.ProgressMode.DETERMINISTIC,
+            bar_type=(
+                bar_type if bar_type is not None else manager_proto.ProgressBarType.BAR
+            ),
+            completed=completed,
+            total=total,
+            unit=unit,
+            eta_seconds=eta_seconds,
+            elapsed_seconds=elapsed_seconds,
+        )
+        await self.send_packet(packet)
 
     async def _register_autoapprove_commands(self) -> None:
         async def aa(server: "UIServer", args: list[str]) -> None:
