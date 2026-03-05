@@ -637,6 +637,55 @@ async def test_tool_request_run_agent_uses_formatter_default_for_stats() -> None
 
 
 @pytest.mark.asyncio
+async def test_tool_request_run_agent_renders_prompt_text() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    req = state.ToolCallReq(
+        id="call_1",
+        name="run_agent",
+        arguments={"name": "agent1", "text": "hello world"},
+        status=state.ToolCallReqStatus.EXECUTING,
+    )
+    step = state.Step(
+        id=uuid4(),
+        execution=execution,
+        type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+
+    ui_state.handle_step(step)
+    await ui_state.terminal.render()
+    output = buffer.getvalue()
+    assert "name=agent1" in output
+    assert "text=hello world" in output
+
+
+@pytest.mark.asyncio
 async def test_tool_request_confirmation_renders_autoapprove_hint() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)

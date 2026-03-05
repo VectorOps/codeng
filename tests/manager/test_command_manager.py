@@ -11,6 +11,7 @@ from vocode.manager import proto as manager_proto
 from vocode.manager.commands import CommandManager, command, option
 from vocode.manager.server import UIServer
 from vocode.manager.commands import workflows as workflow_commands
+from vocode.manager import base as manager_base
 from tests.stub_project import StubProject
 
 
@@ -258,6 +259,59 @@ async def test_run_command_stops_all_and_starts_workflow(
     monkeypatch.setattr(server.manager, "start_workflow", fake_start_workflow)
 
     message = state.Message(role=models.Role.USER, text="/run alpha")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    assert ("stop_all", None) in called
+    assert ("start", "alpha") in called
+
+
+@pytest.mark.asyncio
+async def test_reset_command_uses_root_workflow_when_nested_runners_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = vocode_settings.Settings()
+    settings.workflows["alpha"] = vocode_settings.WorkflowConfig()
+    settings.workflows["beta"] = vocode_settings.WorkflowConfig()
+    project = StubProject(settings=settings)
+    project.current_workflow = "beta"
+
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    server.manager._runner_stack = [
+        manager_base.RunnerFrame(
+            workflow_name="alpha",
+            runner=object(),
+            initial_message=None,
+        ),
+        manager_base.RunnerFrame(
+            workflow_name="beta",
+            runner=object(),
+            initial_message=None,
+        ),
+    ]
+    assert [f.workflow_name for f in server.manager.runner_stack] == ["alpha", "beta"]
+
+    called: list[tuple[str, object]] = []
+
+    async def fake_stop_all_runners() -> None:
+        called.append(("stop_all", None))
+
+    async def fake_start_workflow(name: str) -> None:
+        called.append(("start", name))
+
+    monkeypatch.setattr(server.manager, "stop_all_runners", fake_stop_all_runners)
+    monkeypatch.setattr(server.manager, "start_workflow", fake_start_workflow)
+
+    message = state.Message(role=models.Role.USER, text="/reset")
     user_packet = manager_proto.UserInputPacket(message=message)
     envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
     await client_endpoint.send(envelope)
