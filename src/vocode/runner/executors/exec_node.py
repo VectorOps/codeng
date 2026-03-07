@@ -21,6 +21,7 @@ class ExecNode(models.Node):
     timeout_s: Optional[float] = None
     expected_return_code: Optional[int] = None
     message: Optional[str] = None
+    content_type: models.StepContentType = models.StepContentType.RAW
 
     @model_validator(mode="after")
     def _validate_outcomes_vs_expected_code(self) -> "ExecNode":
@@ -94,6 +95,7 @@ class ExecExecutor(BaseExecutor):
             execution=inp.execution,
             type=state.StepType.OUTPUT_MESSAGE,
             message=message,
+            content_type=cfg.content_type,
             is_complete=False,
             is_final=False,
         )

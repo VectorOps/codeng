@@ -4,6 +4,8 @@ name: apply
 type: apply_patch
 format: ${LLM_DIFF_FORMAT}
 confirmation: auto
+collapse: true
+collapse_lines: 5
 outcomes:
   - name: success
     description: All patches were applied successfully

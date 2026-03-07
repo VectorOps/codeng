@@ -11,6 +11,7 @@ class HistoryManager:
         self._current_buffer: str | None = None
         self._search_query: str | None = None
         self._search_index: int | None = None
+        self._edits: dict[int, str] = {}
 
     @property
     def entries(self) -> tuple[str, ...]:
@@ -34,21 +35,30 @@ class HistoryManager:
     def reset_navigation(self) -> None:
         self._index = None
         self._current_buffer = None
+        self._edits = {}
         self._search_query = None
         self._search_index = None
+
+    def update_current(self, value: str) -> None:
+        text = value.rstrip("\n")
+        if self._index is not None:
+            self._edits[self._index] = text
+            return
+        if self._current_buffer is not None:
+            self._current_buffer = text
 
     def navigate_previous(self, current: str) -> str | None:
         if not self._entries:
             return None
         if self._index is None:
-            self._current_buffer = current
+            self._current_buffer = current.rstrip("\n")
             self._index = len(self._entries) - 1
-            return self._entries[self._index]
+            return self._edits.get(self._index, self._entries[self._index])
         if self._index <= 0:
             self._index = 0
             return None
         self._index -= 1
-        return self._entries[self._index]
+        return self._edits.get(self._index, self._entries[self._index])
 
     def navigate_next(self) -> str | None:
         if self._index is None:
@@ -56,10 +66,9 @@ class HistoryManager:
         if self._index >= len(self._entries) - 1:
             self._index = None
             value = self._current_buffer or ""
-            self._current_buffer = None
             return value
         self._index += 1
-        return self._entries[self._index]
+        return self._edits.get(self._index, self._entries[self._index])
 
     def reset_search(self) -> None:
         self._search_query = None

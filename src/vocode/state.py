@@ -6,7 +6,7 @@ from datetime import datetime
 from .lib.date import utcnow
 from uuid import UUID, uuid4
 from .settings import ToolSpec  # type: ignore
-from .models import OutputMode, Role
+from .models import OutputMode, Role, StepContentType
 
 
 class OpaqueState(BaseModel):
@@ -194,6 +194,10 @@ class Step(BaseModel):
     type: StepType = Field(..., description="Step Type")
     message: Optional[Message] = Field(
         default=None, description="Message carried by this step, if any."
+    )
+    content_type: StepContentType = Field(
+        default=StepContentType.MARKDOWN,
+        description="How this step's message should be rendered in the UI.",
     )
     output_mode: OutputMode = Field(
         default=OutputMode.SHOW,

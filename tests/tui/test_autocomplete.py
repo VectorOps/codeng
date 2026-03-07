@@ -263,6 +263,66 @@ def test_tui_state_autocomplete_apply_noop_on_mismatch() -> None:
     assert input_component.text == "hello"
 
 
+def test_tui_state_autocomplete_down_selects_autocomplete_then_falls_through_to_history() -> (
+    None
+):
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    terminal = ui_state.terminal
+    input_component = terminal.components[-2]
+    input_component.text = ""
+    input_component.set_cursor_position(0, 0)
+    ui_state.history.add("h1")
+    ui_state.history.add("h2")
+
+    up_event = input_base.KeyEvent(action="down", key="up")
+    assert ui_state._handle_input_key_event(up_event)
+    assert ui_state._handle_input_key_event(up_event)
+    assert input_component.text == "h1"
+
+    items = [
+        manager_proto.AutocompleteItem(
+            title="one",
+            replace_start=0,
+            replace_text="",
+            insert_text="ONE",
+        ),
+        manager_proto.AutocompleteItem(
+            title="two",
+            replace_start=0,
+            replace_text="",
+            insert_text="TWO",
+        ),
+    ]
+    ui_state.handle_autocomplete_options(items)
+
+    down_event = input_base.KeyEvent(action="down", key="down")
+    assert ui_state._handle_input_key_event(down_event)
+    select_component = terminal.components[-1]
+    assert select_component.selected_index == 0
+
+    assert ui_state._handle_input_key_event(down_event)
+    assert select_component.selected_index == 1
+
+    assert ui_state._handle_input_key_event(down_event)
+    assert select_component.selected_index is None
+    assert input_component.text == "h2"
+
+
 def test_tui_state_file_autocomplete_selection_removes_at_prefix() -> None:
     async def on_input(_: str) -> None:
         return None

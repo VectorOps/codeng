@@ -82,10 +82,9 @@ class App:
 
     async def run(self) -> None:
         await self._state.start()
-        await self._ui_server.start()
-
         self._recv_task = asyncio.create_task(self._recv_loop())
         try:
+            await self._ui_server.start()
             await self._recv_task
         except asyncio.CancelledError:
             pass
@@ -122,11 +121,24 @@ class App:
             manager_proto.BasePacketKind.TEXT_MESSAGE,
             self._handle_packet_text_message,
         )
+        self._router.register(
+            manager_proto.BasePacketKind.PROGRESS,
+            self._handle_packet_progress,
+        )
 
     async def _handle_packet_noop(
         self, envelope: manager_proto.BasePacketEnvelope
     ) -> typing.Optional[manager_proto.BasePacket]:
         _ = envelope
+        return None
+
+    async def _handle_packet_progress(
+        self, envelope: manager_proto.BasePacketEnvelope
+    ) -> typing.Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if not isinstance(payload, manager_proto.ProgressPacket):
+            return None
+        self._state.handle_progress(payload)
         return None
 
     async def _handle_packet_runner_req(

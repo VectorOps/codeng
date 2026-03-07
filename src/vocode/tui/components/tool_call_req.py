@@ -97,7 +97,10 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         terminal = self.terminal
         if terminal is None:
             return
-        should_animate = status is vocode_state.ToolCallReqStatus.EXECUTING
+        should_animate = (
+            self._show_execution_stats
+            and status is vocode_state.ToolCallReqStatus.EXECUTING
+        )
         if should_animate == self._animated:
             return
         self._animated = should_animate
@@ -183,12 +186,6 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
             tool_calls = message.tool_call_requests
             tool_responses = message.tool_call_responses
 
-        if (
-            tool_calls
-            and status is vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION
-        ):
-            renderables.append(rich_text.Text("Please confirm the tool call:"))
-
         if terminal is not None and (tool_calls or tool_responses):
             manager = tui_tcf.ToolCallFormatterManager.instance()
             for tool_call in tool_calls:
@@ -232,7 +229,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         grouped = rich_console.Group(*renderables)
         return rich_padding.Padding(
             grouped,
-            pad=1,
+            pad=(0, 1),
             style=tui_styles.TOOL_CALL_PANEL_STYLE,
         )
 

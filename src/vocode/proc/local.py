@@ -161,7 +161,11 @@ class LocalSubprocessBackend(ProcessBackend):
 
         proc = await asyncio.create_subprocess_shell(
             opts.command,
-            stdin=asyncio.subprocess.PIPE,
+            stdin=(
+                asyncio.subprocess.DEVNULL
+                if opts.stdin_to_null
+                else asyncio.subprocess.PIPE
+            ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd) if cwd is not None else None,

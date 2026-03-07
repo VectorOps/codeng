@@ -21,6 +21,33 @@ def test_concatenate_messages_combines_input_and_final() -> None:
     assert combined.role == models.Role.ASSISTANT
 
 
+def test_concatenate_messages_appends_tool_message_text_when_not_in_messages() -> None:
+    input_msg = state.Message(role=models.Role.USER, text="input")
+    final_msg = state.Message(role=models.Role.ASSISTANT, text="final")
+
+    combined = message_helpers.concatenate_messages(
+        [input_msg],
+        tool_message=final_msg,
+    )
+
+    assert combined is not None
+    assert combined.text == "input\n\nfinal"
+    assert combined.role == models.Role.ASSISTANT
+
+
+def test_concatenate_messages_tool_message_only_uses_tool_message_text() -> None:
+    final_msg = state.Message(role=models.Role.ASSISTANT, text="final")
+
+    combined = message_helpers.concatenate_messages(
+        [],
+        tool_message=final_msg,
+    )
+
+    assert combined is not None
+    assert combined.text == "final"
+    assert combined.role == models.Role.ASSISTANT
+
+
 def test_concatenate_messages_uses_last_input_role_when_no_final() -> None:
     msg1 = state.Message(
         role=models.Role.USER,

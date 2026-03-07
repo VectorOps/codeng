@@ -37,7 +37,6 @@ class Runner:
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
         self._last_final_message: Optional[state.Message] = None
-        self._last_final_message: Optional[state.Message] = None
 
         self._executors: Dict[str, BaseExecutor] = {
             n.name: ExecutorFactory.create_for_node(n, project=self.project)
@@ -76,6 +75,10 @@ class Runner:
         return None
 
     def _is_tool_call_auto_approved(self, req: state.ToolCallReq) -> bool:
+        if self.project.project_state.autoapprove.should_auto_approve(
+            req.name, req.arguments
+        ):
+            return True
         spec = self._get_tool_spec_for_request(req)
         if spec is None:
             return False
@@ -192,12 +195,10 @@ class Runner:
             approved.append(req)
             return True
         if response_step.type == state.StepType.REJECTION:
-            parts: list[str] = ["A user rejected the tool call."]
+            user_text = ""
             if response_step.message is not None:
-                text = response_step.message.text.strip()
-                if text:
-                    parts.append(text)
-            rejection_text = " ".join(parts)
+                user_text = response_step.message.text.strip()
+            rejection_text = f"The tool call was rejected by the user. User provided reason: {user_text}"
             tool_responses.append(
                 state.ToolCallResp(
                     id=req.id,
@@ -316,14 +317,29 @@ class Runner:
             return [user_message]
 
         if mode == models.ResultMode.CONCATENATE_FINAL:
-            merged_messages: list[state.Message] = []
-            if execution.input_messages:
-                merged_messages.extend(execution.input_messages)
-            if final_message is not None:
-                merged_messages.append(final_message)
+            initial_user_message: Optional[state.Message] = None
+            for m in execution.input_messages:
+                if m.role == models.Role.USER and (m.text or "").strip():
+                    initial_user_message = m
+                    break
+            if initial_user_message is None:
+                for s in execution.steps:
+                    if s.type != state.StepType.INPUT_MESSAGE:
+                        continue
+                    if s.message is None:
+                        continue
+                    if s.message.role != models.Role.USER:
+                        continue
+                    if not (s.message.text or "").strip():
+                        continue
+                    initial_user_message = s.message
+                    break
 
+            inputs: list[state.Message] = []
+            if initial_user_message is not None:
+                inputs.append(initial_user_message)
             combined_message = message_helpers.concatenate_messages(
-                merged_messages,
+                inputs,
                 tool_message=final_message,
                 default_role=models.Role.USER,
             )
@@ -674,15 +690,23 @@ class Runner:
                     )
                     resp = yield req
 
-                    if resp and resp.message:
-                        result_step = state.Step(
-                            execution=current_execution,
-                            type=state.StepType.WORKFLOW_RESULT,
-                            message=resp.message,
-                            is_complete=True,
+                    result_message = resp.message if resp is not None else None
+                    if result_message is None:
+                        result_message = state.Message(
+                            role=models.Role.SYSTEM,
+                            text=(
+                                f"Subworkflow '{start_payload.workflow_name}' did not return a message."
+                            ),
                         )
-                        self._persist_step(result_step)
-                        continue
+
+                    result_step = state.Step(
+                        execution=current_execution,
+                        type=state.StepType.WORKFLOW_RESULT,
+                        message=result_message,
+                        is_complete=True,
+                    )
+                    self._persist_step(result_step)
+                    continue
 
                 if last_complete_step is not None and last_complete_step.type in (
                     state.StepType.PROMPT,
@@ -773,7 +797,7 @@ class Runner:
                             _ = yield status_event
 
                         exec_results = await self._execute_approved_tool_calls(approved)
-                        for exec_result in exec_results:
+                        for tool_req, exec_result in zip(approved, exec_results):
                             if (
                                 exec_result.kind
                                 == runner_proto.ToolExecResultKind.RESPONSE
@@ -793,19 +817,44 @@ class Runner:
                                     start_workflow=start_payload,
                                 )
                                 child_final = yield event
-                                assert (
-                                    child_final.resp_type
-                                    == RunEventResponseType.MESSAGE
-                                )
-                                assert child_final.message is not None
+                                if child_final is None or child_final.message is None:
+                                    tool_responses.append(
+                                        state.ToolCallResp(
+                                            id=tool_req.id,
+                                            status=state.ToolCallStatus.FAILED,
+                                            name=tool_req.name,
+                                            result={
+                                                "error": (
+                                                    "Subagent did not return a message."
+                                                )
+                                            },
+                                        )
+                                    )
+                                    continue
+
+                                child_message = child_final.message
+                                if child_message.role == models.Role.SYSTEM:
+                                    tool_responses.append(
+                                        state.ToolCallResp(
+                                            id=tool_req.id,
+                                            status=state.ToolCallStatus.FAILED,
+                                            name=tool_req.name,
+                                            result={
+                                                "agent_name": start_payload.workflow_name,
+                                                "error": child_message.text,
+                                            },
+                                        )
+                                    )
+                                    continue
+
                                 tool_responses.append(
                                     state.ToolCallResp(
-                                        id=req.id,
+                                        id=tool_req.id,
                                         status=state.ToolCallStatus.COMPLETED,
-                                        name=req.name,
+                                        name=tool_req.name,
                                         result={
                                             "agent_name": start_payload.workflow_name,
-                                            "response": child_final.message.text,
+                                            "response": child_message.text,
                                         },
                                     )
                                 )

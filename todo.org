@@ -1,12 +1,18 @@
 #+title: Todo
 
 * [ ] General
-** [ ] If tool call is just approved, do not generate component with "User approved." text.
-** [ ] Add dynamic progress indicator for knowlt
-** [ ] Investigate lag when sending first input message
-** [ ] Remove extra line break from task tool
-** [ ] Add dynamic variable support that's calculated at runtime
-*** [ ] Add a way to change variable setting via TUI
+** [ ] knowlt: reject virtual path writes
+** [ ] Nicely format tool call rejection text
+** [X] If tool call is just approved, do not generate component with "User approved." text.
+** [ ] Update task list error needs to be formatted (or not displayed)
+** [X] Add dynamic progress indicator for knowlt
+** [X] Investigate lag when sending first input message
+** [X] Remove extra line break from task tool
+** [ ] Add a way to hide subagent output and make it non-interactive
+** [ ] Parallel subagents
+- Similar to tool calls, non-interactive subagents should be able to run independently and in parallel
+** [X] Add dynamic variable support that's calculated at runtime
+*** [X] Add a way to change variable setting via TUI
 - List variables
 - Add variable types with lookup manager (LLM models, etc)
 - Pick from the list vs type it in
@@ -14,18 +20,18 @@
 *** [ ] Accept workflow to run via commandline parameter
 *** [ ] Implement TUI that's pipe compatible (rich should support)
 *** [ ] Fail if user wants a confirmation in non-interactive mode
-** [ ] Fix up logging
-*** [ ] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
+** [X] Fix up logging
+*** [X] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
-** [ ] Tool call rejection with the message needs format
-** [ ] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
+** [X] Tool call rejection with the message needs format
+** [X] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
 ** [ ] Know: rename read_files to read_file
 ** [ ] Auto-complete
 *** [ ] Space with selection should auto-complete
 ** [ ] Send LLM stats when executor starts (from old state?)
 ** [ ] Store cached stats in LLM usage stats
-** [ ] Create alternative Markdown renderer that only highlights, but does not format
-** [ ] Need apply_patch formatter with input and output (collapsed)
+** [X] Create alternative Markdown renderer that only highlights, but does not format
+** [X] Need apply_patch formatter with input and output (collapsed)
 ** [ ] Assign a number to collapse/expand a specific component and show number in the component view. (bad idea due to repaints?)
 ** [ ] Compact tool call representation, where consequent calls are merged onto a single.
 ** [ ] Hide time indicator for tool calls - it is not helpful

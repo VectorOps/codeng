@@ -3,7 +3,10 @@ from typing import AsyncIterator, Optional
 
 import pytest
 
-from vocode.proc.shell_persistent import PersistentShellCommand, PersistentShellProcessor
+from vocode.proc.shell_persistent import (
+    PersistentShellCommand,
+    PersistentShellProcessor,
+)
 
 
 class _DummyHandle:
@@ -156,6 +159,7 @@ def test_wrap_command_forces_newline_before_marker() -> None:
     )
     assert "printf '\\n%s:%s\\n'" in cmd_str
     assert marker in cmd_str
+    assert "< /dev/null" in cmd_str
 
 
 @pytest.mark.asyncio

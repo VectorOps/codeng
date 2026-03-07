@@ -50,6 +50,11 @@ class OutputMode(str, Enum):
     HIDE_FINAL = "hide_final"
 
 
+class StepContentType(str, Enum):
+    MARKDOWN = "markdown"
+    RAW = "raw"
+
+
 class Role(str, Enum):
     DEVELOPER = "developer"
     USER = "user"
@@ -158,6 +163,10 @@ class Node(vars_mod.BaseVarModel):
             "'show' displays all messages; 'hide_all' hides all messages; "
             "'hide_final' hides only the final message."
         ),
+    )
+    content_type: StepContentType = Field(
+        default=StepContentType.MARKDOWN,
+        description="How this node's output message steps are rendered in the UI.",
     )
     confirmation: Confirmation = Field(
         default=Confirmation.MANUAL,

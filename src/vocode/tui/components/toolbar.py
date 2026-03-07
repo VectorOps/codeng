@@ -73,7 +73,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
                     workflow_name = frame.workflow_name
                     node_name = frame.node_name
                     if node_name:
-                        label = f"{workflow_name}@{node_name}"
+                        label = f"{node_name}@{workflow_name}"
                     else:
                         label = workflow_name
                     labels.append(label)
@@ -226,21 +226,22 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         usage_text = " | ".join(usage_parts)
 
         if not usage_text:
-            return rich_text.Text(main_text)
-
-        if not main_text:
-            return rich_text.Text(usage_text)
-
-        width = console.width
-        left = main_text
-        right = usage_text
-        min_space = 1
-        if width <= len(left) + min_space + len(right):
-            full_text = f"{left} {right}"
+            base = rich_text.Text(main_text)
+        elif not main_text:
+            base = rich_text.Text(usage_text)
         else:
-            spaces = width - len(left) - len(right)
-            if spaces < min_space:
-                spaces = min_space
-            full_text = f"{left}{' ' * spaces}{right}"
+            width = console.width
+            left = main_text
+            right = usage_text
+            min_space = 1
+            if width <= len(left) + min_space + len(right):
+                full_text = f"{left} {right}"
+            else:
+                spaces = width - len(left) - len(right)
+                if spaces < min_space:
+                    spaces = min_space
+                full_text = f"{left}{' ' * spaces}{right}"
 
-        return rich_text.Text(full_text)
+            base = rich_text.Text(full_text)
+
+        return base
