@@ -1846,7 +1846,7 @@ requires-dist = [
     { name = "gitpython", specifier = ">=3.1.36" },
     { name = "json5", specifier = ">=0.9" },
     { name = "knowlt", git = "https://github.com/vectorops/knowlt.git" },
-    { name = "litellm", specifier = ">=1.78.3" },
+    { name = "litellm", specifier = ">=1.81.4" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pyfiglet", specifier = ">=1.0.4" },
     { name = "pytest", specifier = ">=8.4.1" },
