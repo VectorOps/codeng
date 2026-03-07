@@ -2,22 +2,21 @@
 logging:
   #default_level: debug
 variables:
+  LLM_ARCHITECT_REASONING: medium
 # OpenAI
   LLM_DISCOVERY_MODEL:
-    value: gpt-5-mini
+    value: openai/gpt-5-mini
     type: llm_models
   LLM_ARCHITECT_MODEL:
-    value: gpt-5.4
+    value: openai/gpt-5.2
     type: llm_models
-#  LLM_ARCHITECT_REASONING: high
-  LLM_ARCHITECT_REASONING: medium
   LLM_CODER_MODEL:
-    value: gpt-5-mini
+    value: openai/gpt-5-mini
     type: llm_models
   LLM_DIFF_FORMAT: v4a
 # Gemini
 #  LLM_DISCOVERY_MODEL: gemini/gemini-3-flash-preview
-#  LLM_ARCHITECT_MODEL: gemini/gemini-3-pro-preview
+#  LLM_ARCHITECT_MODEL: gemini/gemini-3.1-pro-preview
 #  LLM_CODER_MODEL: gemini/gemini-3-flash-preview
 #  LLM_DIFF_FORMAT: patch
 internal_http:
