@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Optional, cast
+import time
 
 from vocode import settings as vocode_settings
+from vocode import models
 from vocode import state
 from vocode.logger import get_log_manager_internal, init_log_manager, logger
 from vocode.project import Project
@@ -40,6 +42,9 @@ class UIServer:
         self._autocomplete = AutocompleteManager()
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
+        self._pending_input_step: Optional[state.Step] = None
+        self._progress_last_sent_at_by_id: dict[str, float] = {}
+        self._know_repo_label_by_id: dict[str, str] = {}
 
         self._router.register(
             manager_proto.BasePacketKind.USER_INPUT,
@@ -133,12 +138,46 @@ class UIServer:
 
         self._apply_logging_settings()
 
-        await self._manager.start()
+        project = self._manager.project
+        settings = project.settings
+        enable_know_progress = False
+        if settings is not None and settings.know_enabled and settings.know is not None:
+            try:
+                _ = project.know
+            except Exception:
+                enable_know_progress = False
+            else:
+                enable_know_progress = True
+
+        if enable_know_progress:
+            progress_id = "know:init"
+            await self._emit_progress_start(
+                progress_id=progress_id,
+                title="Initializing knowledge base",
+                message=None,
+                mode=manager_proto.ProgressMode.INDETERMINATE,
+                bar_type=manager_proto.ProgressBarType.PULSE,
+            )
+            previous_default_cb = project.know.default_progress_callback
+            project.know.default_progress_callback = (
+                self._make_knowlt_progress_callback(
+                    progress_id=progress_id,
+                    title="Indexing repositories",
+                )
+            )
+            try:
+                await self._manager.start()
+            finally:
+                project.know.default_progress_callback = previous_default_cb
+                await self._emit_progress_end(progress_id=progress_id)
+        else:
+            await self._manager.start()
         self._status = manager_proto.UIServerStatus.RUNNING
 
         self._recv_task = asyncio.create_task(self._recv_loop())
 
         await workflow_commands.register_workflow_commands(self._commands)
+        await self._register_autoapprove_commands()
 
         settings = self._manager.project.settings
         if settings is not None:
@@ -147,6 +186,343 @@ class UIServer:
                 asyncio.create_task(self._manager.start_workflow(default_workflow))
 
         self._started = True
+
+    async def _emit_progress_start(
+        self,
+        *,
+        progress_id: str,
+        title: Optional[str],
+        message: Optional[str],
+        mode: manager_proto.ProgressMode,
+        bar_type: manager_proto.ProgressBarType,
+        fields: Optional[dict[str, str]] = None,
+    ) -> None:
+        packet = manager_proto.ProgressPacket(
+            progress_id=progress_id,
+            status=manager_proto.ProgressStatus.START,
+            title=title,
+            message=message,
+            fields={} if fields is None else dict(fields),
+            mode=mode,
+            bar_type=bar_type,
+        )
+        await self.send_packet(packet)
+
+    def _make_knowlt_progress_callback(
+        self,
+        *,
+        progress_id: str,
+        title: str,
+        message: Optional[str] = None,
+        fields: Optional[dict[str, str]] = None,
+        unit: Optional[str] = "files",
+    ):
+        initial_fields: dict[str, str] = {} if fields is None else dict(fields)
+
+        def _cb(evt) -> None:
+            async def _emit() -> None:
+                try:
+                    processed = float(evt.processed_files)
+                except Exception:
+                    processed = None
+                try:
+                    total_files = float(evt.total_files)
+                except Exception:
+                    total_files = None
+                try:
+                    elapsed = float(evt.elapsed_seconds)
+                except Exception:
+                    elapsed = None
+
+                mode = manager_proto.ProgressMode.INDETERMINATE
+                bar_type = manager_proto.ProgressBarType.PULSE
+                total = None
+                if total_files is not None and total_files > 0:
+                    total = total_files
+                    mode = manager_proto.ProgressMode.DETERMINISTIC
+                    bar_type = manager_proto.ProgressBarType.BAR
+
+                update_fields = dict(initial_fields)
+                try:
+                    repo_id = str(evt.repo_id)
+                except Exception:
+                    repo_id = None
+                if repo_id:
+                    update_fields["repo_id"] = repo_id
+
+                label = update_fields.get("repo_name")
+                if not label and repo_id:
+                    cached = self._know_repo_label_by_id.get(repo_id)
+                    if cached:
+                        label = cached
+                    else:
+                        try:
+                            repo_list = await self._manager.project.know.pm.data.repo.get_by_ids(
+                                [repo_id]
+                            )
+                        except Exception:
+                            repo_list = None
+                        if repo_list:
+                            repo = repo_list[0]
+                            root = repo.root_path or ""
+                            if root:
+                                label = f"{repo.name} ({root})"
+                            else:
+                                label = repo.name
+                            self._know_repo_label_by_id[repo_id] = label
+                            update_fields["repo_name"] = repo.name
+                            if root:
+                                update_fields["repo_path"] = root
+
+                resolved_message = message
+                if resolved_message is None:
+                    if label:
+                        resolved_message = label
+                    elif repo_id is not None:
+                        resolved_message = repo_id
+
+                await self.emit_progress_update(
+                    progress_id=progress_id,
+                    title=title,
+                    message=resolved_message,
+                    fields=update_fields,
+                    mode=mode,
+                    bar_type=bar_type,
+                    completed=processed,
+                    total=total,
+                    unit=unit,
+                    elapsed_seconds=elapsed,
+                )
+
+            asyncio.create_task(_emit())
+
+        return _cb
+
+    async def refresh_know_repo_with_progress(self, repo) -> None:
+        progress_id = f"know:scan:{repo.name}"
+        await self._emit_progress_start(
+            progress_id=progress_id,
+            title="Indexing repository",
+            message=repo.name,
+            mode=manager_proto.ProgressMode.INDETERMINATE,
+            bar_type=manager_proto.ProgressBarType.PULSE,
+            fields={
+                "repo_name": repo.name,
+                "repo_id": repo.id,
+            },
+        )
+        cb = self._make_knowlt_progress_callback(
+            progress_id=progress_id,
+            title="Indexing repository",
+            message=repo.name,
+            fields={
+                "repo_name": repo.name,
+                "repo_id": repo.id,
+            },
+        )
+        try:
+            await self._manager.project.know.refresh(repo, progress_callback=cb)
+        finally:
+            await self._emit_progress_end(progress_id=progress_id)
+
+    async def refresh_know_all_with_progress(self) -> None:
+        progress_id = "know:refresh_all"
+        await self._emit_progress_start(
+            progress_id=progress_id,
+            title="Indexing repositories",
+            message=None,
+            mode=manager_proto.ProgressMode.INDETERMINATE,
+            bar_type=manager_proto.ProgressBarType.PULSE,
+        )
+        cb = self._make_knowlt_progress_callback(
+            progress_id=progress_id,
+            title="Indexing repositories",
+            message=None,
+            fields=None,
+        )
+        try:
+            await self._manager.project.know.refresh_all(progress_callback=cb)
+        finally:
+            await self._emit_progress_end(progress_id=progress_id)
+
+    async def _emit_progress_end(self, *, progress_id: str) -> None:
+        packet = manager_proto.ProgressPacket(
+            progress_id=progress_id,
+            status=manager_proto.ProgressStatus.END,
+        )
+        await self.send_packet(packet)
+
+    async def emit_progress_update(
+        self,
+        *,
+        progress_id: str,
+        title: Optional[str] = None,
+        message: Optional[str] = None,
+        fields: Optional[dict[str, str]] = None,
+        mode: Optional[manager_proto.ProgressMode] = None,
+        bar_type: Optional[manager_proto.ProgressBarType] = None,
+        completed: Optional[float] = None,
+        total: Optional[float] = None,
+        unit: Optional[str] = None,
+        eta_seconds: Optional[float] = None,
+        elapsed_seconds: Optional[float] = None,
+        min_interval_s: float = 0.25,
+    ) -> None:
+        now = time.monotonic()
+        last = self._progress_last_sent_at_by_id.get(progress_id)
+        if last is not None and (now - last) < min_interval_s:
+            return
+        self._progress_last_sent_at_by_id[progress_id] = now
+
+        packet = manager_proto.ProgressPacket(
+            progress_id=progress_id,
+            status=manager_proto.ProgressStatus.UPDATE,
+            title=title,
+            message=message,
+            fields={} if fields is None else dict(fields),
+            mode=mode if mode is not None else manager_proto.ProgressMode.DETERMINISTIC,
+            bar_type=(
+                bar_type if bar_type is not None else manager_proto.ProgressBarType.BAR
+            ),
+            completed=completed,
+            total=total,
+            unit=unit,
+            eta_seconds=eta_seconds,
+            elapsed_seconds=elapsed_seconds,
+        )
+        await self.send_packet(packet)
+
+    async def _register_autoapprove_commands(self) -> None:
+        async def aa(server: "UIServer", args: list[str]) -> None:
+            if args:
+                raise workflow_commands.CommandError("Usage: /aa")
+            step = server._pending_input_step
+            if step is None or step.type != state.StepType.TOOL_REQUEST:
+                raise workflow_commands.CommandError(
+                    "No tool confirmation is currently pending."
+                )
+            message = step.message
+            if message is None:
+                raise workflow_commands.CommandError(
+                    "No tool confirmation is currently pending."
+                )
+
+            added: list[str] = []
+            for tool_req in message.tool_call_requests:
+                if tool_req.status != state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
+                    continue
+                server.manager.project.project_state.autoapprove.add_tool(tool_req.name)
+                added.append(tool_req.name)
+
+            waiter = server._pop_input_waiter()
+            if waiter is None:
+                raise workflow_commands.CommandError(
+                    "No tool confirmation is currently pending."
+                )
+            if not waiter.done():
+                user_input = manager_proto.UserInputPacket(
+                    message=state.Message(role=models.Role.USER, text="")
+                )
+                waiter.set_result(user_input)
+                prompt_packet = manager_proto.InputPromptPacket()
+                await server.send_packet(prompt_packet)
+                server._pending_input_step = None
+
+            if added:
+                unique = sorted(set(added))
+                await server.send_text_message(
+                    "Session auto-approve enabled for: " + ", ".join(unique)
+                )
+
+        await self._commands.register(
+            "aa",
+            aa,
+            description="Auto-approve similar tool calls for this session",
+            params=[],
+            hidden=True,
+        )
+
+        async def autoapprove(server: "UIServer", args: list[str]) -> None:
+            if not args:
+                raise workflow_commands.CommandError(
+                    "Usage: /autoapprove <list|add|remove|clear>"
+                )
+            sub = args[0]
+            rest = args[1:]
+            st = server.manager.project.project_state.autoapprove
+
+            if sub == "list":
+                if rest:
+                    raise workflow_commands.CommandError("Usage: /autoapprove list")
+                if not st.policies_by_tool:
+                    await server.send_text_message("No session auto-approve rules.")
+                    return
+                lines: list[str] = ["Session auto-approve rules:"]
+                for name in sorted(st.policies_by_tool.keys()):
+                    policy = st.policies_by_tool[name]
+                    if policy.approve_all:
+                        lines.append(f"  - {name}: approve_all")
+                    elif not policy.rules:
+                        lines.append(f"  - {name}: (no rules)")
+                    else:
+                        lines.append(f"  - {name}:")
+                        for rule in policy.rules:
+                            lines.append(f"      - {rule.key} ~= {rule.pattern}")
+                await server.send_text_message("\n".join(lines))
+                return
+
+            if sub == "add":
+                if len(rest) not in (1, 3):
+                    raise workflow_commands.CommandError(
+                        "Usage: /autoapprove add <tool> [<dotted_key> <pattern>]"
+                    )
+                tool_name = rest[0]
+                if len(rest) == 1:
+                    st.add_tool(tool_name, approve_all=True)
+                    await server.send_text_message(
+                        f"Session auto-approve enabled for tool: {tool_name}"
+                    )
+                    return
+                st.add_rule(tool_name, key=rest[1], pattern=rest[2])
+                await server.send_text_message(
+                    f"Session auto-approve rule added for tool: {tool_name}"
+                )
+                return
+
+            if sub == "remove":
+                if len(rest) != 1:
+                    raise workflow_commands.CommandError(
+                        "Usage: /autoapprove remove <tool>"
+                    )
+                tool_name = rest[0]
+                removed = st.remove_tool(tool_name)
+                if removed:
+                    await server.send_text_message(
+                        f"Session auto-approve disabled for tool: {tool_name}"
+                    )
+                else:
+                    await server.send_text_message(
+                        f"No session auto-approve rule found for tool: {tool_name}"
+                    )
+                return
+
+            if sub == "clear":
+                if rest:
+                    raise workflow_commands.CommandError("Usage: /autoapprove clear")
+                st.clear()
+                await server.send_text_message("Session auto-approve rules cleared.")
+                return
+
+            raise workflow_commands.CommandError(
+                "Usage: /autoapprove <list|add|remove|clear>"
+            )
+
+        await self._commands.register(
+            "autoapprove",
+            autoapprove,
+            description="Manage session auto-approve rules",
+            params=["<list|add|remove|clear>", "..."],
+        )
 
     async def stop(self) -> None:
         if not self._started:
@@ -241,7 +617,11 @@ class UIServer:
         elif step.type == state.StepType.TOOL_REQUEST and needs_confirmation:
             input_required = True
             input_title = "Please confirm the tool call"
-            input_subtitle = "Empty line confirms, any text to reject with a message"
+            input_subtitle = (
+                "Empty line confirms, any text to reject with a message. "
+                "Tip: type /aa to auto-approve similar calls for this session"
+            )
+            self._pending_input_step = step
 
         packet = manager_proto.RunnerReqPacket(
             workflow_id=frame.workflow_name,
@@ -273,6 +653,8 @@ class UIServer:
 
         waiter = self._push_input_waiter()
         resp_packet = await waiter
+        if step is self._pending_input_step:
+            self._pending_input_step = None
         message_packet = resp_packet.message
 
         if step.type == state.StepType.PROMPT:
@@ -320,6 +702,7 @@ class UIServer:
             state.RunnerStatus.STOPPED,
             state.RunnerStatus.FINISHED,
         ):
+            self._pending_input_step = None
             for waiter in self._input_waiters:
                 if not waiter.done():
                     waiter.cancel()
@@ -389,16 +772,27 @@ class UIServer:
         event: runner_proto.RunEventReq,
     ):
         payload = event.start_workflow
-        # TODO: Return error instead
         if payload is None:
             return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.NOOP,
-                message=None,
+                resp_type=runner_proto.RunEventResponseType.MESSAGE,
+                message=state.Message(
+                    role=models.Role.SYSTEM,
+                    text="Start-workflow event is missing payload.",
+                ),
             )
-        await self._manager.start_workflow(
-            payload.workflow_name,
-            initial_message=payload.initial_message,
-        )
+        try:
+            await self._manager.start_workflow(
+                payload.workflow_name,
+                initial_message=payload.initial_message,
+            )
+        except Exception as ex:
+            return runner_proto.RunEventResp(
+                resp_type=runner_proto.RunEventResponseType.MESSAGE,
+                message=state.Message(
+                    role=models.Role.SYSTEM,
+                    text=f"Failed to start workflow '{payload.workflow_name}': {ex}",
+                ),
+            )
 
         # We don't expect anything to be passed to next iteration
         return None

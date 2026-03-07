@@ -10,6 +10,7 @@ from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.settings import Settings, WorkflowConfig, ToolSpec
 from vocode.tools import base as tools_base
 from vocode.persistence import state_manager as persistence_state_manager
+from vocode.project import ProjectState
 
 
 class NestedWorkflowTestProject:
@@ -18,6 +19,7 @@ class NestedWorkflowTestProject:
         self.tools: dict[str, tools_base.BaseTool] = {}
         self.current_workflow: str | None = None
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
+        self.project_state = ProjectState()
 
     async def start(self) -> None:
         return None
@@ -153,6 +155,7 @@ async def test_nested_workflow_execution_via_manager():
         tools=[ToolSpec(name="nested-workflow-test-tool", auto_approve=True)],
     )
     project = NestedWorkflowTestProject(settings=settings)
+    tools_base.unregister_tool(NestedWorkflowTool.name)
     tools_base.register_tool(NestedWorkflowTool.name, NestedWorkflowTool)
     project.tools[NestedWorkflowTool.name] = NestedWorkflowTool(project)
     events: list[runner_proto.RunEventReq] = []
@@ -202,3 +205,81 @@ async def test_nested_workflow_execution_via_manager():
     assert tool_resp.result.get("agent_name") == "child"
     assert tool_resp.result.get("response") == child_runner.last_final_message.text
     assert any(e.kind == runner_proto.RunEventReqKind.START_WORKFLOW for e in events)
+
+
+@ExecutorFactory.register("child-crash")
+class ChildCrashExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput):
+        raise RuntimeError("child boom")
+
+
+@pytest.mark.asyncio
+async def test_nested_workflow_failure_is_returned_as_tool_error():
+    models.Node._registry["tool-start-nested-workflow"] = models.Node
+    models.Node._registry["child-crash"] = models.Node
+
+    parent_node_cfg: dict[str, object] = {
+        "name": "parent-node",
+        "type": "tool-start-nested-workflow",
+        "outcomes": [],
+        "confirmation": models.Confirmation.AUTO,
+    }
+    child_node_cfg: dict[str, object] = {
+        "name": "child-node",
+        "type": "child-crash",
+        "outcomes": [],
+        "confirmation": models.Confirmation.AUTO,
+    }
+    settings = Settings(
+        workflows={
+            "parent": WorkflowConfig(
+                name="parent",
+                need_input=False,
+                nodes=[parent_node_cfg],
+                edges=[],
+            ),
+            "child": WorkflowConfig(
+                name="child",
+                need_input=False,
+                nodes=[child_node_cfg],
+                edges=[],
+            ),
+        },
+        tools=[ToolSpec(name="nested-workflow-test-tool", auto_approve=True)],
+    )
+    project = NestedWorkflowTestProject(settings=settings)
+    tools_base.unregister_tool(NestedWorkflowTool.name)
+    tools_base.register_tool(NestedWorkflowTool.name, NestedWorkflowTool)
+    project.tools[NestedWorkflowTool.name] = NestedWorkflowTool(project)
+
+    async def listener(*_):
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    manager = BaseManager(
+        project=project,
+        run_event_listener=listener,
+    )
+    await manager.start()
+    parent_runner = await manager.start_workflow("parent")
+    assert manager._driver_task is not None
+    await asyncio.wait_for(manager._driver_task, timeout=5.0)
+    await manager.stop()
+
+    node_execs_by_name: dict[str, state.NodeExecution] = {}
+    for ne in parent_runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+    parent_exec = node_execs_by_name["parent-node"]
+    tool_response_steps = [
+        s
+        for s in parent_exec.steps
+        if s.message is not None and s.message.tool_call_responses
+    ]
+    assert tool_response_steps
+    tool_resp = tool_response_steps[-1].message.tool_call_responses[0]  # type: ignore[union-attr]
+    assert tool_resp.status == state.ToolCallStatus.FAILED
+    assert tool_resp.result is not None
+    assert tool_resp.result.get("error") is not None
+    assert "subagent" in str(tool_resp.result.get("error")).lower()

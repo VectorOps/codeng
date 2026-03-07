@@ -60,10 +60,10 @@ def test_tui_state_updates_toolbar_from_ui_state() -> None:
 
     ui_state.handle_ui_state(packet)
 
-    assert toolbar.text == "wf-toolbar@node-toolbar"
+    assert toolbar.text == "node-toolbar@wf-toolbar"
     renderable = toolbar._build_renderable(rich_console.Console())
     rendered_text = str(renderable)
-    assert "wf-toolbar@node-toolbar" in rendered_text
+    assert "node-toolbar@wf-toolbar" in rendered_text
     assert "running" in rendered_text
 
 
@@ -174,10 +174,10 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
 
     ui_state.handle_ui_state(packet)
 
-    assert toolbar.text == "wf1@node1 > wf2@node2"
+    assert toolbar.text == "node1@wf1 > node2@wf2"
     renderable = toolbar._build_renderable(rich_console.Console())
     rendered_text = str(renderable)
-    assert "wf1@node1 > wf2@node2" in rendered_text
+    assert "node1@wf1 > node2@wf2" in rendered_text
     assert "10/1k (1%)" in rendered_text
     assert "ts: 100" in rendered_text
     assert "tr: 50" in rendered_text
@@ -359,3 +359,107 @@ def test_autocomplete_tab_activates_then_accepts() -> None:
     assert select_component.terminal is None
     assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
     assert input_component.text == "hello"
+
+
+def test_history_search_shows_matches_and_accepts() -> None:
+    ui_state = _make_tui_state_with_console()
+    ui_state.history.add("echo hello")
+    ui_state.history.add("echo world")
+
+    input_component = ui_state._input_component
+    input_component.text = "draft"
+    input_component.set_cursor_position(0, 5)
+
+    event_ctrl_r = input_base.KeyEvent(
+        action="down",
+        key="r",
+        ctrl=True,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_ctrl_r)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.HISTORY_SEARCH
+
+    event_o = input_base.KeyEvent(
+        action="down",
+        key="o",
+        ctrl=False,
+        alt=False,
+        shift=False,
+        text="o",
+    )
+    ui_state._handle_input_event(event_o)
+    terminal = ui_state.terminal
+    container = terminal.components[-1]
+    select_component = container.children[1]
+    assert select_component.items
+    assert select_component.items[0].text == "echo world"
+
+    event_down = input_base.KeyEvent(
+        action="down",
+        key="down",
+        ctrl=False,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_down)
+    assert select_component.selected_item is not None
+    assert select_component.selected_item.text == "echo world"
+
+    event_enter = input_base.KeyEvent(
+        action="down",
+        key="enter",
+        ctrl=False,
+        alt=False,
+        shift=False,
+        text="\n",
+    )
+    ui_state._handle_input_event(event_enter)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
+    assert input_component.text == "echo world"
+
+
+def test_history_search_escape_keeps_original_buffer() -> None:
+    ui_state = _make_tui_state_with_console()
+    ui_state.history.add("one")
+    ui_state.history.add("two")
+
+    input_component = ui_state._input_component
+    input_component.text = "draft"
+    input_component.set_cursor_position(0, 3)
+
+    event_ctrl_r = input_base.KeyEvent(
+        action="down",
+        key="r",
+        ctrl=True,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_ctrl_r)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.HISTORY_SEARCH
+
+    event_o = input_base.KeyEvent(
+        action="down",
+        key="o",
+        ctrl=False,
+        alt=False,
+        shift=False,
+        text="o",
+    )
+    ui_state._handle_input_event(event_o)
+    terminal = ui_state.terminal
+    container = terminal.components[-1]
+    select_component = container.children[1]
+    assert select_component.items
+    assert select_component.items[0].text == "two"
+
+    event_esc = input_base.KeyEvent(
+        action="down",
+        key="esc",
+        ctrl=False,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_esc)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
+    assert input_component.text == "draft"

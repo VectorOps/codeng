@@ -7,3 +7,4 @@ workflows:
       - $include:
           template: nodes/discovery.yaml
         confirmation: auto
+        outcomes: []

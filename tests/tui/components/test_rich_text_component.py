@@ -43,6 +43,17 @@ def test_rich_text_component_renders_rich_markup() -> None:
     assert "]" not in rendered_lines[0]
 
 
+def test_rich_text_component_plain_text_does_not_parse_markup() -> None:
+    console = rich_console.Console(width=80, height=5, record=True)
+    component = components_rich_text_component.RichTextComponent(
+        "[bold red]Hello[/]",
+        markup=False,
+    )
+    rendered_lines = _render_text(component, console)
+    assert rendered_lines
+    assert "[bold red]Hello[/]" in rendered_lines[0]
+
+
 def test_rich_text_component_marks_dirty_on_text_change() -> None:
     console = rich_console.Console(width=40, height=5, record=True)
     terminal = DummyTerminal(console)

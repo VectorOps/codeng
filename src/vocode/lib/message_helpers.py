@@ -11,8 +11,14 @@ def concatenate_messages(
     if not messages and tool_message is None:
         return None
 
+    effective_messages: list[state.Message] = list(messages)
+    if tool_message is not None:
+        existing_ids = {m.id for m in messages}
+        if tool_message.id not in existing_ids:
+            effective_messages.append(tool_message)
+
     text_parts: List[str] = []
-    for m in messages:
+    for m in effective_messages:
         if m.text:
             text_parts.append(m.text)
 

@@ -66,6 +66,17 @@ def test_decoder_arrow_keys() -> None:
     assert keys == ["up", "down", "right", "left"]
 
 
+def test_decoder_ctrl_r() -> None:
+    decoder = posix.PosixInputDecoder()
+    events = decoder.feed(b"\x12")
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, base.KeyEvent)
+    assert event.action == "down"
+    assert event.key == "r"
+    assert event.ctrl
+
+
 def test_decoder_alt_arrow_keys() -> None:
     decoder = posix.PosixInputDecoder()
     data = b"\x1b[1;3A\x1b[1;3B\x1b[1;3C\x1b[1;3D"

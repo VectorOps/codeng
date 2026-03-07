@@ -5,12 +5,15 @@ from uuid import uuid4
 
 import pytest
 from rich import console as rich_console
+import pyfiglet
 
 from vocode import models, state
 from vocode import settings as vocode_settings
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
+from vocode.tui.lib.components import renderable as tui_renderable_component
+from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.input import base as input_base
 
 
@@ -60,8 +63,9 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
 
     assert header is not step_component
     assert input_component is not step_component
-    assert isinstance(step_component, tui_markdown_component.MarkdownComponent)
-    assert step_component.markdown == "first"
+    assert isinstance(step_component, tui_step_output_component.StepOutputComponent)
+    assert step_component.content_type is models.StepContentType.MARKDOWN
+    assert step_component.text == "first"
 
     message2 = state.Message(role=models.Role.USER, text="second\n\n")
     step2 = state.Step(
@@ -76,7 +80,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
     components_after_update = terminal.components
     assert len(components_after_update) == 4
     assert components_after_update[1] is step_component
-    assert step_component.markdown == "second"
+    assert step_component.text == "second"
 
     step_no_message = state.Step(
         id=uuid4(),
@@ -98,12 +102,105 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
 
     ui_state.handle_step(step_empty_text)
     assert len(terminal.components) == 4
-    assert step_component.markdown == ""
+    assert step_component.text == ""
 
     await terminal.render()
     output = buffer.getvalue()
     assert "second" not in output
     assert "first" not in output
+
+
+@pytest.mark.asyncio
+async def test_tui_state_uses_markdown_render_mode_setting() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    tui_opts = vocode_settings.TUIOptions(
+        markdown_render_mode=vocode_settings.MarkdownRenderMode.syntax,
+    )
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+        tui_options=tui_opts,
+    )
+
+    header = ui_state.terminal.components[0]
+    assert isinstance(header, tui_renderable_component.CallbackComponent)
+
+    ui_state.add_markdown("hello")
+    markdown_component = ui_state.terminal.components[1]
+    assert isinstance(markdown_component, tui_markdown_component.MarkdownComponent)
+    assert (
+        markdown_component.render_mode
+        is tui_markdown_component.MarkdownRenderMode.SYNTAX
+    )
+
+
+@pytest.mark.asyncio
+async def test_tui_state_banner_uses_pyfiglet_and_is_centered() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=80,
+        height=200,
+    )
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    tui_opts = vocode_settings.TUIOptions(
+        banner_text="VOCODE",
+        banner_font="chunky",
+    )
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+        tui_options=tui_opts,
+    )
+
+    header = ui_state.terminal.components[0]
+    assert isinstance(header, tui_renderable_component.CallbackComponent)
+
+    lines = header.render(console.options)
+    output: list[str] = []
+    for line in lines:
+        output.append("".join([seg.text for seg in line]))
+
+    fig = pyfiglet.Figlet(font="chunky")
+    expected_first_line = fig.renderText("VOCODE").splitlines()[0].rstrip("\n")
+
+    matching_line = None
+    for line in output:
+        if expected_first_line.strip() in line:
+            matching_line = line
+            break
+    assert matching_line is not None
+
+    left_padding = len(matching_line) - len(matching_line.lstrip(" "))
+    assert left_padding > 0
 
 
 @pytest.mark.asyncio
@@ -191,8 +288,8 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
     components = terminal.components
     assert len(components) == 4
     step_component = components[1]
-    assert isinstance(step_component, tui_markdown_component.MarkdownComponent)
-    assert step_component.markdown == "interim"
+    assert isinstance(step_component, tui_step_output_component.StepOutputComponent)
+    assert step_component.text == "interim"
 
     message2 = state.Message(role=models.Role.USER, text="final")
     step2 = state.Step(
@@ -209,7 +306,7 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
     components_after_update = terminal.components
     assert len(components_after_update) == 4
     assert components_after_update[1] is step_component
-    assert step_component.markdown == "interim"
+    assert step_component.text == "interim"
 
     await terminal.render()
     output = buffer.getvalue()
@@ -218,7 +315,7 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tui_state_renders_approval_and_rejection_steps() -> None:
+async def test_tui_state_renders_rejection_steps() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
 
@@ -244,12 +341,6 @@ async def test_tui_state_renders_approval_and_rejection_steps() -> None:
         status=state.RunStatus.RUNNING,
     )
 
-    approval_step = state.Step(
-        execution=execution,
-        type=state.StepType.APPROVAL,
-    )
-    ui_state.handle_step(approval_step)
-
     rejection_message = state.Message(
         role=models.Role.USER,
         text="Rejected because of reasons.",
@@ -263,7 +354,6 @@ async def test_tui_state_renders_approval_and_rejection_steps() -> None:
 
     await terminal.render()
     output = buffer.getvalue()
-    assert "User approved." in output
     assert "Rejected because of reasons." in output
 
 
@@ -486,3 +576,158 @@ async def test_tool_request_update_plan_uses_formatter_default_for_stats() -> No
     ]
     assert len(tool_components) == 1
     assert tool_components[0].show_execution_stats is False
+
+
+@pytest.mark.asyncio
+async def test_tool_request_run_agent_uses_formatter_default_for_stats() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    req = state.ToolCallReq(
+        id="call_1",
+        name="run_agent",
+        arguments={"name": "agent1"},
+        status=state.ToolCallReqStatus.EXECUTING,
+    )
+    step = state.Step(
+        id=uuid4(),
+        execution=execution,
+        type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+
+    ui_state.handle_step(step)
+
+    components = ui_state.terminal.components
+    tool_components = [
+        c
+        for c in components
+        if isinstance(c, tool_call_req_component.ToolCallReqComponent)
+    ]
+    assert len(tool_components) == 1
+    tool_component = tool_components[0]
+    assert tool_component.show_execution_stats is False
+
+    await ui_state.terminal.render()
+    assert tool_component not in ui_state.terminal._animation_components
+
+
+@pytest.mark.asyncio
+async def test_tool_request_run_agent_renders_prompt_text() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    req = state.ToolCallReq(
+        id="call_1",
+        name="run_agent",
+        arguments={"name": "agent1", "text": "hello world"},
+        status=state.ToolCallReqStatus.EXECUTING,
+    )
+    step = state.Step(
+        id=uuid4(),
+        execution=execution,
+        type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+
+    ui_state.handle_step(step)
+    await ui_state.terminal.render()
+    output = buffer.getvalue()
+    assert "name=agent1" in output
+    assert "text=hello world" in output
+
+
+@pytest.mark.asyncio
+async def test_tool_request_confirmation_renders_autoapprove_hint() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    req = state.ToolCallReq(
+        id="call_1",
+        name="tool",
+        arguments={},
+        status=state.ToolCallReqStatus.REQUIRES_CONFIRMATION,
+    )
+    step = state.Step(
+        id=uuid4(),
+        execution=execution,
+        type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+    ui_state.handle_step(step)
+
+    await ui_state.terminal.render()
+    output = buffer.getvalue()
+    assert "/aa" not in output
