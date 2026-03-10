@@ -1129,6 +1129,8 @@ class TUIState:
 
     def handle_progress(self, packet: manager_proto.ProgressPacket) -> None:
         pid = packet.progress_id
+        if pid is None:
+            return
         status = packet.status
         if status is manager_proto.ProgressStatus.START:
             self._progress_by_id[pid] = packet
@@ -1153,22 +1155,49 @@ class TUIState:
 
         if status is manager_proto.ProgressStatus.UPDATE:
             self._progress_by_id[pid] = packet
+            if packet.done is True:
+                self._on_progress_completed(pid, packet)
+                return
             if pid in self._progress_visible_by_id and pid == self._active_progress_id:
                 self._update_progress_component()
             return
 
         if status is manager_proto.ProgressStatus.END:
-            self._progress_by_id.pop(pid, None)
-            self._progress_visible_by_id.discard(pid)
-            gate = self._progress_gate_tasks.pop(pid, None)
-            if gate is not None and not gate.done():
-                gate.cancel()
-            if self._active_progress_id == pid:
-                self._active_progress_id = None
-                if self._progress_visible_by_id:
-                    self._active_progress_id = next(iter(self._progress_visible_by_id))
-            self._update_progress_component()
+            self._on_progress_completed(pid, packet)
             return
+
+    def _on_progress_completed(
+        self,
+        pid: str,
+        packet: manager_proto.ProgressPacket | None = None,
+    ) -> None:
+        stored = self._progress_by_id.get(pid)
+        on_complete = None
+        complete_message = None
+        if packet is not None:
+            on_complete = packet.on_complete
+            complete_message = packet.complete_message
+        if on_complete is None and stored is not None:
+            on_complete = stored.on_complete
+        if complete_message is None and stored is not None:
+            complete_message = stored.complete_message
+
+        self._progress_by_id.pop(pid, None)
+        self._progress_visible_by_id.discard(pid)
+        gate = self._progress_gate_tasks.pop(pid, None)
+        if gate is not None and not gate.done():
+            gate.cancel()
+        if self._active_progress_id == pid:
+            self._active_progress_id = None
+            if self._progress_visible_by_id:
+                self._active_progress_id = next(iter(self._progress_visible_by_id))
+        self._update_progress_component()
+
+        if on_complete is manager_proto.ProgressOnComplete.MESSAGE:
+            text = complete_message
+            if text is None or not text.strip():
+                text = "Completed"
+            self.add_text_message(text, text_format="plain")
 
     def _update_progress_component(self) -> None:
         terminal = self._terminal

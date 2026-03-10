@@ -4,8 +4,9 @@ from enum import Enum
 from typing import Annotated, Optional
 from datetime import datetime
 import typing
+import uuid
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from vocode import state
 from vocode.runner import proto as runner_proto
 
@@ -189,22 +190,40 @@ class ProgressStatus(str, Enum):
     END = "end"
 
 
+class ProgressOnComplete(str, Enum):
+    HIDE = "hide"
+    MESSAGE = "message"
+
+
 class ProgressPacket(BaseModel):
     kind: typing.Literal[BasePacketKind.PROGRESS] = Field(
         default=BasePacketKind.PROGRESS
     )
-    progress_id: str
+    progress_id: Optional[str] = Field(default=None)
     status: ProgressStatus
     title: Optional[str] = Field(default=None)
     message: Optional[str] = Field(default=None)
-    fields: dict[str, str] = Field(default_factory=dict)
     mode: ProgressMode = Field(default=ProgressMode.DETERMINISTIC)
     bar_type: ProgressBarType = Field(default=ProgressBarType.BAR)
     completed: Optional[float] = Field(default=None)
     total: Optional[float] = Field(default=None)
     unit: Optional[str] = Field(default=None)
-    eta_seconds: Optional[float] = Field(default=None)
-    elapsed_seconds: Optional[float] = Field(default=None)
+    done: Optional[bool] = Field(default=None)
+    on_complete: Optional[ProgressOnComplete] = Field(default=None)
+    complete_message: Optional[str] = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ensure_progress_id(cls, data):
+        if not isinstance(data, dict):
+            return data
+        pid = data.get("progress_id")
+        if pid is None:
+            data["progress_id"] = f"progress:{uuid.uuid4().hex}"
+            return data
+        if isinstance(pid, str) and pid.strip() == "":
+            data["progress_id"] = f"progress:{uuid.uuid4().hex}"
+        return data
 
 
 BasePacket = Annotated[
