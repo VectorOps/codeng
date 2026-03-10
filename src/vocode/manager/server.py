@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Optional, cast
 import time
+import uuid
 
 from vocode import settings as vocode_settings
 from vocode import models
@@ -190,23 +191,29 @@ class UIServer:
     async def _emit_progress_start(
         self,
         *,
-        progress_id: str,
+        progress_id: Optional[str] = None,
         title: Optional[str],
         message: Optional[str],
         mode: manager_proto.ProgressMode,
         bar_type: manager_proto.ProgressBarType,
-        fields: Optional[dict[str, str]] = None,
+        on_complete: Optional[manager_proto.ProgressOnComplete] = None,
+        complete_message: Optional[str] = None,
     ) -> None:
+        resolved_id = progress_id
+        if resolved_id is None:
+            resolved_id = f"progress:{uuid.uuid4().hex}"
         packet = manager_proto.ProgressPacket(
-            progress_id=progress_id,
+            progress_id=resolved_id,
             status=manager_proto.ProgressStatus.START,
             title=title,
             message=message,
-            fields={} if fields is None else dict(fields),
             mode=mode,
             bar_type=bar_type,
+            on_complete=on_complete,
+            complete_message=complete_message,
         )
         await self.send_packet(packet)
+        self._progress_last_sent_at_by_id.pop(resolved_id, None)
 
     def _make_knowlt_progress_callback(
         self,
@@ -214,11 +221,8 @@ class UIServer:
         progress_id: str,
         title: str,
         message: Optional[str] = None,
-        fields: Optional[dict[str, str]] = None,
         unit: Optional[str] = "files",
     ):
-        initial_fields: dict[str, str] = {} if fields is None else dict(fields)
-
         def _cb(evt) -> None:
             async def _emit() -> None:
                 try:
@@ -242,20 +246,15 @@ class UIServer:
                     mode = manager_proto.ProgressMode.DETERMINISTIC
                     bar_type = manager_proto.ProgressBarType.BAR
 
-                update_fields = dict(initial_fields)
                 try:
                     repo_id = str(evt.repo_id)
                 except Exception:
                     repo_id = None
-                if repo_id:
-                    update_fields["repo_id"] = repo_id
 
-                label = update_fields.get("repo_name")
-                if not label and repo_id:
-                    cached = self._know_repo_label_by_id.get(repo_id)
-                    if cached:
-                        label = cached
-                    else:
+                label = None
+                if repo_id:
+                    label = self._know_repo_label_by_id.get(repo_id)
+                    if not label:
                         try:
                             repo_list = await self._manager.project.know.pm.data.repo.get_by_ids(
                                 [repo_id]
@@ -270,9 +269,6 @@ class UIServer:
                             else:
                                 label = repo.name
                             self._know_repo_label_by_id[repo_id] = label
-                            update_fields["repo_name"] = repo.name
-                            if root:
-                                update_fields["repo_path"] = root
 
                 resolved_message = message
                 if resolved_message is None:
@@ -285,13 +281,20 @@ class UIServer:
                     progress_id=progress_id,
                     title=title,
                     message=resolved_message,
-                    fields=update_fields,
                     mode=mode,
                     bar_type=bar_type,
                     completed=processed,
                     total=total,
                     unit=unit,
-                    elapsed_seconds=elapsed,
+                    done=(
+                        True
+                        if (
+                            processed is not None
+                            and total is not None
+                            and processed >= total
+                        )
+                        else None
+                    ),
                 )
 
             asyncio.create_task(_emit())
@@ -306,19 +309,12 @@ class UIServer:
             message=repo.name,
             mode=manager_proto.ProgressMode.INDETERMINATE,
             bar_type=manager_proto.ProgressBarType.PULSE,
-            fields={
-                "repo_name": repo.name,
-                "repo_id": repo.id,
-            },
+            on_complete=manager_proto.ProgressOnComplete.HIDE,
         )
         cb = self._make_knowlt_progress_callback(
             progress_id=progress_id,
             title="Indexing repository",
             message=repo.name,
-            fields={
-                "repo_name": repo.name,
-                "repo_id": repo.id,
-            },
         )
         try:
             await self._manager.project.know.refresh(repo, progress_callback=cb)
@@ -333,22 +329,31 @@ class UIServer:
             message=None,
             mode=manager_proto.ProgressMode.INDETERMINATE,
             bar_type=manager_proto.ProgressBarType.PULSE,
+            on_complete=manager_proto.ProgressOnComplete.HIDE,
         )
         cb = self._make_knowlt_progress_callback(
             progress_id=progress_id,
             title="Indexing repositories",
             message=None,
-            fields=None,
         )
         try:
             await self._manager.project.know.refresh_all(progress_callback=cb)
         finally:
             await self._emit_progress_end(progress_id=progress_id)
 
-    async def _emit_progress_end(self, *, progress_id: str) -> None:
+    async def _emit_progress_end(
+        self,
+        *,
+        progress_id: str,
+        on_complete: Optional[manager_proto.ProgressOnComplete] = None,
+        complete_message: Optional[str] = None,
+    ) -> None:
         packet = manager_proto.ProgressPacket(
             progress_id=progress_id,
             status=manager_proto.ProgressStatus.END,
+            done=True,
+            on_complete=on_complete,
+            complete_message=complete_message,
         )
         await self.send_packet(packet)
 
@@ -358,14 +363,14 @@ class UIServer:
         progress_id: str,
         title: Optional[str] = None,
         message: Optional[str] = None,
-        fields: Optional[dict[str, str]] = None,
         mode: Optional[manager_proto.ProgressMode] = None,
         bar_type: Optional[manager_proto.ProgressBarType] = None,
         completed: Optional[float] = None,
         total: Optional[float] = None,
         unit: Optional[str] = None,
-        eta_seconds: Optional[float] = None,
-        elapsed_seconds: Optional[float] = None,
+        done: Optional[bool] = None,
+        on_complete: Optional[manager_proto.ProgressOnComplete] = None,
+        complete_message: Optional[str] = None,
         min_interval_s: float = 0.25,
     ) -> None:
         now = time.monotonic()
@@ -379,7 +384,6 @@ class UIServer:
             status=manager_proto.ProgressStatus.UPDATE,
             title=title,
             message=message,
-            fields={} if fields is None else dict(fields),
             mode=mode if mode is not None else manager_proto.ProgressMode.DETERMINISTIC,
             bar_type=(
                 bar_type if bar_type is not None else manager_proto.ProgressBarType.BAR
@@ -387,8 +391,9 @@ class UIServer:
             completed=completed,
             total=total,
             unit=unit,
-            eta_seconds=eta_seconds,
-            elapsed_seconds=elapsed_seconds,
+            done=done,
+            on_complete=on_complete,
+            complete_message=complete_message,
         )
         await self.send_packet(packet)
 
