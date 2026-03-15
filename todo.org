@@ -1,8 +1,11 @@
 #+title: Todo
 
 * [ ] General
-** [ ] knowlt: reject virtual path writes
+** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
+** [X] knowlt: reject virtual path writes
 ** [ ] Nicely format tool call rejection text
+** [ ] Implement combined input/http_input component
+*** [ ] Think about unified input executor
 ** [X] If tool call is just approved, do not generate component with "User approved." text.
 ** [ ] Update task list error needs to be formatted (or not displayed)
 ** [X] Add dynamic progress indicator for knowlt
@@ -22,7 +25,7 @@
 *** [ ] Fail if user wants a confirmation in non-interactive mode
 ** [X] Fix up logging
 *** [X] LiteLLM critical errors should be intercepted and displayed via existing rendering machinery
-** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
+** [ ] Editing history with subagent does not delete subagent components
 ** [X] Tool call rejection with the message needs format
 ** [X] Add commands to tool approval that change behavior (auto-approve tool for this session, etc)
 ** [ ] Know: rename read_files to read_file
@@ -32,13 +35,11 @@
 ** [ ] Store cached stats in LLM usage stats
 ** [X] Create alternative Markdown renderer that only highlights, but does not format
 ** [X] Need apply_patch formatter with input and output (collapsed)
-** [ ] Assign a number to collapse/expand a specific component and show number in the component view. (bad idea due to repaints?)
+** [-] Assign a number to collapse/expand a specific component and show number in the component view. (bad idea due to repaints?)
 ** [ ] Compact tool call representation, where consequent calls are merged onto a single.
 ** [ ] Hide time indicator for tool calls - it is not helpful
 ** [ ] Limit number of lines actually rendered for full refreshes, make the number configurable
-** [ ] Combine input + toolbar + help + etc to a single component due to dynamic component shifting
-- Move stacking logic out of TUIState
-- Move keyboard logic out of TUIState
+** [X] Combine input + toolbar + help + etc to a single component due to dynamic component shifting
 ** [ ] Figure out how to support parallel nested workflows:
 - Remove the single workflow stack or refactor it to contain a list of runners instead of one 
 - Figure out how to drive multiple parallel workflow tasks. Multiple coordinators? Single awaitable for results? 
@@ -57,8 +58,8 @@
 ** [ ] Measure and report time it took to run the step at the step bottom.
 - Figure out a way to add component under last message and skip it when adding a new step message
 ** [X] Add /reset command
-** [ ] Test multi-screen paste
-*** [ ] Handle paste without showing whole content
+** [X] Test multi-screen paste
+*** [X] Handle paste without showing whole content
 ** [ ] Add a way for knowlt to return individual symbols from file by id.
 ** [ ] Add collapse/expand for components
 *** [ ] Add default setting into node for collapse status and lines.
@@ -69,11 +70,11 @@
 *** [ ] Do client-side validation or hide auto-complete if user keeps typing
 ** [ ] Continue after stop needs explicit separator.
 ** [ ] Show node transitions in the UI?
-** [ ] Gemini 3 support
-*** [ ] Temperature control
-** [ ] Add ctrl+r history search
+** [X] Gemini 3 support
+*** [X] Temperature control
+** [X] Add ctrl+r history search
 ** [ ] Add context compression? How?
-** [ ] Collapse/expand to work with visible components first, then continue going backwards. Keep track of updated components to resume from.
+** [X] Collapse/expand to work with visible components first, then continue going backwards. Keep track of updated components to resume from.
 * [ ] Settings
 ** [ ] Tweak templated nodes
 ** [ ] Create correct initial templates for chat, coder, architect and agent.
@@ -109,6 +110,7 @@
 ** [ ] C parser
 ** [ ] C++ parser
 ** [ ] Add extensions to parsers (.h -> cpp or to c, etc)
+** [ ] Text parser (any file that is ASCII)
 * [ ] Worktree support
 ** [ ] Extend know to support worktree
 *** [ ] Worktrees table and nullable worktree_id to all tables

@@ -4,6 +4,8 @@ import pathlib
 from typing import Callable, Dict, List, Tuple, Optional
 from abc import ABC, abstractmethod
 
+from knowlt.consts import VIRTUAL_PATH_PREFIX
+
 from .models import FileApplyStatus
 from .v4a import (
     process_patch as v4a_process_patch,
@@ -40,6 +42,48 @@ def get_system_instruction(fmt: str) -> str:
     return entry["system_prompt"]  # type: ignore[return-value]
 
 
+def _normalize_patch_rel_path(rel: str) -> str:
+    normalized = rel.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def build_knowlt_virtual_path_guard(project: Optional[object]) -> Callable[[str], bool]:
+    enable_project_paths = False
+    default_repo_name: Optional[str] = None
+    deconstruct_virtual_path = None
+
+    if project is not None:
+        settings = project.settings
+        if settings is not None and settings.know_enabled and settings.know is not None:
+            enable_project_paths = bool(settings.know.paths.enable_project_paths)
+            default_repo_name = settings.know.repo_name
+
+            try:
+                deconstruct_virtual_path = project.know.pm.deconstruct_virtual_path
+            except AttributeError:
+                deconstruct_virtual_path = None
+
+    def _is_knowlt_virtual_path(rel: str) -> bool:
+        normalized = _normalize_patch_rel_path(rel)
+        if normalized == VIRTUAL_PATH_PREFIX or normalized.startswith(
+            f"{VIRTUAL_PATH_PREFIX}/"
+        ):
+            return True
+        if not enable_project_paths:
+            return False
+        if deconstruct_virtual_path is not None:
+            return deconstruct_virtual_path(normalized) is not None
+        if not default_repo_name:
+            return False
+        return normalized == default_repo_name or normalized.startswith(
+            f"{default_repo_name}/"
+        )
+
+    return _is_knowlt_virtual_path
+
+
 class PatchFileOps(ABC):
     """
     Abstract contract for file operations used by patch processors.
@@ -70,13 +114,21 @@ class FileSystemPatchFileOps(PatchFileOps):
     records change kinds for refresh.
     """
 
-    def __init__(self, base_path: pathlib.Path):
+    def __init__(
+        self,
+        base_path: pathlib.Path,
+        *,
+        is_blocked_write_path: Optional[Callable[[str], bool]] = None,
+    ):
         self._base_path = base_path
         self._changes: Dict[str, str] = {}
+        self._is_blocked_write_path = is_blocked_write_path
 
     def _resolve_safe_path(self, rel: str) -> pathlib.Path:
         if rel.startswith("/") or rel.startswith("~"):
             raise DiffError(f"Absolute paths are not allowed: {rel}")
+        if self._is_blocked_write_path is not None and self._is_blocked_write_path(rel):
+            raise DiffError(f"KnowLT virtual paths are read-only in apply_patch: {rel}")
         abs_path = (self._base_path / rel).resolve()
         base_resolved = self._base_path.resolve()
         if str(abs_path).startswith(str(base_resolved)):
@@ -121,6 +173,7 @@ def apply_patch(
     text: str,
     base_path: pathlib.Path,
     ops: Optional[PatchFileOps] = None,
+    project: Optional[object] = None,
 ) -> Tuple[str, str, Dict[str, str], Dict[str, FileApplyStatus], List[object]]:
     """
     Apply a patch using the specified format ('v4a' or 'patch').
@@ -133,7 +186,10 @@ def apply_patch(
     if not entry:
         raise ValueError(f"Unsupported patch format: {fmt}")
     handler = entry["handler"]  # type: ignore[assignment]
-    file_ops = ops or FileSystemPatchFileOps(base_path)
+    file_ops = ops or FileSystemPatchFileOps(
+        base_path,
+        is_blocked_write_path=build_knowlt_virtual_path_guard(project),
+    )
 
     # Process
     statuses, errs = handler(  # type: ignore[misc]

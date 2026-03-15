@@ -110,6 +110,7 @@ class ApplyPatchExecutor(BaseExecutor):
                 fmt,
                 source_text,
                 base_path,
+                project=self.project,
             )
 
             change_type_map = {

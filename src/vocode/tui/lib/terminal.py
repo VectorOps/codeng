@@ -555,22 +555,22 @@ class Terminal:
         if remaining:
             return False
 
-        # Remove components for good
-        self._delete_removed_components()
-
         # Get a list of all components starting with the top-most changed
         tail_components = self._components[start_index:]
         if not tail_components:
+            self._delete_removed_components()
             return True
 
         lines_to_output: tui_base.Lines = []
+        removed_components = self._removed_components
 
         # Special optimization for top-most component - we only need to render its changed lines
         top_component = tail_components[0]
         top_old_lines = self._cache.get(top_component, [])
-        if top_component.is_hidden:
+        if top_component in removed_components or top_component.is_hidden:
             top_new_lines: tui_base.Lines = []
-            self._cache[top_component] = []
+            if top_component not in removed_components:
+                self._cache[top_component] = []
         else:
             top_new_lines = top_component.render(options)
             self._cache[top_component] = top_new_lines
@@ -598,9 +598,10 @@ class Terminal:
         # Render remaining components
         for component in tail_components[1:]:
             cached_lines = self._cache.get(component)
-            if component.is_hidden:
+            if component in removed_components or component.is_hidden:
                 new_lines = []
-                self._cache[component] = []
+                if component not in removed_components:
+                    self._cache[component] = []
             elif component in changed_components or cached_lines is None:
                 new_lines = component.render(options)
                 self._cache[component] = new_lines
@@ -653,6 +654,8 @@ class Terminal:
 
         self._set_cursor_line(new_cursor_line)
         self._console.control(tui_controls.CustomControl.sync_update_end())
+
+        self._delete_removed_components()
 
         # Update component visibility using a conservative bottom-up band and cleanup
         n_components = len(self._components)

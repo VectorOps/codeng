@@ -52,7 +52,7 @@ class ApplyPatchTool(tools_base.BaseTool):
         # Apply the patch using helper; schedule a refresh if changes occurred
         try:
             summary, _outcome, changes_map, _statuses, _errs = apply_patch(
-                fmt, text, base_path
+                fmt, text, base_path, project=self.prj
             )
             # Build refresh payload if project exposes refresh API
             try:
