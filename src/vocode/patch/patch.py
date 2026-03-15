@@ -264,6 +264,12 @@ def parse_patch(text: str) -> Tuple[Patch, List[PatchError]]:
             )
         )
 
+    if not patch.actions and not errors:
+        add_error(
+            "No SEARCH/REPLACE blocks found in patch input",
+            hint="Provide at least one fenced SEARCH/REPLACE block",
+        )
+
     return patch, errors
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import platform
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -125,11 +126,23 @@ class ExecTool(tools_base.BaseTool):
         rc: Optional[int] = None
         try:
             rc = await handle.wait()
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await handle.terminate(grace_s=1.0)
+            with contextlib.suppress(Exception):
+                if handle.alive():
+                    await handle.kill()
+            for reader in readers:
+                reader.cancel()
+            await asyncio.gather(*readers, return_exceptions=True)
+            raise
         except asyncio.TimeoutError:
             timed_out = True
             rc = None
         finally:
-            await asyncio.gather(*readers, return_exceptions=True)
+            pending_readers = [reader for reader in readers if not reader.done()]
+            if pending_readers:
+                await asyncio.gather(*pending_readers, return_exceptions=True)
 
         output = "".join(stdout_parts) + "".join(stderr_parts)
         max_output_chars = _get_max_output_chars(self.prj, spec)

@@ -15,6 +15,8 @@ from tests.stub_project import StubProject
 pytestmark = [
     pytest.mark.skipif(os.name != "posix", reason="POSIX-only tests"),
 ]
+
+
 def test_exec_tool_basic_stderr_and_timeout(tmp_path: Path):
     async def scenario():
         pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
@@ -51,6 +53,37 @@ def test_exec_tool_basic_stderr_and_timeout(tmp_path: Path):
         assert data4["timed_out"] is True
         assert data4["exit_code"] is None
         assert data4["output"] == ""
+
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_exec_tool_cancellation_stops_process(tmp_path: Path):
+    async def scenario():
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        proj = StubProject(process_manager=pm)
+        tool = ExecTool(proj)
+        spec = ToolSpec(name="exec", config={"timeout_s": 30})
+        execution = vocode_state.WorkflowExecution(workflow_name="test")
+        tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+
+        task = asyncio.create_task(
+            tool.run(tool_req, {"command": "python -c 'import time; time.sleep(30)'"})
+        )
+
+        await asyncio.sleep(0.2)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        shells = proj.shells
+        assert shells is not None
+        assert not shells._run_lock.locked()
+
+        handle = await shells.run("echo done", timeout=1)
+        assert await handle.wait() == 0
 
         await pm.shutdown()
 
@@ -113,4 +146,3 @@ def test_exec_tool_output_truncation_respects_settings(tmp_path: Path):
         await pm.shutdown()
 
     asyncio.run(scenario())
-

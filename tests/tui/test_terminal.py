@@ -729,6 +729,40 @@ async def test_incremental_render_appends_line_with_offscreen_top() -> None:
 
 
 @pytest.mark.asyncio
+async def test_incremental_render_removes_middle_component() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        height=5,
+    )
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    first = DummyComponent("one")
+    second = DummyComponent("two")
+    third = DummyComponent("three")
+    terminal.append_component(first)
+    terminal.append_component(second)
+    terminal.append_component(third)
+    await terminal.render()
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    terminal.remove_component(second)
+    await terminal.render()
+
+    output = buffer.getvalue()
+    assert "two" not in output
+    assert "three" in output
+    assert tui_controls.ERASE_SCROLLBACK not in output
+    assert tui_controls.ERASE_DOWN in output
+    assert second not in terminal.components
+
+
+@pytest.mark.asyncio
 async def test_insert_component_at_beginning() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)

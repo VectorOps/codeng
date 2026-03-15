@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from knowlt.settings import ProjectSettings as KnowProjectSettings
 from vocode import models, state
 from vocode.runner.base import ExecutorFactory, ExecutorInput
 from vocode.runner.executors.apply_patch_node import (
@@ -109,4 +110,49 @@ async def test_apply_patch_executor_unsupported_format(tmp_path: Path) -> None:
     assert step.outcome_name == "fail"
     assert step.message is not None
     assert "Unsupported patch format" in step.message.text
+    assert project.refresh_calls == []
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_executor_rejects_knowlt_project_path(tmp_path: Path) -> None:
+    patch_text = """*** Begin Patch
+*** Add File: repo/f.txt
++ blocked
+*** End Patch"""
+
+    project = PatchExecTestProject(tmp_path)
+    project.settings = Settings(
+        know=KnowProjectSettings(
+            project_name="proj",
+            repo_name="repo",
+            paths={"enable_project_paths": True},
+        )
+    )
+    node = ApplyPatchNode(name="apply", format="v4a")
+    execution = state.NodeExecution(
+        node=node.name,
+        status=state.RunStatus.RUNNING,
+        input_messages=[
+            state.Message(
+                role=models.Role.ASSISTANT,
+                text=patch_text,
+            )
+        ],
+    )
+    run = state.WorkflowExecution(workflow_name="wf")
+    run.node_executions[execution.id] = execution
+    executor = ExecutorFactory.create_for_node(node, project=project)
+    assert isinstance(executor, ApplyPatchExecutor)
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps = [step async for step in executor.run(inp)]
+
+    assert len(steps) == 1
+    step = steps[0]
+    assert step.is_complete
+    assert step.is_final
+    assert step.outcome_name == "fail"
+    assert step.message is not None
+    assert "KnowLT virtual paths are read-only" in step.message.text
+    assert not (tmp_path / "repo").exists()
     assert project.refresh_calls == []

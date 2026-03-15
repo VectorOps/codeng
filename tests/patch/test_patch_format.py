@@ -359,3 +359,26 @@ def test_unicode_content_fenced_patch():
     assert writes["unicode.txt"] == (
         "pre\n" + f"value = '{snowman}{snowman}'\n" + "post\n"
     )
+
+
+def test_process_patch_errors_when_no_blocks_found():
+    writes: dict[str, str] = {}
+    deletions: list[str] = []
+
+    def write_fn(path: str, content: str) -> None:
+        writes[path] = content
+
+    def open_fn(path: str) -> str:
+        raise AssertionError("open_fn should not be called when no blocks exist")
+
+    def delete_fn(path: str) -> None:
+        deletions.append(path)
+
+    statuses, errors = process_patch(
+        "no patch blocks here", open_fn, write_fn, delete_fn
+    )
+
+    assert statuses == {}
+    assert writes == {}
+    assert deletions == []
+    assert any("No SEARCH/REPLACE blocks found" in e.msg for e in errors)

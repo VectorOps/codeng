@@ -3,9 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from knowlt.settings import ProjectSettings as KnowProjectSettings
 from vocode.tools import ToolFactory, base as tools_base
 from vocode import state as vocode_state
-from vocode.settings import ToolSpec
+from vocode.settings import Settings, ToolSpec
 import vocode.patch as patch_mod
 from tests.stub_project import StubProject
 
@@ -98,3 +99,61 @@ async def test_apply_patch_tool_openapi_includes_format_instructions(tmp_path: P
     instruction = patch_mod.get_system_instruction("v4a")
 
     assert instruction in description
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_tool_rejects_knowlt_virtual_path(tmp_path: Path):
+    project = PatchTestProject(tmp_path)
+    project.settings = Settings(
+        know=KnowProjectSettings(project_name="proj", repo_name="repo")
+    )
+    ToolClass = ToolFactory.get("apply_patch")
+    assert ToolClass is not None
+
+    tool = ToolClass(project)  # type: ignore[call-arg]
+
+    spec = ToolSpec(name="apply_patch", config={"format": "v4a"})
+    execution = vocode_state.WorkflowExecution(workflow_name="test")
+    tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+    resp = await tool.run(
+        tool_req,
+        {
+            "text": "*** Begin Patch\n*** Add File: .virtual-path/other-repo/f.txt\n+blocked\n*** End Patch"
+        },
+    )
+
+    assert resp is not None
+    assert resp.type.value == "text"
+    assert "KnowLT virtual paths are read-only" in (resp.text or "")
+    assert not (tmp_path / ".virtual-path").exists()
+    assert project.refresh_calls == []
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_tool_rejects_knowlt_project_path(tmp_path: Path):
+    project = PatchTestProject(tmp_path)
+    project.settings = Settings(
+        know=KnowProjectSettings(
+            project_name="proj",
+            repo_name="repo",
+            paths={"enable_project_paths": True},
+        )
+    )
+    ToolClass = ToolFactory.get("apply_patch")
+    assert ToolClass is not None
+
+    tool = ToolClass(project)  # type: ignore[call-arg]
+
+    spec = ToolSpec(name="apply_patch", config={"format": "v4a"})
+    execution = vocode_state.WorkflowExecution(workflow_name="test")
+    tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+    resp = await tool.run(
+        tool_req,
+        {"text": "*** Begin Patch\n*** Add File: repo/f.txt\n+blocked\n*** End Patch"},
+    )
+
+    assert resp is not None
+    assert resp.type.value == "text"
+    assert "KnowLT virtual paths are read-only" in (resp.text or "")
+    assert not (tmp_path / "repo").exists()
+    assert project.refresh_calls == []
