@@ -30,28 +30,25 @@ def test_tui_state_deletes_steps_by_id() -> None:
     )
 
     execution = state.WorkflowExecution(workflow_name="wf-step-delete")
-    node_execution = state.NodeExecution(
+    node_execution = execution.create_node_execution(
         node="node",
         status=state.RunStatus.RUNNING,
     )
-    execution.node_executions[node_execution.id] = node_execution
 
-    step1 = state.Step(
-        execution=node_execution,
+    msg1 = state.Message(role=models.Role.ASSISTANT, text="hello")
+    msg2 = state.Message(role=models.Role.USER, text="user")
+    execution.add_message(msg1)
+    execution.add_message(msg2)
+    step1 = execution.create_step(
+        execution_id=node_execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
-        message=state.Message(
-            role=models.Role.ASSISTANT,
-            text="hello",
-        ),
+        message_id=msg1.id,
         is_complete=True,
     )
-    step2 = state.Step(
-        execution=node_execution,
+    step2 = execution.create_step(
+        execution_id=node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
-        message=state.Message(
-            role=models.Role.USER,
-            text="user",
-        ),
+        message_id=msg2.id,
         is_complete=True,
     )
 

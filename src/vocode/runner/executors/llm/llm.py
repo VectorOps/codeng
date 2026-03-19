@@ -174,7 +174,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         )
         workflow_execution = base_step._workflow_execution
         if workflow_execution is not None:
-            workflow_execution.messages_by_id[message.id] = message
+            workflow_execution.add_message(message)
 
         update: Dict[str, Any] = {
             "type": step_type,
@@ -186,9 +186,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         if outcome_name is not None:
             update["outcome_name"] = outcome_name
 
-        step = base_step.model_copy(update=update)
-        step._message = message
-        return step
+        return base_step.model_copy(update=update)
 
     async def _build_tools(self, effective_specs) -> Optional[List[Dict[str, Any]]]:
         cfg = self.config
@@ -240,10 +238,9 @@ class LLMExecutor(runner_base.BaseExecutor):
                 tools = []
             tools.append(choose_tool)
 
-        step = state.Step(
+        step = inp.run.create_step(
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            workflow_execution=inp.run,
         )
 
         extra_args = dict(cfg.extra or {})

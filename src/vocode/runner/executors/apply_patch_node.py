@@ -53,12 +53,11 @@ class ApplyPatchExecutor(BaseExecutor):
                     f"Supported formats: {supported_list}"
                 ),
             )
-            inp.run.messages_by_id[message.id] = message
-            step = state.Step(
+            inp.run.add_message(message)
+            step = inp.run.create_step(
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
-                workflow_execution=inp.run,
                 is_complete=True,
                 is_final=True,
                 outcome_name="fail",
@@ -76,12 +75,11 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="No patch was provided. The patch application has failed.",
             )
-            inp.run.messages_by_id[message.id] = message
-            step = state.Step(
+            inp.run.add_message(message)
+            step = inp.run.create_step(
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
-                workflow_execution=inp.run,
                 is_complete=True,
                 is_final=True,
                 outcome_name="fail",
@@ -96,12 +94,11 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.SYSTEM,
                 text="ApplyPatchExecutor requires project.base_path",
             )
-            inp.run.messages_by_id[message.id] = message
-            step = state.Step(
+            inp.run.add_message(message)
+            step = inp.run.create_step(
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
-                workflow_execution=inp.run,
                 is_complete=True,
                 is_final=True,
                 outcome_name="fail",
@@ -138,12 +135,11 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=summary,
             )
-            inp.run.messages_by_id[message.id] = message
-            step = state.Step(
+            inp.run.add_message(message)
+            step = inp.run.create_step(
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
-                workflow_execution=inp.run,
                 is_complete=True,
                 is_final=True,
                 outcome_name=outcome_name,
@@ -154,12 +150,11 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=f"Error applying patch: {e}",
             )
-            inp.run.messages_by_id[message.id] = message
-            step = state.Step(
+            inp.run.add_message(message)
+            step = inp.run.create_step(
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
-                workflow_execution=inp.run,
                 is_complete=True,
                 is_final=True,
                 outcome_name="fail",

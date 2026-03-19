@@ -31,28 +31,27 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
     for i in range(12):
         ui_state.add_rich_text(f"msg {i}")
 
-    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = run.create_node_execution(node="node", status=state.RunStatus.RUNNING)
     for i in range(12):
-        req = state.ToolCallReq(
-            id=f"call_{i}",
-            name="tool",
-            arguments={"i": i},
-        )
+        req = state.ToolCallReq(id=f"call_{i}", name="tool", arguments={"i": i})
         resp = state.ToolCallResp(
             id=f"call_{i}",
             name="tool",
             result={"ok": True, "i": i},
         )
-        req_step = state.Step(
+        message = state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+            tool_call_responses=[resp],
+        )
+        run.add_message(message)
+        req_step = run.create_step(
             id=uuid4(),
-            execution=execution,
+            execution_id=execution.id,
             type=state.StepType.TOOL_REQUEST,
-            message=state.Message(
-                role=models.Role.ASSISTANT,
-                text="",
-                tool_call_requests=[req],
-                tool_call_responses=[resp],
-            ),
+            message_id=message.id,
         )
         ui_state.handle_step(req_step)
 
@@ -79,7 +78,6 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     assert all(c.is_collapsed for c in tool_components[-10:])
     assert all(c.is_expanded for c in tool_components[:-10])
-    # Command manager closed; clean up removed components before reopening.
     ui_state.terminal._delete_removed_components()
 
     ui_state._input_handler.publish(open_cmd)
@@ -108,22 +106,21 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
         on_eof=None,
     )
 
-    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = run.create_node_execution(node="node", status=state.RunStatus.RUNNING)
     for i in range(25):
-        req = state.ToolCallReq(
-            id=f"call_{i}",
-            name="tool",
-            arguments={"i": i},
+        req = state.ToolCallReq(id=f"call_{i}", name="tool", arguments={"i": i})
+        message = state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
         )
-        req_step = state.Step(
+        run.add_message(message)
+        req_step = run.create_step(
             id=uuid4(),
-            execution=execution,
+            execution_id=execution.id,
             type=state.StepType.TOOL_REQUEST,
-            message=state.Message(
-                role=models.Role.ASSISTANT,
-                text="",
-                tool_call_requests=[req],
-            ),
+            message_id=message.id,
         )
         ui_state.handle_step(req_step)
 

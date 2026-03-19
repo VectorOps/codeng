@@ -1,16 +1,16 @@
-from typing import AsyncIterator, Dict, Callable
+from typing import AsyncIterator, Callable, Dict
 
 import pytest
 
-from vocode import state, models
+from vocode import models, state
 from vocode import settings as vocode_settings
-from vocode.tools import base as tools_base
-from tests.stub_project import StubProject
+from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
-from vocode.runner.runner import Runner, RunEvent, RunnerStopped
 from vocode.runner.proto import RunEventResp, RunEventResponseType
-from vocode.runner import base as runner_base
+from vocode.runner.runner import RunEvent, Runner, RunnerStopped
+from vocode.tools import base as tools_base
+from tests.stub_project import StubProject
 
 
 async def drive_runner(
@@ -68,26 +68,27 @@ class FakeExecutor(BaseExecutor):
 
         if node_name == "node1":
             text_prefix = "run1" if count == 1 else "run2"
-            base_step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
+            partial_message = state.Message(
+                role=models.Role.ASSISTANT,
+                text=f"{text_prefix}-partial",
             )
-            step1 = base_step.model_copy(
-                update={
-                    "message": state.Message(
-                        role=models.Role.ASSISTANT,
-                        text=f"{text_prefix}-partial",
-                    ),
-                    "is_complete": False,
-                }
+            inp.run.add_message(partial_message)
+            step1 = inp.run.create_step(
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=partial_message.id,
+                is_complete=False,
             )
             yield step1
+
+            final_message = state.Message(
+                role=models.Role.ASSISTANT,
+                text=f"{text_prefix}-final",
+            )
+            inp.run.add_message(final_message)
             step2 = step1.model_copy(
                 update={
-                    "message": state.Message(
-                        role=models.Role.ASSISTANT,
-                        text=f"{text_prefix}-final",
-                    ),
+                    "message_id": final_message.id,
                     "is_complete": True,
                 }
             )
@@ -97,10 +98,11 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="node2-output",
             )
-            step = state.Step(
-                execution=execution,
+            inp.run.add_message(msg)
+            step = inp.run.create_step(
+                execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
-                message=msg,
+                message_id=msg.id,
                 outcome_name="go",
                 is_complete=True,
             )
@@ -110,10 +112,11 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="terminal-output",
             )
-            step = state.Step(
-                execution=execution,
+            inp.run.add_message(msg)
+            step = inp.run.create_step(
+                execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
-                message=msg,
+                message_id=msg.id,
                 is_complete=True,
             )
             yield step
@@ -143,21 +146,21 @@ class LoopExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=f"loop-{count}",
         )
-        interim_step = state.Step(
-            execution=execution,
+        inp.run.add_message(msg)
+        interim_step = inp.run.create_step(
+            execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
+            message_id=msg.id,
             is_complete=False,
         )
         yield interim_step
 
         outcome = "again" if count == 1 else "done"
-        final_step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
-            outcome_name=outcome,
-            is_complete=True,
+        final_step = interim_step.model_copy(
+            update={
+                "outcome_name": outcome,
+                "is_complete": True,
+            }
         )
         yield final_step
 
@@ -201,10 +204,11 @@ class ToolPromptExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after tool",
             )
-        step = state.Step(
-            execution=execution,
+        inp.run.add_message(msg)
+        step = inp.run.create_step(
+            execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
+            message_id=msg.id,
             is_complete=True,
         )
         yield step
@@ -247,10 +251,11 @@ class FakeLLMToolExecutor(BaseExecutor):
                 text="with tool",
                 tool_call_requests=[tool_req],
             )
-            step = state.Step(
-                execution=execution,
+            inp.run.add_message(msg)
+            step = inp.run.create_step(
+                execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
-                message=msg,
+                message_id=msg.id,
                 llm_usage=usage,
                 is_complete=True,
             )
@@ -259,10 +264,11 @@ class FakeLLMToolExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after tool",
             )
-            step = state.Step(
-                execution=execution,
+            inp.run.add_message(msg)
+            step = inp.run.create_step(
+                execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
-                message=msg,
+                message_id=msg.id,
                 is_complete=True,
             )
         yield step
@@ -373,15 +379,15 @@ async def test_result_mode_concatenate_final_includes_initial_user_input_step_on
 @ExecutorFactory.register("no-complete")
 class NoCompleteExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        execution = inp.execution
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="no-complete",
         )
-        step = state.Step(
-            execution=execution,
+        inp.run.add_message(msg)
+        step = inp.run.create_step(
+            execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
+            message_id=msg.id,
             is_complete=False,
         )
         yield step
@@ -397,10 +403,11 @@ class MultiCompleteExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="first",
         )
-        step1 = state.Step(
-            execution=execution,
+        inp.run.add_message(msg1)
+        step1 = inp.run.create_step(
+            execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg1,
+            message_id=msg1.id,
             is_complete=True,
         )
         yield step1
@@ -409,10 +416,11 @@ class MultiCompleteExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="second",
         )
-        step2 = state.Step(
-            execution=execution,
+        inp.run.add_message(msg2)
+        step2 = inp.run.create_step(
+            execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg2,
+            message_id=msg2.id,
             is_complete=True,
         )
         yield step2
@@ -433,10 +441,11 @@ class InitialInputEchoExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=text,
         )
-        step = state.Step(
-            execution=execution,
+        inp.run.add_message(msg)
+        step = inp.run.create_step(
+            execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
+            message_id=msg.id,
             is_complete=True,
         )
         yield step
@@ -1075,15 +1084,15 @@ class ResumeRunExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        execution = inp.execution
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="resumed-output",
         )
-        step = state.Step(
-            execution=execution,
+        inp.run.add_message(msg)
+        step = inp.run.create_step(
+            execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
+            message_id=msg.id,
             is_complete=True,
         )
         yield step
@@ -1109,35 +1118,30 @@ async def test_runner_resume_from_output_message_skips_executor_run():
         initial_message=None,
     )
 
-    execution = state.NodeExecution(
+    execution = runner.execution.create_node_execution(
         node="node-output",
-        input_messages=[],
-        steps=[],
+        input_message_ids=[],
+        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
-    runner.execution.node_executions[execution.id] = execution
 
     msg = state.Message(
         role=models.Role.ASSISTANT,
         text="existing-output",
     )
-    output_step = state.Step(
-        execution=execution,
+    runner.execution.add_message(msg)
+    output_step = runner.execution.create_step(
+        execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
-        message=msg,
+        message_id=msg.id,
         is_complete=True,
     )
-    execution.steps.append(output_step)
-    runner.execution.steps.append(output_step)
 
-    extra_step = state.Step(
-        execution=execution,
+    extra_step = runner.execution.create_step(
+        execution_id=execution.id,
         type=state.StepType.PROMPT,
-        message=None,
         is_complete=True,
     )
-    execution.steps.append(extra_step)
-    runner.execution.steps.append(extra_step)
 
     agen = runner.run()
 
@@ -1171,26 +1175,24 @@ async def test_runner_resume_from_input_message_re_runs_executor():
         initial_message=None,
     )
 
-    execution = state.NodeExecution(
+    execution = runner.execution.create_node_execution(
         node="node-input",
-        input_messages=[],
-        steps=[],
+        input_message_ids=[],
+        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
-    runner.execution.node_executions[execution.id] = execution
 
     msg = state.Message(
         role=models.Role.USER,
         text="user input",
     )
-    input_step = state.Step(
-        execution=execution,
+    runner.execution.add_message(msg)
+    runner.execution.create_step(
+        execution_id=execution.id,
         type=state.StepType.INPUT_MESSAGE,
-        message=msg,
+        message_id=msg.id,
         is_complete=True,
     )
-    execution.steps.append(input_step)
-    runner.execution.steps.append(input_step)
 
     agen = runner.run()
     events: list[RunEvent] = []
@@ -1781,13 +1783,12 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         initial_message=None,
     )
 
-    execution = state.NodeExecution(
+    execution = runner.execution.create_node_execution(
         node="node-tool",
-        input_messages=[],
-        steps=[],
+        input_message_ids=[],
+        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
-    runner.execution.node_executions[execution.id] = execution
 
     tool_resp = state.ToolCallResp(
         id="call-fn",
@@ -1800,14 +1801,13 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         text="",
         tool_call_responses=[tool_resp],
     )
-    tool_step = state.Step(
-        execution=execution,
+    runner.execution.add_message(msg)
+    runner.execution.create_step(
+        execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
-        message=msg,
+        message_id=msg.id,
         is_complete=True,
     )
-    execution.steps.append(tool_step)
-    runner.execution.steps.append(tool_step)
 
     agen = runner.run()
     events: list[RunEvent] = []

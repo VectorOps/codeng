@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from knowlt.settings import ProjectSettings as KnowProjectSettings
+from tests.stub_project import StubProject
 from vocode import models, state
 from vocode.runner.base import ExecutorFactory, ExecutorInput
 from vocode.runner.executors.apply_patch_node import (
@@ -11,7 +12,6 @@ from vocode.runner.executors.apply_patch_node import (
     ApplyPatchNode,
 )
 from vocode.settings import Settings
-from tests.stub_project import StubProject
 
 
 class PatchExecTestProject(StubProject):
@@ -42,18 +42,14 @@ async def test_apply_patch_executor_success(tmp_path: Path) -> None:
 
     project = PatchExecTestProject(tmp_path)
     node = ApplyPatchNode(name="apply", format="v4a")
-    execution = state.NodeExecution(
+    run = state.WorkflowExecution(workflow_name="wf")
+    patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
+    run.add_message(patch_message)
+    execution = run.create_node_execution(
         node=node.name,
         status=state.RunStatus.RUNNING,
-        input_messages=[
-            state.Message(
-                role=models.Role.ASSISTANT,
-                text=patch_text,
-            )
-        ],
+        input_message_ids=[patch_message.id],
     )
-    run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
     executor = ExecutorFactory.create_for_node(node, project=project)
     assert isinstance(executor, ApplyPatchExecutor)
     inp = ExecutorInput(execution=execution, run=run)
@@ -85,18 +81,14 @@ async def test_apply_patch_executor_unsupported_format(tmp_path: Path) -> None:
 
     project = PatchExecTestProject(tmp_path)
     node = ApplyPatchNode(name="apply", format="unknown")
-    execution = state.NodeExecution(
+    run = state.WorkflowExecution(workflow_name="wf")
+    patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
+    run.add_message(patch_message)
+    execution = run.create_node_execution(
         node=node.name,
         status=state.RunStatus.RUNNING,
-        input_messages=[
-            state.Message(
-                role=models.Role.ASSISTANT,
-                text=patch_text,
-            )
-        ],
+        input_message_ids=[patch_message.id],
     )
-    run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
     executor = ExecutorFactory.create_for_node(node, project=project)
     assert isinstance(executor, ApplyPatchExecutor)
     inp = ExecutorInput(execution=execution, run=run)
@@ -129,18 +121,14 @@ async def test_apply_patch_executor_rejects_knowlt_project_path(tmp_path: Path) 
         )
     )
     node = ApplyPatchNode(name="apply", format="v4a")
-    execution = state.NodeExecution(
+    run = state.WorkflowExecution(workflow_name="wf")
+    patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
+    run.add_message(patch_message)
+    execution = run.create_node_execution(
         node=node.name,
         status=state.RunStatus.RUNNING,
-        input_messages=[
-            state.Message(
-                role=models.Role.ASSISTANT,
-                text=patch_text,
-            )
-        ],
+        input_message_ids=[patch_message.id],
     )
-    run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
     executor = ExecutorFactory.create_for_node(node, project=project)
     assert isinstance(executor, ApplyPatchExecutor)
     inp = ExecutorInput(execution=execution, run=run)

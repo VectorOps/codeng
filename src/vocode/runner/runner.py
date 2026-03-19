@@ -164,12 +164,11 @@ class Runner:
             text="",
             tool_call_requests=[req],
         )
-        self.execution.messages_by_id[prompt_message.id] = prompt_message
-        prompt_step = state.Step(
+        self.execution.add_message(prompt_message)
+        prompt_step = self.execution.create_step(
             execution_id=execution.id,
             type=state.StepType.TOOL_REQUEST,
             message_id=prompt_message.id,
-            workflow_execution=self.execution,
             is_complete=True,
             is_final=False,
         )
@@ -232,12 +231,11 @@ class Runner:
             role=models.Role.SYSTEM,
             text=text,
         )
-        self.execution.messages_by_id[error_message.id] = error_message
-        error_step = state.Step(
+        self.execution.add_message(error_message)
+        error_step = self.execution.create_step(
             execution_id=execution.id,
             type=state.StepType.REJECTION,
             message_id=error_message.id,
-            workflow_execution=self.execution,
         )
         persisted_error = self._persist_step(error_step)
         return RunEventReq(
@@ -248,33 +246,12 @@ class Runner:
 
     # History management
     def _persist_step(self, step: state.Step) -> state.Step:
-        execution = step.execution
-        if execution.id not in self.execution.node_executions:
-            self.execution.node_executions[execution.id] = execution
-
-        node_execution = self.execution.node_executions[execution.id]
-
-        node_steps = node_execution.steps
-        existing_index = None
-        for i in range(len(node_steps) - 1, -1, -1):
-            if node_steps[i].id == step.id:
-                existing_index = i
-                break
-        if existing_index is not None:
-            node_steps[existing_index] = step
+        if step.execution_id not in self.execution.node_executions:
+            raise KeyError(f"Unknown node execution id: {step.execution_id}")
+        if step.id in self.execution.steps_by_id:
+            self.execution.steps_by_id[step.id] = step
         else:
-            node_steps.append(step)
-
-        run_steps = self.execution.steps
-        existing_run_index = None
-        for i in range(len(run_steps) - 1, -1, -1):
-            if run_steps[i].id == step.id:
-                existing_run_index = i
-                break
-        if existing_run_index is not None:
-            run_steps[existing_run_index] = step
-        else:
-            run_steps.append(step)
+            self.execution.add_step(step)
         if (
             step.type == state.StepType.INPUT_MESSAGE
             and step.message is not None
@@ -379,7 +356,7 @@ class Runner:
         if input_messages is not None:
             effective_input_messages.extend(input_messages)
         for message in effective_input_messages:
-            self.execution.messages_by_id[message.id] = message
+            self.execution.add_message(message)
         execution = self.execution.create_node_execution(
             node=node_name,
             input_message_ids=[message.id for message in effective_input_messages],
@@ -483,14 +460,13 @@ class Runner:
             step_type = state.StepType.INPUT_MESSAGE
         else:
             return None
-        step = state.Step(
+        if message is not None:
+            self.execution.add_message(message)
+        step = self.execution.create_step(
             execution_id=base_execution.id,
             type=step_type,
             message_id=(message.id if message is not None else None),
-            workflow_execution=self.execution,
         )
-        if message is not None:
-            self.execution.messages_by_id[message.id] = message
         persisted = self._persist_step(step)
         return persisted
 
@@ -556,12 +532,11 @@ class Runner:
                     role=models.Role.ASSISTANT,
                     text=prompt_text,
                 )
-                self.execution.messages_by_id[prompt_message.id] = prompt_message
-                prompt_step = state.Step(
+                self.execution.add_message(prompt_message)
+                prompt_step = self.execution.create_step(
                     execution_id=current_execution.id,
                     type=state.StepType.PROMPT,
                     message_id=prompt_message.id,
-                    workflow_execution=self.execution,
                     is_complete=True,
                 )
                 persisted_prompt = self._persist_step(prompt_step)
@@ -711,14 +686,13 @@ class Runner:
                             ),
                         )
 
-                    result_step = state.Step(
+                    self.execution.add_message(result_message)
+                    result_step = self.execution.create_step(
                         execution_id=current_execution.id,
                         type=state.StepType.WORKFLOW_RESULT,
                         message_id=result_message.id,
-                        workflow_execution=self.execution,
                         is_complete=True,
                     )
-                    self.execution.messages_by_id[result_message.id] = result_message
                     self._persist_step(result_step)
                     continue
 
@@ -910,7 +884,6 @@ class Runner:
                             if tool_message is None:
                                 continue
                             tool_message.tool_call_responses = list(per_req)
-                            tool_step._message = tool_message
                             self.execution.messages_by_id[tool_message.id] = (
                                 tool_message
                             )
@@ -922,7 +895,6 @@ class Runner:
                             )
                             _ = yield tool_event
 
-                        last_complete_step._message = msg
                         self.execution.messages_by_id[msg.id] = msg
                         persisted_step = self._persist_step(last_complete_step)
                         event = RunEventReq(
@@ -949,14 +921,11 @@ class Runner:
                         prompt_type = state.StepType.PROMPT_CONFIRM
                         if confirmation_mode == models.Confirmation.LOOP:
                             prompt_type = state.StepType.PROMPT
-                        prompt_step = state.Step(
+                        self.execution.add_message(prompt_message)
+                        prompt_step = self.execution.create_step(
                             execution_id=current_execution.id,
                             type=prompt_type,
                             message_id=prompt_message.id,
-                            workflow_execution=self.execution,
-                        )
-                        self.execution.messages_by_id[prompt_message.id] = (
-                            prompt_message
                         )
                         persisted_prompt = self._persist_step(prompt_step)
 

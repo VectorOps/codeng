@@ -1,12 +1,12 @@
-from vocode import state, models
-from tests.stub_project import StubProject
+from vocode import models, state
 from vocode.runner.base import ExecutorInput
 from vocode.runner.executors.llm.llm import (
     LLMExecutor,
-    ToolCallProviderState,
     LLMStepState,
+    ToolCallProviderState,
 )
 from vocode.runner.executors.llm.models import LLMNode
+from tests.stub_project import StubProject
 
 
 def test_build_messages_with_tool_call_and_tool_result() -> None:
@@ -16,15 +16,13 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         confirmation=models.Confirmation.AUTO,
     )
 
-    execution = state.NodeExecution(
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = run.create_node_execution(
         node="llm-node",
-        input_messages=[],
-        steps=[],
+        input_message_ids=[],
+        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
-
-    run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
 
     tool_req = state.ToolCallReq(
         id="call-test-tool-req",
@@ -44,14 +42,13 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         tool_call_requests=[tool_req],
         tool_call_responses=[tool_resp],
     )
-    assistant_step = state.Step(
-        execution=execution,
+    run.add_message(assistant_msg)
+    run.create_step(
+        execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
-        message=assistant_msg,
+        message_id=assistant_msg.id,
         is_complete=True,
     )
-    execution.steps.append(assistant_step)
-    run.steps.append(assistant_step)
 
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
@@ -92,15 +89,13 @@ def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
         ],
     )
 
-    execution = state.NodeExecution(
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = run.create_node_execution(
         node="llm-node",
-        input_messages=[],
-        steps=[],
+        input_message_ids=[],
+        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
-
-    run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
 
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
@@ -122,26 +117,23 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
         confirmation=models.Confirmation.AUTO,
     )
 
-    execution = state.NodeExecution(
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = run.create_node_execution(
         node="llm-node",
-        input_messages=[],
-        steps=[],
+        input_message_ids=[],
+        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
-    run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
-
     assistant_msg = state.Message(role=models.Role.ASSISTANT, text="hello")
-    assistant_step = state.Step(
-        execution=execution,
+    run.add_message(assistant_msg)
+    run.create_step(
+        execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
-        message=assistant_msg,
+        message_id=assistant_msg.id,
         state=LLMStepState(provider_state={"cache_control": {"type": "ephemeral"}}),
         is_complete=True,
     )
-    execution.steps.append(assistant_step)
-    run.steps.append(assistant_step)
 
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
