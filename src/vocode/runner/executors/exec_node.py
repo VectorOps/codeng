@@ -91,12 +91,11 @@ class ExecExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=output,
         )
-        inp.run.messages_by_id[message.id] = message
-        step = state.Step(
+        inp.run.add_message(message)
+        step = inp.run.create_step(
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=message.id,
-            workflow_execution=inp.run,
             content_type=cfg.content_type,
             is_complete=False,
             is_final=False,

@@ -1,14 +1,13 @@
-import collections.abc as abc
 from enum import Enum
-from typing import List, Optional, Annotated, Dict, Any, Union
-from pydantic import BaseModel, Field, StringConstraints
-from pydantic import PrivateAttr
-from pydantic import model_validator
+from typing import Any, Dict, List, Optional, Union
+
 from datetime import datetime
-from .lib.date import utcnow
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from uuid import UUID, uuid4
-from .settings import ToolSpec  # type: ignore
+
+from .lib.date import utcnow
 from .models import OutputMode, Role, StepContentType
+from .settings import ToolSpec  # type: ignore
 
 
 class OpaqueState(BaseModel):
@@ -55,59 +54,6 @@ class StepType(str, Enum):
     TOOL_REQUEST = "tool_request"
     WORKFLOW_REQUEST = "workflow_request"
     WORKFLOW_RESULT = "workflow_result"
-
-
-_UNSET = object()
-
-
-class _ReferenceList(abc.MutableSequence):
-    def __init__(
-        self,
-        ids: List[UUID],
-        resolver: abc.Callable[[UUID], Any],
-        id_getter: abc.Callable[[Any], UUID],
-        binder: abc.Callable[[Any], None],
-        on_change: abc.Callable[[], None],
-    ) -> None:
-        self._ids = ids
-        self._resolver = resolver
-        self._id_getter = id_getter
-        self._binder = binder
-        self._on_change = on_change
-
-    def __getitem__(self, index: Union[int, slice]) -> Any:
-        if isinstance(index, slice):
-            return [self._resolver(item_id) for item_id in self._ids[index]]
-        return self._resolver(self._ids[index])
-
-    def __setitem__(self, index: Union[int, slice], value: Any) -> None:
-        values = value if isinstance(index, slice) else [value]
-        new_ids: List[UUID] = []
-        for item in values:
-            self._binder(item)
-            new_ids.append(self._id_getter(item))
-        if isinstance(index, slice):
-            self._ids[index] = new_ids
-        else:
-            self._ids[index] = new_ids[0]
-        self._on_change()
-
-    def __delitem__(self, index: Union[int, slice]) -> None:
-        del self._ids[index]
-        self._on_change()
-
-    def __len__(self) -> int:
-        return len(self._ids)
-
-    def insert(self, index: int, value: Any) -> None:
-        self._binder(value)
-        self._ids.insert(index, self._id_getter(value))
-        self._on_change()
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, list):
-            return list(self) == other
-        return super().__eq__(other)
 
 
 class LLMUsageStats(BaseModel):
@@ -198,7 +144,6 @@ class Message(BaseModel):
         default=None,
         description="Optional model reasoning/thinking content (not shown as user-visible text).",
     )
-
     tool_call_requests: List[ToolCallReq] = Field(
         default_factory=list,
         description="Tool call requests",
@@ -243,61 +188,20 @@ class NodeExecution(BaseModel):
     )
     created_at: datetime = Field(default_factory=utcnow)
     _workflow_execution: Optional["WorkflowExecution"] = PrivateAttr(default=None)
-    _previous: Optional["NodeExecution"] = PrivateAttr(default=None)
-    _input_messages_by_id: Dict[UUID, Message] = PrivateAttr(default_factory=dict)
-    _steps_by_id: Dict[UUID, "Step"] = PrivateAttr(default_factory=dict)
 
     def __init__(
         self,
         workflow_execution: Optional["WorkflowExecution"] = None,
         **data: Any,
     ) -> None:
-        previous = data.pop("previous", _UNSET)
-        input_messages = data.pop("input_messages", _UNSET)
-        steps = data.pop("steps", _UNSET)
-        if previous is not _UNSET:
-            data["previous_id"] = None if previous is None else previous.id
-        if input_messages is not _UNSET:
-            data["input_message_ids"] = [message.id for message in input_messages]
-        if steps is not _UNSET:
-            data["step_ids"] = [step.id for step in steps]
         super().__init__(**data)
         self._workflow_execution = workflow_execution
-        if previous is not _UNSET:
-            self._previous = previous
-        if input_messages is not _UNSET:
-            for message in input_messages:
-                self._bind_input_message(message)
-        if steps is not _UNSET:
-            for step in steps:
-                self._bind_step(step)
 
     def model_copy(
         self, *, update: Optional[Dict[str, Any]] = None, deep: bool = False
     ) -> "NodeExecution":
-        effective_update = dict(update or {})
-        previous = effective_update.pop("previous", _UNSET)
-        input_messages = effective_update.pop("input_messages", _UNSET)
-        steps = effective_update.pop("steps", _UNSET)
-        if previous is not _UNSET:
-            effective_update["previous_id"] = None if previous is None else previous.id
-        if input_messages is not _UNSET:
-            effective_update["input_message_ids"] = [
-                message.id for message in input_messages
-            ]
-        if steps is not _UNSET:
-            effective_update["step_ids"] = [step.id for step in steps]
-        copied = super().model_copy(update=effective_update, deep=deep)
+        copied = super().model_copy(update=update, deep=deep)
         copied._workflow_execution = self._workflow_execution
-        copied._previous = self._previous if previous is _UNSET else previous
-        copied._input_messages_by_id = dict(self._input_messages_by_id)
-        copied._steps_by_id = dict(self._steps_by_id)
-        if input_messages is not _UNSET:
-            copied._input_messages_by_id = {
-                message.id: message for message in input_messages
-            }
-        if steps is not _UNSET:
-            copied._steps_by_id = {step.id: step for step in steps}
         return copied
 
     @property
@@ -308,96 +212,26 @@ class NodeExecution(BaseModel):
     def previous(self) -> Optional["NodeExecution"]:
         if self.previous_id is None:
             return None
-        if self._previous is not None and self._previous.id == self.previous_id:
-            return self._previous
-        return self._resolve_previous(self.previous_id)
+        if self._workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        return self._workflow_execution.get_node_execution(self.previous_id)
 
     @property
-    def input_messages(self) -> List[Message]:
-        return _ReferenceList(
-            self.input_message_ids,
-            self._resolve_input_message,
-            lambda message: message.id,
-            self._bind_input_message,
-            self._touch_workflow,
+    def input_messages(self) -> tuple[Message, ...]:
+        if self._workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        return tuple(
+            self._workflow_execution.get_message(message_id)
+            for message_id in self.input_message_ids
         )
 
     @property
-    def steps(self) -> List["Step"]:
-        return _ReferenceList(
-            self.step_ids,
-            self._resolve_step,
-            lambda step: step.id,
-            self._bind_step,
-            self._touch_workflow,
-        )
-
-    @previous.setter
-    def previous(self, value: Optional["NodeExecution"]) -> None:
-        raise AttributeError(
-            "previous is a read-only reference; set previous_id instead"
-        )
-
-    @input_messages.setter
-    def input_messages(self, value: List[Message]) -> None:
-        raise AttributeError(
-            "input_messages is a read-only reference; set input_message_ids instead"
-        )
-
-    @steps.setter
-    def steps(self, value: List["Step"]) -> None:
-        raise AttributeError("steps is a read-only reference; set step_ids instead")
-
-    def _touch_workflow(self) -> None:
-        if self._workflow_execution is not None:
-            self._workflow_execution.touch()
-
-    def _bind_input_message(self, message: Message) -> None:
-        self._input_messages_by_id[message.id] = message
-        if self._workflow_execution is not None:
-            self._workflow_execution.messages_by_id[message.id] = message
-
-    def _bind_step(self, step: "Step") -> None:
-        self._steps_by_id[step.id] = step
-        step._execution = self
-        if self._workflow_execution is not None:
-            step._workflow_execution = self._workflow_execution
-            self._workflow_execution._bind_step_ref(step)
-
-    def _resolve_previous(self, execution_id: UUID) -> "NodeExecution":
-        if self._previous is not None and self._previous.id == execution_id:
-            return self._previous
+    def steps(self) -> tuple["Step", ...]:
         if self._workflow_execution is None:
             raise ValueError("NodeExecution is not attached to a workflow execution")
-        previous = self._workflow_execution.node_executions.get(execution_id)
-        if previous is None:
-            raise KeyError(f"Unknown node execution id: {execution_id}")
-        self._previous = previous
-        return previous
-
-    def _resolve_input_message(self, message_id: UUID) -> Message:
-        message = self._input_messages_by_id.get(message_id)
-        if message is not None:
-            return message
-        if self._workflow_execution is None:
-            raise ValueError("NodeExecution is not attached to a workflow execution")
-        message = self._workflow_execution.messages_by_id.get(message_id)
-        if message is None:
-            raise KeyError(f"Unknown message id: {message_id}")
-        self._input_messages_by_id[message_id] = message
-        return message
-
-    def _resolve_step(self, step_id: UUID) -> "Step":
-        step = self._steps_by_id.get(step_id)
-        if step is not None:
-            return step
-        if self._workflow_execution is None:
-            raise ValueError("NodeExecution is not attached to a workflow execution")
-        step = self._workflow_execution.steps_by_id.get(step_id)
-        if step is None:
-            raise KeyError(f"Unknown step id: {step_id}")
-        self._steps_by_id[step_id] = step
-        return step
+        return tuple(
+            self._workflow_execution.get_step(step_id) for step_id in self.step_ids
+        )
 
 
 class Step(BaseModel):
@@ -454,41 +288,20 @@ class Step(BaseModel):
     )
     created_at: datetime = Field(default_factory=utcnow)
     _workflow_execution: Optional["WorkflowExecution"] = PrivateAttr(default=None)
-    _execution: Optional[NodeExecution] = PrivateAttr(default=None)
-    _message: Optional[Message] = PrivateAttr(default=None)
 
     def __init__(
         self,
         workflow_execution: Optional["WorkflowExecution"] = None,
         **data: Any,
     ) -> None:
-        execution = data.pop("execution", _UNSET)
-        message = data.pop("message", _UNSET)
-        if execution is not _UNSET:
-            data["execution_id"] = execution.id
-        if message is not _UNSET:
-            data["message_id"] = None if message is None else message.id
         super().__init__(**data)
         self._workflow_execution = workflow_execution
-        if execution is not _UNSET:
-            self._execution = execution
-        if message is not _UNSET:
-            self._message = message
 
     def model_copy(
         self, *, update: Optional[Dict[str, Any]] = None, deep: bool = False
     ) -> "Step":
-        effective_update = dict(update or {})
-        execution = effective_update.pop("execution", _UNSET)
-        message = effective_update.pop("message", _UNSET)
-        if execution is not _UNSET:
-            effective_update["execution_id"] = execution.id
-        if message is not _UNSET:
-            effective_update["message_id"] = None if message is None else message.id
-        copied = super().model_copy(update=effective_update, deep=deep)
+        copied = super().model_copy(update=update, deep=deep)
         copied._workflow_execution = self._workflow_execution
-        copied._execution = self._execution if execution is _UNSET else execution
-        copied._message = self._message if message is _UNSET else message
         return copied
 
     @property
@@ -497,39 +310,17 @@ class Step(BaseModel):
 
     @property
     def execution(self) -> NodeExecution:
-        if self._execution is not None and self._execution.id == self.execution_id:
-            return self._execution
         if self._workflow_execution is None:
             raise ValueError("Step is not attached to a workflow execution")
-        execution = self._workflow_execution.node_executions.get(self.execution_id)
-        if execution is None:
-            raise KeyError(f"Unknown node execution id: {self.execution_id}")
-        self._execution = execution
-        return execution
-
-    @execution.setter
-    def execution(self, value: NodeExecution) -> None:
-        raise AttributeError(
-            "execution is a read-only reference; set execution_id instead"
-        )
+        return self._workflow_execution.get_node_execution(self.execution_id)
 
     @property
     def message(self) -> Optional[Message]:
         if self.message_id is None:
             return None
-        if self._message is not None and self._message.id == self.message_id:
-            return self._message
         if self._workflow_execution is None:
             raise ValueError("Step is not attached to a workflow execution")
-        message = self._workflow_execution.messages_by_id.get(self.message_id)
-        if message is None:
-            raise KeyError(f"Unknown message id: {self.message_id}")
-        self._message = message
-        return message
-
-    @message.setter
-    def message(self, value: Optional[Message]) -> None:
-        raise AttributeError("message is a read-only reference; set message_id instead")
+        return self._workflow_execution.get_message(self.message_id)
 
 
 class WorkflowExecution(BaseModel):
@@ -566,89 +357,73 @@ class WorkflowExecution(BaseModel):
         return self.attach_runtime_refs()
 
     @property
-    def steps(self) -> List[Step]:
-        return _ReferenceList(
-            self.step_ids,
-            self._resolve_step,
-            lambda step: step.id,
-            self._bind_step_ref,
-            self.touch,
-        )
+    def steps(self) -> tuple[Step, ...]:
+        return tuple(self.get_step(step_id) for step_id in self.step_ids)
 
-    @steps.setter
-    def steps(self, value: List[Step]) -> None:
-        raise AttributeError("steps is a read-only reference; set step_ids instead")
-
-    def _bind_step(self, step: Step) -> None:
-        self._bind_step_ref(step)
-        execution = self.node_executions.get(step.execution_id)
-        if execution is not None:
-            execution._bind_step(step)
-            if step.id not in execution.step_ids:
-                execution.step_ids.append(step.id)
-        if step.message is not None:
-            self.messages_by_id[step.message.id] = step.message
-
-    def _bind_step_ref(self, step: Step) -> None:
-        step._workflow_execution = self
-        self.steps_by_id[step.id] = step
-        self.node_executions[step.execution.id] = step.execution
-        if step.message is not None:
-            self.messages_by_id[step.message.id] = step.message
-
-    def _resolve_step(self, step_id: UUID) -> Step:
+    def get_step(self, step_id: UUID) -> Step:
         step = self.steps_by_id.get(step_id)
         if step is None:
             raise KeyError(f"Unknown step id: {step_id}")
         return step
 
+    def get_message(self, message_id: UUID) -> Message:
+        message = self.messages_by_id.get(message_id)
+        if message is None:
+            raise KeyError(f"Unknown message id: {message_id}")
+        return message
+
+    def get_node_execution(self, execution_id: UUID) -> NodeExecution:
+        execution = self.node_executions.get(execution_id)
+        if execution is None:
+            raise KeyError(f"Unknown node execution id: {execution_id}")
+        return execution
+
+    def add_message(self, message: Message) -> Message:
+        self.messages_by_id[message.id] = message
+        return message
+
+    def add_node_execution(self, execution: NodeExecution) -> NodeExecution:
+        execution._workflow_execution = self
+        self.node_executions[execution.id] = execution
+        return execution
+
+    def add_step(self, step: Step) -> Step:
+        if step.execution_id not in self.node_executions:
+            raise KeyError(f"Unknown node execution id: {step.execution_id}")
+        if step.message_id is not None and step.message_id not in self.messages_by_id:
+            raise KeyError(f"Unknown message id: {step.message_id}")
+        step._workflow_execution = self
+        self.steps_by_id[step.id] = step
+        if step.id not in self.step_ids:
+            self.step_ids.append(step.id)
+        execution = self.node_executions[step.execution_id]
+        if step.id not in execution.step_ids:
+            execution.step_ids.append(step.id)
+        return step
+
     def attach_runtime_refs(self) -> "WorkflowExecution":
         for execution in self.node_executions.values():
             execution._workflow_execution = self
-            if execution._previous is not None:
-                execution.previous_id = execution._previous.id
-            for message in list(execution._input_messages_by_id.values()):
-                self.messages_by_id[message.id] = message
-            for message_id in execution.input_message_ids:
-                message = execution._input_messages_by_id.get(message_id)
-                if message is not None:
-                    self.messages_by_id[message.id] = message
-        for step in list(self.steps_by_id.values()):
+        for step in self.steps_by_id.values():
             step._workflow_execution = self
-            if step._execution is not None:
-                step.execution_id = step._execution.id
-                self.node_executions[step._execution.id] = step._execution
-            if step._message is not None:
-                step.message_id = step._message.id
-                self.messages_by_id[step._message.id] = step._message
-        for execution in self.node_executions.values():
-            for step in list(execution._steps_by_id.values()):
-                self._bind_step_ref(step)
-                if step.id not in execution.step_ids:
-                    execution.step_ids.append(step.id)
-            for step_id in execution.step_ids:
-                step = self.steps_by_id.get(step_id)
-                if step is not None:
-                    execution._steps_by_id[step_id] = step
-        for step_id in self.step_ids:
-            step = self.steps_by_id.get(step_id)
-            if step is not None:
-                self._bind_step_ref(step)
         return self
 
     def create_node_execution(self, **data: Any) -> NodeExecution:
+        input_messages = data.pop("input_messages", None)
+        if input_messages is not None:
+            for message in input_messages:
+                self.add_message(message)
+            data["input_message_ids"] = [message.id for message in input_messages]
         execution = NodeExecution(workflow_execution=self, **data)
-        self.node_executions[execution.id] = execution
-        for message in execution.input_messages:
-            self.messages_by_id[message.id] = message
-        return execution
+        return self.add_node_execution(execution)
 
     def create_step(self, **data: Any) -> Step:
+        message = data.pop("message", None)
+        if message is not None:
+            self.add_message(message)
+            data["message_id"] = message.id
         step = Step(workflow_execution=self, **data)
-        self._bind_step(step)
-        if step.id not in self.step_ids:
-            self.step_ids.append(step.id)
-        return step
+        return self.add_step(step)
 
     def touch(self) -> None:
         self.updated_at = utcnow()
@@ -685,8 +460,6 @@ class WorkflowExecution(BaseModel):
                     for current_step_id in execution.step_ids
                     if current_step_id not in removed_set
                 ]
-                for removed_step_id in removed_set:
-                    execution._steps_by_id.pop(removed_step_id, None)
 
     def delete_node_execution(self, execution_id: UUID) -> None:
         execution = self.node_executions.get(execution_id)

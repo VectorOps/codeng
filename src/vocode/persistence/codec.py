@@ -216,27 +216,22 @@ def from_dto(dto: persistence_dto.WorkflowExecutionDTO) -> state.WorkflowExecuti
     node_execs: dict[uuid.UUID, state.NodeExecution] = {}
     previous_links: dict[uuid.UUID, Optional[uuid.UUID]] = {}
     for execution_id, node_dto in dto.node_executions.items():
+        input_messages = [
+            state.Message.model_validate(m.model_dump())
+            for m in node_dto.input_messages
+        ]
+        for message in input_messages:
+            run.add_message(message)
         node_execs[execution_id] = state.NodeExecution(
             id=node_dto.id,
             node=node_dto.node,
-            previous=None,
-            input_messages=[
-                state.Message.model_validate(m.model_dump())
-                for m in node_dto.input_messages
-            ],
-            steps=[],
+            previous_id=node_dto.previous_id,
+            input_message_ids=[message.id for message in input_messages],
+            step_ids=[],
             status=state.RunStatus(node_dto.status),
             state=_load_opaque_state(node_dto.state),
             created_at=node_dto.created_at,
         )
-        previous_links[execution_id] = node_dto.previous_id
-
-    for execution_id, prev_id in previous_links.items():
-        if prev_id is None:
-            continue
-        current = node_execs.get(execution_id)
-        if current is not None:
-            current.previous_id = prev_id
 
     run.node_executions = node_execs
 
@@ -245,15 +240,16 @@ def from_dto(dto: persistence_dto.WorkflowExecutionDTO) -> state.WorkflowExecuti
         node_exec = run.node_executions.get(step_dto.execution_id)
         if node_exec is None:
             continue
+        message_id = None
+        if step_dto.message is not None:
+            message = state.Message.model_validate(step_dto.message.model_dump())
+            run.add_message(message)
+            message_id = message.id
         step = state.Step(
             id=step_dto.id,
-            execution=node_exec,
+            execution_id=node_exec.id,
             type=state.StepType(step_dto.type),
-            message=(
-                state.Message.model_validate(step_dto.message.model_dump())
-                if step_dto.message is not None
-                else None
-            ),
+            message_id=message_id,
             output_mode=state.OutputMode(step_dto.output_mode),
             outcome_name=step_dto.outcome_name,
             state=_load_opaque_state(step_dto.state),

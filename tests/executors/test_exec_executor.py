@@ -36,6 +36,7 @@ def test_exec_executor_streaming(tmp_path: Path) -> None:
         run = state.WorkflowExecution(
             workflow_name="test",
         )
+        run.add_node_execution(execution)
 
         executor = ExecExecutor(config=node, project=proj)  # type: ignore[arg-type]
         inp = ExecutorInput(execution=execution, run=run)

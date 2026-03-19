@@ -1,13 +1,13 @@
 import pytest
-from vocode import state, models
+
+from vocode import models, state
 from vocode.runner.base import ExecutorInput
-from vocode.runner.executors.exec_agent import RunAgentNode, RunAgentExecutor
+from vocode.runner.executors.exec_agent import RunAgentExecutor, RunAgentNode
 from tests.stub_project import StubProject
 
 
 @pytest.mark.asyncio
 async def test_run_agent_executor_flow() -> None:
-    # Setup
     node = RunAgentNode(
         name="agent_node",
         type="run_agent",
@@ -19,17 +19,13 @@ async def test_run_agent_executor_flow() -> None:
     project = StubProject()
     executor = RunAgentExecutor(config=node, project=project)  # type: ignore
 
-    execution = state.NodeExecution(
+    run = state.WorkflowExecution(workflow_name="parent_workflow")
+    execution = run.create_node_execution(
         node=node.name,
         status=state.RunStatus.RUNNING,
     )
-    run = state.WorkflowExecution(
-        workflow_name="parent_workflow",
-    )
-
     inp = ExecutorInput(execution=execution, run=run)
 
-    # 1. First run: expect WORKFLOW_REQUEST
     steps: list[state.Step] = []
     async for step in executor.run(inp):
         steps.append(step)
@@ -41,10 +37,8 @@ async def test_run_agent_executor_flow() -> None:
     assert step1.message.text == "Hello Child"
     assert step1.is_complete is True
 
-    # Simulate persistence (Runner does this)
-    execution.steps.append(step1)
+    run.add_step(step1)
 
-    # 2. Second run (Resume without result): expect WORKFLOW_REQUEST again (idempotent)
     steps_retry: list[state.Step] = []
     async for step in executor.run(inp):
         steps_retry.append(step)
@@ -55,20 +49,18 @@ async def test_run_agent_executor_flow() -> None:
     assert step2.message is not None
     assert step2.message.text == "Hello Child"
 
-    # 3. Simulate Runner receiving result and persisting it
     result_msg = state.Message(
         role=models.Role.ASSISTANT,
         text="Child Result",
     )
-    result_step = state.Step(
-        execution=execution,
+    run.add_message(result_msg)
+    result_step = run.create_step(
+        execution_id=execution.id,
         type=state.StepType.WORKFLOW_RESULT,
-        message=result_msg,
+        message_id=result_msg.id,
         is_complete=True,
     )
-    execution.steps.append(result_step)
 
-    # 4. Third run (Resume with result): expect OUTPUT_MESSAGE
     steps_final: list[state.Step] = []
     async for step in executor.run(inp):
         steps_final.append(step)

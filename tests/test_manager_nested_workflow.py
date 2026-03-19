@@ -4,13 +4,13 @@ import pytest
 
 from vocode import models, state
 from vocode.manager.base import BaseManager
+from vocode.persistence import state_manager as persistence_state_manager
+from vocode.project import ProjectState
 from vocode.runner import proto as runner_proto
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.proto import RunEventResp, RunEventResponseType
-from vocode.settings import Settings, WorkflowConfig, ToolSpec
+from vocode.settings import Settings, ToolSpec, WorkflowConfig
 from vocode.tools import base as tools_base
-from vocode.persistence import state_manager as persistence_state_manager
-from vocode.project import ProjectState
 
 
 class NestedWorkflowTestProject:
@@ -64,9 +64,8 @@ class NestedWorkflowTool(tools_base.BaseTool):
 @ExecutorFactory.register("tool-start-nested-workflow")
 class StartNestedWorkflowExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput):
-        execution = inp.execution
         has_tool_result = False
-        for existing_step in execution.steps:
+        for existing_step in inp.execution.steps:
             if (
                 existing_step.message is not None
                 and existing_step.message.tool_call_responses
@@ -89,10 +88,11 @@ class StartNestedWorkflowExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after-nested",
             )
-        step = state.Step(
-            execution=execution,
+        inp.run.add_message(msg)
+        step = inp.run.create_step(
+            execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
+            message_id=msg.id,
             is_complete=True,
         )
         yield step
@@ -101,20 +101,20 @@ class StartNestedWorkflowExecutor(BaseExecutor):
 @ExecutorFactory.register("child-echo-initial")
 class ChildEchoInitialExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput):
-        execution = inp.execution
         text = ""
-        if execution.input_messages:
-            last = execution.input_messages[-1]
+        if inp.execution.input_messages:
+            last = inp.execution.input_messages[-1]
             if last.text is not None:
                 text = last.text
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text=f"child-final:{text}",
         )
-        step = state.Step(
-            execution=execution,
+        inp.run.add_message(msg)
+        step = inp.run.create_step(
+            execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
+            message_id=msg.id,
             is_complete=True,
         )
         yield step

@@ -75,27 +75,24 @@ def test_codec_roundtrip_allows_auto_approved_bool():
     assert restored_msg.tool_call_requests[0].auto_approved is True
 
 
-def test_codec_roundtrip_loaded_reference_lists_still_write_through():
+def test_codec_roundtrip_loaded_state_supports_explicit_id_updates():
     run = _build_sample_execution()
     restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(run))
 
     node_execution = next(iter(restored.node_executions.values()))
     new_message = state.Message(role=models.Role.USER, text="follow-up")
-    restored.messages_by_id[new_message.id] = new_message
-    node_execution.input_messages.append(new_message)
+    restored.add_message(new_message)
+    node_execution.input_message_ids.append(new_message.id)
 
     new_step_message = state.Message(
         role=models.Role.ASSISTANT, text="follow-up-response"
     )
-    restored.messages_by_id[new_step_message.id] = new_step_message
-    new_step = state.Step(
+    restored.add_message(new_step_message)
+    new_step = restored.create_step(
         execution_id=node_execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=new_step_message.id,
-        workflow_execution=restored,
     )
-    restored.steps.append(new_step)
-    node_execution.steps.append(new_step)
 
     assert node_execution.input_message_ids[-1] == new_message.id
     assert restored.step_ids[-1] == new_step.id

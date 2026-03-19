@@ -40,22 +40,20 @@ class InputExecutor(runner_base.BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=prompt_text,
             )
-            inp.run.messages_by_id[prompt_message.id] = prompt_message
-            prompt_step = state.Step(
+            inp.run.add_message(prompt_message)
+            prompt_step = inp.run.create_step(
                 execution_id=execution.id,
                 type=state.StepType.PROMPT,
                 message_id=prompt_message.id,
-                workflow_execution=inp.run,
                 is_complete=True,
             )
             yield prompt_step
             return
 
-        output_step = state.Step(
+        output_step = inp.run.create_step(
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=input_message.id,
-            workflow_execution=inp.run,
             is_complete=True,
             is_final=True,
         )

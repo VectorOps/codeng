@@ -7,16 +7,16 @@ from uuid import uuid4
 import pytest
 from rich import console as rich_console
 
+from tests.stub_project import StubProject
 from vocode import models, state
 from vocode import settings as vocode_settings
-from vocode.manager.helpers import InMemoryEndpoint
 from vocode.manager import proto as manager_proto
+from vocode.manager.helpers import InMemoryEndpoint
 from vocode.manager.server import UIServer
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.input import base as input_base
-from tests.stub_project import StubProject
 
 
 @pytest.mark.asyncio
@@ -83,8 +83,7 @@ async def test_runner_req_display_opts_applied_to_markdown_component() -> None:
 
     ui_state.handle_step(payload.step, display=payload.display)
     terminal = ui_state.terminal
-    components = terminal.components
-    assert len(components) == 4
+    assert len(terminal.components) == 4
 
     await server.stop()
 
@@ -151,8 +150,7 @@ async def test_runner_req_display_opts_respects_node_visible_flag() -> None:
 
     ui_state.handle_step(payload.step, display=payload.display)
     terminal = ui_state.terminal
-    components = terminal.components
-    assert len(components) == 3
+    assert len(terminal.components) == 3
 
     await server.stop()
 
@@ -177,24 +175,20 @@ async def test_runner_req_display_opts_propagates_tool_collapse_flag() -> None:
         on_stop=None,
         on_eof=None,
     )
-    execution = state.NodeExecution(
-        node="node",
-        status=state.RunStatus.RUNNING,
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = run.create_node_execution(node="node", status=state.RunStatus.RUNNING)
+    req = state.ToolCallReq(id="call_1", name="tool", arguments={})
+    message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="",
+        tool_call_requests=[req],
     )
-    req = state.ToolCallReq(
-        id="call_1",
-        name="tool",
-        arguments={},
-    )
-    step = state.Step(
+    run.add_message(message)
+    step = run.create_step(
         id=uuid4(),
-        execution=execution,
+        execution_id=execution.id,
         type=state.StepType.TOOL_REQUEST,
-        message=state.Message(
-            role=models.Role.ASSISTANT,
-            text="",
-            tool_call_requests=[req],
-        ),
+        message_id=message.id,
     )
 
     display = manager_proto.RunnerReqDisplayOpts(tool_collapse=True)
