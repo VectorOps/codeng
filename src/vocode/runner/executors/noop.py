@@ -27,7 +27,8 @@ class NoopNode(models.Node):
         ge=0,
         description="If set, sleep for this many seconds before producing the final response.",
     )
- 
+
+
 @ExecutorFactory.register("noop")
 class NoopExecutor(BaseExecutor):
     def __init__(self, config: NoopNode, project: "Project"):
@@ -59,10 +60,12 @@ class NoopExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="",
         )
+        inp.run.messages_by_id[message.id] = message
         step = state.Step(
-            execution=inp.execution,
+            execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=message,
+            message_id=message.id,
+            workflow_execution=inp.run,
             is_complete=True,
             is_final=True,
             outcome_name=outcome_name,

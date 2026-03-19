@@ -88,7 +88,6 @@ class ManagedShellCommand(ShellCommandHandle):
                 with contextlib.suppress(Exception):
                     if self._inner.alive():
                         await self._inner.kill()
-                # Propagate timeout to callers.
                 raise
         return await self._inner.wait()
 
@@ -144,7 +143,9 @@ class ShellManager:
         self._processor = None
         await processor.stop()
 
-    async def run(self, command: str, timeout: Optional[float] = None) -> ShellCommandHandle:
+    async def run(
+        self, command: str, timeout: Optional[float] = None
+    ) -> ShellCommandHandle:
         """
         Run a shell command using the configured processor.
 
@@ -179,7 +180,6 @@ class ShellManager:
                 try:
                     await handle.wait()
                 except Exception:
-                    # Errors (including asyncio.TimeoutError) are observed by callers of wait().
                     pass
                 finally:
                     if self._run_lock.locked():

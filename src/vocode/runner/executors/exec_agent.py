@@ -40,10 +40,13 @@ class RunAgentExecutor(BaseExecutor):
         )
         if result_step:
             # We have a result. Emit it as final output.
+            if result_step.message is not None:
+                inp.run.messages_by_id[result_step.message.id] = result_step.message
             yield state.Step(
-                execution=inp.execution,
+                execution_id=inp.execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
-                message=result_step.message,
+                message_id=result_step.message_id,
+                workflow_execution=inp.run,
                 is_complete=True,
                 is_final=True,
             )
@@ -65,13 +68,13 @@ class RunAgentExecutor(BaseExecutor):
             return
 
         # Create new request
-        msg = state.Message(
-            role=Role.ASSISTANT, text=self.config.initial_text or ""
-        )
+        msg = state.Message(role=Role.ASSISTANT, text=self.config.initial_text or "")
+        inp.run.messages_by_id[msg.id] = msg
         req_step = state.Step(
-            execution=inp.execution,
+            execution_id=inp.execution.id,
             type=state.StepType.WORKFLOW_REQUEST,
-            message=msg,
+            message_id=msg.id,
+            workflow_execution=inp.run,
             is_complete=True,
         )
         yield req_step
