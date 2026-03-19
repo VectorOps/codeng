@@ -21,7 +21,9 @@ def _dump_opaque_state(value: Optional[state.BaseModel]) -> Optional[Dict[str, A
     return payload
 
 
-def _load_opaque_state(payload: Optional[Dict[str, Any]]) -> Optional[state.OpaqueState]:
+def _load_opaque_state(
+    payload: Optional[Dict[str, Any]],
+) -> Optional[state.OpaqueState]:
     if payload is None:
         return None
     data = payload.get("data")
@@ -31,6 +33,7 @@ def _load_opaque_state(payload: Optional[Dict[str, Any]]) -> Optional[state.Opaq
     if not isinstance(model, str):
         model = None
     return state.OpaqueState(model=model, data=data)
+
 
 def _dump_enum(value: object) -> str:
     if isinstance(value, enum.Enum):
@@ -62,15 +65,21 @@ def to_dto(execution: state.WorkflowExecution) -> persistence_dto.WorkflowExecut
                                 if req.tool_spec is not None
                                 else None
                             ),
-                            status=_dump_enum(req.status) if req.status is not None else None,
+                            status=(
+                                _dump_enum(req.status)
+                                if req.status is not None
+                                else None
+                            ),
                             auto_approved=req.auto_approved,
                             created_at=req.created_at,
                             handled_at=req.handled_at,
                             state=(
                                 persistence_dto.ToolCallProviderStateDTO(
-                                    provider_state=req.state.provider_state
-                                    if req.state is not None
-                                    else None
+                                    provider_state=(
+                                        req.state.provider_state
+                                        if req.state is not None
+                                        else None
+                                    )
                                 )
                                 if req.state is not None
                                 else None
@@ -113,17 +122,23 @@ def to_dto(execution: state.WorkflowExecution) -> persistence_dto.WorkflowExecut
                         name=req.name,
                         arguments=req.arguments,
                         tool_spec=(
-                            req.tool_spec.model_dump() if req.tool_spec is not None else None
+                            req.tool_spec.model_dump()
+                            if req.tool_spec is not None
+                            else None
                         ),
-                        status=_dump_enum(req.status) if req.status is not None else None,
+                        status=(
+                            _dump_enum(req.status) if req.status is not None else None
+                        ),
                         auto_approved=req.auto_approved,
                         created_at=req.created_at,
                         handled_at=req.handled_at,
                         state=(
                             persistence_dto.ToolCallProviderStateDTO(
-                                provider_state=req.state.provider_state
-                                if req.state is not None
-                                else None
+                                provider_state=(
+                                    req.state.provider_state
+                                    if req.state is not None
+                                    else None
+                                )
                             )
                             if req.state is not None
                             else None
@@ -165,7 +180,11 @@ def to_dto(execution: state.WorkflowExecution) -> persistence_dto.WorkflowExecut
         workflow_name=execution.workflow_name,
         node_executions=node_dtos,
         steps=step_dtos,
-        llm_usage=execution.llm_usage.model_dump() if execution.llm_usage is not None else None,
+        llm_usage=(
+            execution.llm_usage.model_dump()
+            if execution.llm_usage is not None
+            else None
+        ),
         last_step_llm_usage=(
             execution.last_step_llm_usage.model_dump()
             if execution.last_step_llm_usage is not None
@@ -216,9 +235,8 @@ def from_dto(dto: persistence_dto.WorkflowExecutionDTO) -> state.WorkflowExecuti
         if prev_id is None:
             continue
         current = node_execs.get(execution_id)
-        prev = node_execs.get(prev_id)
         if current is not None:
-            current.previous = prev
+            current.previous_id = prev_id
 
     run.node_executions = node_execs
 
@@ -248,11 +266,12 @@ def from_dto(dto: persistence_dto.WorkflowExecutionDTO) -> state.WorkflowExecuti
             is_final=step_dto.is_final,
             created_at=step_dto.created_at,
         )
-        node_exec.steps.append(step)
+        node_exec.step_ids.append(step.id)
+        run.steps_by_id[step.id] = step
         steps.append(step)
 
-    run.steps = steps
-    return run
+    run.step_ids = [step.id for step in steps]
+    return run.attach_runtime_refs()
 
 
 def dumps_gzip(execution: state.WorkflowExecution) -> bytes:

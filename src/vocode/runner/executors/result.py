@@ -43,10 +43,12 @@ class ResultExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=combined,
         )
+        inp.run.messages_by_id[message.id] = message
         step = state.Step(
-            execution=execution,
+            execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
-            message=message,
+            message_id=message.id,
+            workflow_execution=inp.run,
             is_complete=True,
             is_final=True,
             outcome_name=outcome_name,
