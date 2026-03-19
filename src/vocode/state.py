@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import List, Optional, Annotated, Dict, Any, Union
 from pydantic import BaseModel, Field, StringConstraints
+from pydantic import PrivateAttr
 from pydantic import model_validator
 from datetime import datetime
 from .lib.date import utcnow
@@ -154,6 +155,14 @@ class Message(BaseModel):
     )
     created_at: datetime = Field(default_factory=utcnow)
 
+    @property
+    def tool_call_request_ids(self) -> List[str]:
+        return [tool_call.id for tool_call in self.tool_call_requests]
+
+    @property
+    def tool_call_response_ids(self) -> List[str]:
+        return [tool_call.id for tool_call in self.tool_call_responses]
+
 
 class NodeExecution(BaseModel):
     """
@@ -179,6 +188,33 @@ class NodeExecution(BaseModel):
         description="Any internal state that is maintained by the corresponding step runner.",
     )
     created_at: datetime = Field(default_factory=utcnow)
+    _workflow_execution: Optional["WorkflowExecution"] = PrivateAttr(default=None)
+
+    def __init__(
+        self,
+        workflow_execution: Optional["WorkflowExecution"] = None,
+        **data: Any,
+    ) -> None:
+        super().__init__(**data)
+        self._workflow_execution = workflow_execution
+
+    @property
+    def workflow_execution_id(self) -> UUID:
+        return self._workflow_execution.id
+
+    @property
+    def previous_id(self) -> Optional[UUID]:
+        if self.previous is None:
+            return None
+        return self.previous.id
+
+    @property
+    def input_message_ids(self) -> List[UUID]:
+        return [message.id for message in self.input_messages]
+
+    @property
+    def step_ids(self) -> List[UUID]:
+        return [step.id for step in self.steps]
 
 
 class Step(BaseModel):
@@ -234,6 +270,29 @@ class Step(BaseModel):
         ),
     )
     created_at: datetime = Field(default_factory=utcnow)
+    _workflow_execution: Optional["WorkflowExecution"] = PrivateAttr(default=None)
+
+    def __init__(
+        self,
+        workflow_execution: Optional["WorkflowExecution"] = None,
+        **data: Any,
+    ) -> None:
+        super().__init__(**data)
+        self._workflow_execution = workflow_execution
+
+    @property
+    def workflow_execution_id(self) -> UUID:
+        return self._workflow_execution.id
+
+    @property
+    def execution_id(self) -> UUID:
+        return self.execution.id
+
+    @property
+    def message_id(self) -> Optional[UUID]:
+        if self.message is None:
+            return None
+        return self.message.id
 
 
 class WorkflowExecution(BaseModel):
@@ -247,6 +306,7 @@ class WorkflowExecution(BaseModel):
     )
     workflow_name: str = Field()
     node_executions: Dict[UUID, NodeExecution] = Field(default_factory=dict)
+    steps_by_id: Dict[UUID, Step] = Field(default_factory=dict)
     steps: List[Step] = Field(default_factory=list)
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this workflow execution, if any."
@@ -262,6 +322,38 @@ class WorkflowExecution(BaseModel):
     state: Dict[str, Any] = {}
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+    @model_validator(mode="after")
+    def _attach_runtime_refs_after_validation(self) -> "WorkflowExecution":
+        return self.attach_runtime_refs()
+
+    def attach_runtime_refs(self) -> "WorkflowExecution":
+        for execution_id, execution in self.node_executions.items():
+            execution._workflow_execution = self
+            for step in execution.steps:
+                step._workflow_execution = self
+                self.steps_by_id[step.id] = step
+            self.node_executions[execution_id] = execution
+        for step in self.steps:
+            step._workflow_execution = self
+            step.execution._workflow_execution = self
+            self.steps_by_id[step.id] = step
+            self.node_executions[step.execution.id] = step.execution
+        return self
+
+    def create_node_execution(self, **data: Any) -> NodeExecution:
+        execution = NodeExecution(workflow_execution=self, **data)
+        self.node_executions[execution.id] = execution
+        return execution
+
+    def create_step(self, **data: Any) -> Step:
+        step = Step(workflow_execution=self, **data)
+        step.execution._workflow_execution = self
+        self.steps.append(step)
+        self.steps_by_id[step.id] = step
+        self.node_executions[step.execution.id] = step.execution
+        if all(existing_step.id != step.id for existing_step in step.execution.steps):
+            step.execution.steps.append(step)
+        return step
 
     def touch(self) -> None:
         self.updated_at = utcnow()
@@ -280,6 +372,7 @@ class WorkflowExecution(BaseModel):
         remaining_steps: List[Step] = []
         for step in self.steps:
             if step.id in step_ids_set:
+                self.steps_by_id.pop(step.id, None)
                 execution_id = step.execution.id
                 if execution_id in self.node_executions:
                     if execution_id not in executions_step_ids:
@@ -288,6 +381,8 @@ class WorkflowExecution(BaseModel):
             else:
                 remaining_steps.append(step)
         self.steps = remaining_steps
+        for step_id in step_ids:
+            self.steps_by_id.pop(step_id, None)
         for execution_id, removed_ids in executions_step_ids.items():
             execution = self.node_executions.get(execution_id)
             if execution is not None:
