@@ -6,7 +6,6 @@ from typing import AsyncIterator, Optional, TYPE_CHECKING
 from pydantic import Field, model_validator
 
 from vocode import models, state
-from vocode.history.manager import HistoryManager
 from vocode.patch import apply_patch, get_supported_formats
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
@@ -41,7 +40,7 @@ class ApplyPatchExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
         execution = inp.execution
-        history = HistoryManager()
+        history = self.project.history
 
         fmt = (cfg.format or "v4a").lower()
         supported = set(get_supported_formats())

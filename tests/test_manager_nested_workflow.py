@@ -19,6 +19,7 @@ class NestedWorkflowTestProject:
         self.settings = settings
         self.tools: dict[str, tools_base.BaseTool] = {}
         self.current_workflow: str | None = None
+        self.history = HistoryManager()
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
         self.project_state = ProjectState()
 
@@ -65,7 +66,7 @@ class NestedWorkflowTool(tools_base.BaseTool):
 @ExecutorFactory.register("tool-start-nested-workflow")
 class StartNestedWorkflowExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput):
-        history = HistoryManager()
+        history = self.project.history
         has_tool_result = False
         for existing_step in inp.execution.iter_steps():
             if (
@@ -104,7 +105,7 @@ class StartNestedWorkflowExecutor(BaseExecutor):
 @ExecutorFactory.register("child-echo-initial")
 class ChildEchoInitialExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput):
-        history = HistoryManager()
+        history = self.project.history
         text = ""
         if inp.execution.input_messages:
             last = inp.execution.input_messages[-1]

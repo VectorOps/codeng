@@ -6,7 +6,6 @@ from typing import List, Optional
 from collections.abc import Awaitable, Callable, AsyncIterator
 
 from vocode import models, state
-from vocode.history.manager import HistoryManager
 from vocode.logger import logger
 from vocode.project import Project
 from vocode.runner.runner import Runner, RunnerStopped
@@ -64,7 +63,7 @@ class BaseManager:
         self._started = False
         self._run_event_listener = run_event_listener
         self._driver_task: Optional[asyncio.Task[None]] = None
-        self._history = HistoryManager()
+        self._history = self.project.history
 
     def _ensure_driver_task(self) -> None:
         if self._driver_task is not None and not self._driver_task.done():
