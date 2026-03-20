@@ -919,18 +919,12 @@ class Runner:
                     models.Confirmation.LOOP,
                 ):
                     while True:
-                        prompt_message = state.Message(
-                            role=models.Role.ASSISTANT,
-                            text="",
-                        )
                         prompt_type = state.StepType.PROMPT_CONFIRM
                         if confirmation_mode == models.Confirmation.LOOP:
                             prompt_type = state.StepType.PROMPT
-                        self.execution.add_message(prompt_message)
                         prompt_step = self.execution.create_step(
                             execution_id=current_execution.id,
                             type=prompt_type,
-                            message_id=prompt_message.id,
                         )
                         persisted_prompt = self._persist_step(prompt_step)
 
