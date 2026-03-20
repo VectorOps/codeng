@@ -225,9 +225,13 @@ def test_switch_branch_changes_active_projection() -> None:
     )
 
     assert [step.id for step in run.iter_steps()] == [step1.id, step3.id]
+    assert run.step_ids == [step1.id, step3.id]
+    assert exec1.step_ids == [step1.id, step3.id]
 
     run.switch_branch(branch1_id)
 
     assert run.get_active_branch().id == branch1_id
     assert [step.id for step in run.iter_steps()] == [step1.id, step2.id]
+    assert run.step_ids == [step1.id, step2.id]
+    assert exec1.step_ids == [step1.id, step2.id]
     assert branch2.head_step_id == step3.id

@@ -403,34 +403,28 @@ class WorkflowExecution(BaseModel):
         return self.attach_runtime_refs()
 
     def iter_steps(self):
-        for step_id in self.get_active_step_ids():
-            yield self.get_step(step_id)
-
-    def iter_steps_reversed(self):
-        for step_id in reversed(self.get_active_step_ids()):
-            yield self.get_step(step_id)
-
-    def iter_node_steps(self, execution_id: UUID):
-        for step_id in self.get_active_step_ids():
-            step = self.get_step(step_id)
-            if step.execution_id != execution_id:
-                continue
-            yield step
-
-    def iter_node_steps_reversed(self, execution_id: UUID):
-        for step_id in reversed(self.get_active_step_ids()):
-            step = self.get_step(step_id)
-            if step.execution_id != execution_id:
-                continue
-            yield step
-
-    def iter_all_steps(self):
         for step_id in self.step_ids:
             yield self.get_step(step_id)
 
-    def iter_all_steps_reversed(self):
+    def iter_steps_reversed(self):
         for step_id in reversed(self.step_ids):
             yield self.get_step(step_id)
+
+    def iter_node_steps(self, execution_id: UUID):
+        execution = self.get_node_execution(execution_id)
+        for step_id in execution.step_ids:
+            yield self.get_step(step_id)
+
+    def iter_node_steps_reversed(self, execution_id: UUID):
+        execution = self.get_node_execution(execution_id)
+        for step_id in reversed(execution.step_ids):
+            yield self.get_step(step_id)
+
+    def iter_all_steps(self):
+        yield from self.steps_by_id.values()
+
+    def iter_all_steps_reversed(self):
+        yield from reversed(tuple(self.steps_by_id.values()))
 
     def get_step(self, step_id: UUID) -> Step:
         step = self.steps_by_id.get(step_id)
@@ -460,6 +454,22 @@ class WorkflowExecution(BaseModel):
         return self._ensure_default_branch()
 
     def get_branch_step_ids(self, branch_id: UUID) -> List[UUID]:
+        return self._compute_branch_step_ids(branch_id)
+
+    def get_active_step_ids(self) -> List[UUID]:
+        return list(self.step_ids)
+
+    def refresh_visible_step_ids(self) -> None:
+        branch = self._ensure_default_branch()
+        self.step_ids = self._compute_branch_step_ids(branch.id)
+        for execution in self.node_executions.values():
+            execution.step_ids = [
+                step_id
+                for step_id in self.step_ids
+                if self.get_step(step_id).execution_id == execution.id
+            ]
+
+    def _compute_branch_step_ids(self, branch_id: UUID) -> List[UUID]:
         branch = self.get_branch(branch_id)
         if branch.head_step_id is None:
             return []
@@ -474,10 +484,6 @@ class WorkflowExecution(BaseModel):
             current_step_id = self.get_step(current_step_id).parent_step_id
         step_ids.reverse()
         return step_ids
-
-    def get_active_step_ids(self) -> List[UUID]:
-        branch = self._ensure_default_branch()
-        return self.get_branch_step_ids(branch.id)
 
     def get_active_steps(self) -> tuple[Step, ...]:
         return tuple(self.get_step(step_id) for step_id in self.get_active_step_ids())
@@ -494,6 +500,7 @@ class WorkflowExecution(BaseModel):
     def switch_branch(self, branch_id: UUID) -> BranchRecord:
         branch = self.get_branch(branch_id)
         self.active_branch_id = branch.id
+        self.refresh_visible_step_ids()
         return branch
 
     def create_branch(
@@ -512,6 +519,7 @@ class WorkflowExecution(BaseModel):
         self.branches_by_id[branch.id] = branch
         if activate:
             self.active_branch_id = branch.id
+        self.refresh_visible_step_ids()
         return branch
 
     def update_active_branch_head(self, step_id: Optional[UUID]) -> BranchRecord:
@@ -519,6 +527,7 @@ class WorkflowExecution(BaseModel):
         branch.head_step_id = step_id
         if branch.base_step_id is None:
             branch.base_step_id = step_id
+        self.refresh_visible_step_ids()
         return branch
 
     def find_lowest_common_ancestor(
@@ -558,14 +567,11 @@ class WorkflowExecution(BaseModel):
                 parent_step.child_step_ids.append(step.id)
         step._workflow_execution = self
         self.steps_by_id[step.id] = step
-        if step.id not in self.step_ids:
-            self.step_ids.append(step.id)
         execution = self.node_executions[step.execution_id]
-        if step.id not in execution.step_ids:
-            execution.step_ids.append(step.id)
         branch.head_step_id = step.id
         if branch.base_step_id is None:
             branch.base_step_id = step.id
+        self.refresh_visible_step_ids()
         return step
 
     def attach_runtime_refs(self) -> "WorkflowExecution":
@@ -574,6 +580,7 @@ class WorkflowExecution(BaseModel):
             execution._workflow_execution = self
         for step in self.steps_by_id.values():
             step._workflow_execution = self
+        self.refresh_visible_step_ids()
         return self
 
     def create_node_execution(self, **data: Any) -> NodeExecution:
@@ -607,7 +614,6 @@ class WorkflowExecution(BaseModel):
             return
         step_ids_set = set(step_ids)
         removed_parent_ids: Dict[UUID, Optional[UUID]] = {}
-        executions_step_ids: Dict[UUID, List[UUID]] = {}
         for step in self.steps_by_id.values():
             remaining_child_ids = [
                 child_step_id
@@ -616,33 +622,13 @@ class WorkflowExecution(BaseModel):
             ]
             if len(remaining_child_ids) != len(step.child_step_ids):
                 step.child_step_ids = remaining_child_ids
-        remaining_step_ids: List[UUID] = []
-        for step_id in self.step_ids:
-            step = self.steps_by_id.get(step_id)
-            if step is None:
-                continue
+        for step in list(self.steps_by_id.values()):
             if step.id in step_ids_set:
                 removed_parent_ids[step.id] = step.parent_step_id
                 self.steps_by_id.pop(step.id, None)
-                execution_id = step.execution_id
-                if execution_id in self.node_executions:
-                    if execution_id not in executions_step_ids:
-                        executions_step_ids[execution_id] = []
-                    executions_step_ids[execution_id].append(step.id)
             else:
                 if step.parent_step_id in step_ids_set:
                     step.parent_step_id = None
-                remaining_step_ids.append(step.id)
-        self.step_ids = remaining_step_ids
-        for execution_id, removed_ids in executions_step_ids.items():
-            execution = self.node_executions.get(execution_id)
-            if execution is not None:
-                removed_set = set(removed_ids)
-                execution.step_ids = [
-                    current_step_id
-                    for current_step_id in execution.step_ids
-                    if current_step_id not in removed_set
-                ]
         for branch in self.branches_by_id.values():
             if branch.head_step_id in step_ids_set:
                 branch.head_step_id = self._find_visible_ancestor(
@@ -655,12 +641,17 @@ class WorkflowExecution(BaseModel):
                     removed_parent_ids,
                 )
         self._ensure_default_branch()
+        self.refresh_visible_step_ids()
 
     def delete_node_execution(self, execution_id: UUID) -> None:
         execution = self.node_executions.get(execution_id)
         if execution is None:
             return
-        step_ids = list(execution.step_ids)
+        step_ids = [
+            step.id
+            for step in self.steps_by_id.values()
+            if step.execution_id == execution_id
+        ]
         if step_ids:
             self.delete_steps(step_ids)
         if execution_id in self.node_executions:
@@ -669,7 +660,12 @@ class WorkflowExecution(BaseModel):
     def trim_empty_node_executions(self) -> None:
         empty_execution_ids: List[UUID] = []
         for execution_id, execution in self.node_executions.items():
-            if not execution.step_ids:
+            has_steps = False
+            for step in self.steps_by_id.values():
+                if step.execution_id == execution_id:
+                    has_steps = True
+                    break
+            if not has_steps:
                 empty_execution_ids.append(execution_id)
         for execution_id in empty_execution_ids:
             self.delete_node_execution(execution_id)
@@ -701,9 +697,10 @@ class WorkflowExecution(BaseModel):
             branch = next(iter(self.branches_by_id.values()))
             self.active_branch_id = branch.id
             return branch
-        head_step_id = self.step_ids[-1] if self.step_ids else None
+        ordered_steps = tuple(self.iter_all_steps())
+        head_step_id = ordered_steps[-1].id if ordered_steps else None
         base_step_id = None
-        if self.step_ids:
+        if ordered_steps:
             base_step_id = self._get_path_from_head(head_step_id)[0]
         branch = BranchRecord(
             head_step_id=head_step_id,
@@ -732,36 +729,31 @@ class WorkflowExecution(BaseModel):
         has_any_parent = any(
             step.parent_step_id is not None for step in self.steps_by_id.values()
         )
-        if not has_any_parent and self.step_ids:
+        ordered_steps = tuple(self.iter_all_steps())
+        if not has_any_parent and ordered_steps:
             previous_step_id: Optional[UUID] = None
-            for step_id in self.step_ids:
-                step = self.steps_by_id.get(step_id)
-                if step is None:
-                    continue
+            for step in ordered_steps:
                 step.parent_step_id = previous_step_id
-                previous_step_id = step_id
+                previous_step_id = step.id
         child_ids_by_parent: Dict[UUID, List[UUID]] = {}
         for step in self.steps_by_id.values():
             step.child_step_ids = []
-        for step_id in self.step_ids:
-            step = self.steps_by_id.get(step_id)
-            if step is None:
-                continue
+        for step in ordered_steps:
             if step.parent_step_id is None:
                 continue
             child_ids = child_ids_by_parent.get(step.parent_step_id)
             if child_ids is None:
                 child_ids = []
                 child_ids_by_parent[step.parent_step_id] = child_ids
-            child_ids.append(step_id)
+            child_ids.append(step.id)
         for parent_step_id, child_ids in child_ids_by_parent.items():
             parent_step = self.steps_by_id.get(parent_step_id)
             if parent_step is None:
                 continue
             parent_step.child_step_ids = child_ids
         branch = self._ensure_default_branch()
-        if branch.head_step_id is None and self.step_ids:
-            branch.head_step_id = self.step_ids[-1]
+        if branch.head_step_id is None and ordered_steps:
+            branch.head_step_id = ordered_steps[-1].id
         if branch.base_step_id is None and branch.head_step_id is not None:
             path = self._get_path_from_head(branch.head_step_id)
             if path:
