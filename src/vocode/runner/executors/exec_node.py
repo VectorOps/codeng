@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from pydantic import model_validator
 
 from vocode import models, state, settings
-from vocode.history.manager import HistoryManager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 if TYPE_CHECKING:
@@ -61,7 +60,7 @@ class ExecExecutor(BaseExecutor):
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
-        history = HistoryManager()
+        history = self.project.history
         shell_manager = self.project.shells
         if shell_manager is None:
             raise RuntimeError("ExecExecutor requires project.shells (ShellManager)")

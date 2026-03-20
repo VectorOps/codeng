@@ -61,7 +61,7 @@ class FakeExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         execution = inp.execution
         node_name = execution.node
         key = str(execution.id)
@@ -142,7 +142,7 @@ class LoopExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         execution = inp.execution
         node_name = execution.node
         count = self._run_counts.get(node_name, 0) + 1
@@ -186,7 +186,7 @@ class ToolPromptExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         execution = inp.execution
         has_tool_result = False
         for existing_step in execution.iter_steps():
@@ -235,7 +235,7 @@ class FakeLLMToolExecutor(BaseExecutor):
         return None
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         execution = inp.execution
         has_tool_result = False
         for existing_step in execution.iter_steps():
@@ -391,7 +391,7 @@ async def test_result_mode_concatenate_final_includes_initial_user_input_step_on
 @ExecutorFactory.register("no-complete")
 class NoCompleteExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="no-complete",
@@ -412,7 +412,7 @@ class MultiCompleteExecutor(BaseExecutor):
     type = "multi-complete"
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         execution = inp.execution
         msg1 = state.Message(
             role=models.Role.ASSISTANT,
@@ -446,7 +446,7 @@ class MultiCompleteExecutor(BaseExecutor):
 @ExecutorFactory.register("initial-input")
 class InitialInputEchoExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         execution = inp.execution
         last_input: state.Message | None = None
         for msg, step in runner_base.iter_execution_messages(execution):
@@ -1120,7 +1120,7 @@ class ResumeRunExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="resumed-output",

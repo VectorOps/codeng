@@ -7,7 +7,6 @@ from typing import AsyncIterator, Optional, TYPE_CHECKING
 from pydantic import Field, field_validator
 
 from vocode import models, state
-from vocode.history.manager import HistoryManager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 if TYPE_CHECKING:
@@ -76,7 +75,7 @@ class FileReadExecutor(BaseExecutor):
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
-        history = HistoryManager()
+        history = self.project.history
         contents: list[str] = []
 
         for rel in cfg.files:

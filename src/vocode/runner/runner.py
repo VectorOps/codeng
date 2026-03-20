@@ -8,7 +8,6 @@ from vocode.logger import logger
 from vocode.project import Project
 from vocode.graph import RuntimeGraph
 from vocode.lib import message_helpers, validators
-from vocode.history.manager import HistoryManager
 from .base import BaseExecutor, ExecutorFactory, ExecutorInput
 from .proto import RunEventReq, RunEventResp, RunEventResponseType
 from . import proto as runner_proto
@@ -38,7 +37,7 @@ class Runner:
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
         self._last_final_message: Optional[state.Message] = None
-        self._history = HistoryManager()
+        self._history = self.project.history
 
         self._executors: Dict[str, BaseExecutor] = {
             n.name: ExecutorFactory.create_for_node(n, project=self.project)

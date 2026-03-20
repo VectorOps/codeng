@@ -27,7 +27,7 @@ class ManagerTestExecutor(BaseExecutor):
         super().__init__(config, project)
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="manager-output",
@@ -56,7 +56,7 @@ class ManagerBlockingExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         assert block_event is not None
         await block_event.wait()
-        history = HistoryManager()
+        history = self.project.history
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="blocking-output",
@@ -91,6 +91,7 @@ class FakeProject:
         self.current_workflow: str | None = None
         self.settings = None
         self.tools: dict[str, object] = {}
+        self.history = HistoryManager()
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
 
     async def start(self) -> None:

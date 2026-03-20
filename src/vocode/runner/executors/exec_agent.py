@@ -3,7 +3,6 @@ from typing import AsyncIterator, Optional
 from pydantic import Field
 
 from vocode import state
-from vocode.history.manager import HistoryManager
 from vocode.models import Node, Role
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
@@ -30,7 +29,7 @@ class RunAgentExecutor(BaseExecutor):
     config: RunAgentNode
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        history = HistoryManager()
+        history = self.project.history
         # Check if we already have a result from the child workflow
         result_step = next(
             (

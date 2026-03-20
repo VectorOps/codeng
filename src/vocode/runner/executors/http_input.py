@@ -7,7 +7,6 @@ from aiohttp import web
 from pydantic import Field
 
 from vocode import models, state
-from vocode.history.manager import HistoryManager
 from vocode.http import server as http_server
 from vocode.runner import base as runner_base
 
@@ -94,7 +93,7 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
 
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
-        history = HistoryManager()
+        history = self.project.history
 
         queue = self.project.project_state.get(self._queue_key)
         if queue is None:

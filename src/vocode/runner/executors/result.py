@@ -3,7 +3,6 @@ from typing import AsyncIterator, Optional
 from pydantic import Field
 
 from vocode import models, state
-from vocode.history.manager import HistoryManager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 
@@ -23,7 +22,7 @@ class ResultExecutor(BaseExecutor):
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
-        history = HistoryManager()
+        history = self.project.history
 
         texts = [m.text for m in execution.input_messages if m.text]
         combined = "\n".join(texts)
