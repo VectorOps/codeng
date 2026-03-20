@@ -562,6 +562,16 @@ async def test_runner_execution_flow():
     ]
     assert any("run1-final" in s.message.text for s in node1_output_steps)
     assert any("run2-final" in s.message.text for s in node1_output_steps)
+    prompt_steps = [
+        s for s in node1_exec.iter_steps() if s.type == state.StepType.PROMPT_CONFIRM
+    ]
+    assert prompt_steps
+    assert all(step.message is None for step in prompt_steps)
+    node1_prompt_steps = [
+        s for s in node1_exec.iter_steps() if s.type == state.StepType.PROMPT_CONFIRM
+    ]
+    assert node1_prompt_steps
+    assert all(step.message is None for step in node1_prompt_steps)
 
     node1_input_steps = [
         s for s in node1_exec.iter_steps() if s.type == state.StepType.INPUT_MESSAGE
@@ -618,6 +628,13 @@ async def test_runner_execution_flow():
                 break
         assert last_complete_output is not None
         assert finals[0] is last_complete_output
+
+    empty_assistant_messages = [
+        message
+        for message in runner.execution.messages_by_id.values()
+        if message.role == models.Role.ASSISTANT and message.text == ""
+    ]
+    assert empty_assistant_messages == []
 
     fake_executor = runner._executors["node1"]
     assert isinstance(fake_executor, FakeExecutor)
