@@ -320,18 +320,17 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     res = await manager.edit_history_with_text("new user input", resume=False)
     assert res.is_edited is True
     assert res.deleted_step_ids
+    assert res.created_branch_id is not None
 
     all_steps = tuple(runner.execution.iter_steps())
     assert all_steps
     assert all_steps[-1].type == state.StepType.INPUT_MESSAGE
     assert all_steps[-1].message is not None
     assert all_steps[-1].message.text == "new user input"
-    assert all_steps[-1].id == input_step.id
-    assert all(
-        step.message is None or step.message.text != "old user input"
-        for step in all_steps
-    )
+    assert all_steps[-1].id != input_step.id
     assert prompt_step in all_steps
+    assert runner.execution.steps_by_id[input_step.id].message is not None
+    assert runner.execution.steps_by_id[input_step.id].message.text == "old user input"
 
 
 @pytest.mark.asyncio
@@ -435,7 +434,7 @@ async def test_manager_edit_history_stops_parent_runner_when_going_up_stack(
 
     res = await manager.edit_history_with_text("edited parent input", resume=False)
     assert res.is_edited is True
-    assert res.deleted_step_ids == []
+    assert len(res.deleted_step_ids) == 1
 
     assert len(manager._runner_stack) == 1
     assert manager._runner_stack[0] is parent_frame

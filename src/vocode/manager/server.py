@@ -848,18 +848,22 @@ class UIServer:
                     await self.send_packet(
                         manager_proto.StepDeletedPacket(step_ids=res.deleted_step_ids)
                     )
-                if res.is_edited and res.step is not None:
+                if res.is_edited:
                     execution = runner.execution
                     frame = self._manager.runner_stack[-1]
-                    packet = manager_proto.RunnerReqPacket(
-                        workflow_id=frame.workflow_name,
-                        workflow_name=execution.workflow_name,
-                        workflow_execution_id=str(execution.id),
-                        step=res.step,
-                        input_required=False,
-                        display=None,
-                    )
-                    await self.send_packet(packet)
+                    upsert_steps = res.upserted_steps
+                    if not upsert_steps and res.step is not None:
+                        upsert_steps = [res.step]
+                    for upsert_step in upsert_steps:
+                        packet = manager_proto.RunnerReqPacket(
+                            workflow_id=frame.workflow_name,
+                            workflow_name=execution.workflow_name,
+                            workflow_execution_id=str(execution.id),
+                            step=upsert_step,
+                            input_required=False,
+                            display=None,
+                        )
+                        await self.send_packet(packet)
                 if res.is_edited:
                     await self._manager.continue_current_runner()
                 if not res.is_edited:

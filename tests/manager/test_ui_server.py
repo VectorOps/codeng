@@ -636,6 +636,7 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
             is_edited=True,
             step=step,
             deleted_step_ids=[],
+            upserted_steps=[step],
         )
 
     monkeypatch.setattr(
@@ -768,6 +769,7 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
             is_edited=True,
             step=step,
             deleted_step_ids=["s1", "s2"],
+            upserted_steps=[step],
         )
 
     called_continue: list[object] = []

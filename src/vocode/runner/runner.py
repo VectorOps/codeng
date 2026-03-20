@@ -8,6 +8,7 @@ from vocode.logger import logger
 from vocode.project import Project
 from vocode.graph import RuntimeGraph
 from vocode.lib import message_helpers, validators
+from vocode.history.manager import HistoryManager
 from .base import BaseExecutor, ExecutorFactory, ExecutorInput
 from .proto import RunEventReq, RunEventResp, RunEventResponseType
 from . import proto as runner_proto
@@ -37,6 +38,7 @@ class Runner:
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
         self._last_final_message: Optional[state.Message] = None
+        self._history = HistoryManager()
 
         self._executors: Dict[str, BaseExecutor] = {
             n.name: ExecutorFactory.create_for_node(n, project=self.project)
@@ -379,7 +381,8 @@ class Runner:
         resume_step: Optional[state.Step] = None
         skip_executor = False
         changed = False
-        if self.execution.step_ids:
+        active_step_ids = self.execution.get_active_step_ids()
+        if active_step_ids:
             anchor_index: Optional[int] = None
             steps = list(self.execution.iter_steps())
             for i in range(len(steps) - 1, -1, -1):
@@ -395,7 +398,7 @@ class Runner:
                 resume_step = step
                 break
             if anchor_index is None:
-                ids = list(self.execution.step_ids)
+                ids = list(active_step_ids)
                 if ids:
                     self.execution.delete_steps(ids)
                     changed = True
@@ -414,7 +417,8 @@ class Runner:
             if changed:
                 self._touch_execution()
 
-        if not self.execution.step_ids:
+        active_step_ids = self.execution.get_active_step_ids()
+        if not active_step_ids:
             runtime_node = self.graph.root
             current_execution: Optional[state.NodeExecution] = None
             if runtime_node is not None:
@@ -434,7 +438,7 @@ class Runner:
                     )
             return runtime_node, current_execution, None, False
 
-        last_step = self.execution.get_step(self.execution.step_ids[-1])
+        last_step = self.execution.get_step(active_step_ids[-1])
         execution_id = last_step.execution.id
         execution = self.execution.node_executions.get(
             execution_id, last_step.execution
@@ -519,7 +523,7 @@ class Runner:
             if (
                 self.need_input
                 and self.initial_message is None
-                and not self.execution.step_ids
+                and not self.execution.get_active_step_ids()
                 and current_execution is not None
             ):
                 waiting_event = self.set_status(
