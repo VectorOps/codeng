@@ -166,15 +166,24 @@ class LLMExecutor(runner_base.BaseExecutor):
         is_complete: bool = False,
         outcome_name: Optional[str] = None,
     ) -> state.Step:
-        message = state.Message(
-            role=role,
-            text=text,
-            tool_call_requests=tool_call_requests or [],
-            tool_call_responses=tool_call_responses or [],
-        )
         workflow_execution = base_step._workflow_execution
-        if workflow_execution is not None:
-            workflow_execution.add_message(message)
+        message = base_step.message
+        if message is None:
+            message = state.Message(
+                role=role,
+                text=text,
+                tool_call_requests=tool_call_requests or [],
+                tool_call_responses=tool_call_responses or [],
+            )
+            if workflow_execution is not None:
+                workflow_execution.add_message(message)
+        else:
+            message.role = role
+            message.text = text
+            message.tool_call_requests = tool_call_requests or []
+            message.tool_call_responses = tool_call_responses or []
+            if workflow_execution is not None:
+                workflow_execution.messages_by_id[message.id] = message
 
         update: Dict[str, Any] = {
             "type": step_type,
