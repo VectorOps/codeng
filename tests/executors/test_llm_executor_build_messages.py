@@ -145,3 +145,45 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
     assert first["role"] == "assistant"
     assert first["content"] == "hello"
     assert first["provider_specific_fields"] == {"cache_control": {"type": "ephemeral"}}
+
+
+def test_build_step_from_message_reuses_existing_message_id_for_updates() -> None:
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = run.create_node_execution(
+        node="llm-node",
+        input_message_ids=[],
+        step_ids=[],
+        status=state.RunStatus.RUNNING,
+    )
+    base_step = run.create_step(
+        execution_id=execution.id,
+        type=state.StepType.OUTPUT_MESSAGE,
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+
+    interim_step = executor._build_step_from_message(
+        base_step,
+        role=models.Role.ASSISTANT,
+        step_type=state.StepType.OUTPUT_MESSAGE,
+        text="first",
+    )
+    final_step = executor._build_step_from_message(
+        interim_step,
+        role=models.Role.ASSISTANT,
+        step_type=state.StepType.OUTPUT_MESSAGE,
+        text="second",
+        is_complete=True,
+    )
+
+    assert interim_step.message_id is not None
+    assert final_step.message_id == interim_step.message_id
+    assert final_step.message is not None
+    assert final_step.message.text == "second"
+    assert len(run.messages_by_id) == 1
