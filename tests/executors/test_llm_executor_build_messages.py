@@ -1,3 +1,5 @@
+import pytest
+
 from vocode import models, state
 from vocode.runner.base import ExecutorInput
 from vocode.runner.executors.llm.llm import (
@@ -7,6 +9,60 @@ from vocode.runner.executors.llm.llm import (
 )
 from vocode.runner.executors.llm.models import LLMNode
 from tests.stub_project import StubProject
+
+
+class _FakeDelta:
+    def __init__(self, content: str | None) -> None:
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content: str | None) -> None:
+        self.delta = _FakeDelta(content)
+
+
+class _FakeChunk:
+    def __init__(self, content: str | None) -> None:
+        self.choices = [_FakeChoice(content)]
+
+
+class _FakeMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.tool_calls = []
+
+
+class _FakeResponseChoice:
+    def __init__(self, content: str) -> None:
+        self.message = _FakeMessage(content)
+
+
+class _FakeUsage:
+    def __init__(self) -> None:
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+
+
+class _FakeResponse:
+    def __init__(self, content: str) -> None:
+        self.choices = [_FakeResponseChoice(content)]
+        self.usage = _FakeUsage()
+
+
+class _FakeStream:
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self):
+        self._index = 0
+        return self
+
+    async def __anext__(self):
+        if self._index >= len(self._chunks):
+            raise StopAsyncIteration
+        chunk = _FakeChunk(self._chunks[self._index])
+        self._index += 1
+        return chunk
 
 
 def test_build_messages_with_tool_call_and_tool_result() -> None:
@@ -187,3 +243,47 @@ def test_build_step_from_message_reuses_existing_message_id_for_updates() -> Non
     assert final_step.message is not None
     assert final_step.message.text == "second"
     assert len(run.messages_by_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = run.create_node_execution(
+        node="llm-node",
+        input_message_ids=[],
+        step_ids=[],
+        status=state.RunStatus.RUNNING,
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    inp = ExecutorInput(execution=execution, run=run)
+
+    async def fake_acompletion(**_: object):
+        return _FakeStream(["Why", " do"])
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+    monkeypatch.setattr(
+        "litellm.stream_chunk_builder",
+        lambda chunks, messages=None: _FakeResponse("Why do"),
+    )
+    monkeypatch.setattr("litellm.completion_cost", lambda **_: 0.0)
+
+    steps = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(steps) == 3
+    assert steps[0].message_id is not None
+    assert steps[1].message_id == steps[0].message_id
+    assert steps[2].message_id == steps[0].message_id
+    assert len(run.messages_by_id) == 1
+    message = next(iter(run.messages_by_id.values()))
+    assert message.text == "Why do"

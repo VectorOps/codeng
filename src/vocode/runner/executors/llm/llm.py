@@ -350,6 +350,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                             step_type=state.StepType.OUTPUT_MESSAGE,
                             text=assistant_partial,
                         )
+                        step = interim_step
                         yield interim_step
 
                 break
