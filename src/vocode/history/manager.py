@@ -11,6 +11,47 @@ class HistoryManager:
     def get_visible_step_ids(self, execution: state.WorkflowExecution) -> list[UUID]:
         return list(execution.step_ids)
 
+    def delete_steps(
+        self,
+        execution: state.WorkflowExecution,
+        step_ids: list[UUID],
+    ) -> None:
+        execution.delete_steps(step_ids)
+
+    def fork_from_step(
+        self,
+        execution: state.WorkflowExecution,
+        from_step_id: Optional[UUID],
+        new_step: state.Step,
+        *,
+        base_step_id: Optional[UUID] = None,
+        label: Optional[str] = None,
+        activate: bool = True,
+    ) -> history_models.HistoryMutationResult:
+        before_visible_ids = self.get_visible_step_ids(execution)
+        created_branch = execution.create_branch(
+            head_step_id=from_step_id,
+            base_step_id=base_step_id,
+            label=label,
+            activate=activate,
+        )
+        new_step.parent_step_id = from_step_id
+        persisted_step = execution.add_step(new_step)
+        after_visible_ids = self.get_visible_step_ids(execution)
+        removed_visible_step_ids = self.compute_view_diff(
+            before_visible_ids,
+            after_visible_ids,
+        )
+        return history_models.HistoryMutationResult(
+            changed=(before_visible_ids != after_visible_ids) or True,
+            active_branch_id=execution.active_branch_id,
+            created_branch_id=created_branch.id,
+            branch_head_step_id=persisted_step.id,
+            resume_step_id=persisted_step.id,
+            removed_visible_step_ids=removed_visible_step_ids,
+            upserted_steps=[persisted_step],
+        )
+
     def get_last_user_input_step(
         self,
         execution: state.WorkflowExecution,
@@ -53,6 +94,7 @@ class HistoryManager:
         return history_models.HistoryMutationResult(
             changed=before_visible_ids != after_visible_ids,
             active_branch_id=branch.id,
+            branch_head_step_id=branch.head_step_id,
             removed_visible_step_ids=removed_visible_step_ids,
             upserted_steps=[
                 execution.get_step(step_id) for step_id in added_visible_ids
@@ -70,19 +112,14 @@ class HistoryManager:
         message = target_step.message
         if message is None or message.role != models.Role.USER:
             return history_models.HistoryMutationResult(changed=False)
-        before_visible_ids = execution.get_active_step_ids()
-        created_branch = execution.create_branch(
-            head_step_id=target_step.parent_step_id,
-            base_step_id=target_step.id,
-            activate=True,
-        )
         replacement_message = state.Message(
             role=message.role,
             text=text,
             thinking_content=message.thinking_content,
         )
         execution.add_message(replacement_message)
-        replacement_step = execution.create_step(
+        replacement_step = state.Step(
+            workflow_execution=execution,
             execution_id=target_step.execution_id,
             parent_step_id=target_step.parent_step_id,
             type=target_step.type,
@@ -96,23 +133,9 @@ class HistoryManager:
             is_complete=target_step.is_complete,
             is_final=False,
         )
-        after_visible_ids = execution.get_active_step_ids()
-        removed_visible_step_ids = self.compute_view_diff(
-            before_visible_ids,
-            after_visible_ids,
-        )
-        added_visible_ids = [
-            visible_step_id
-            for visible_step_id in after_visible_ids
-            if visible_step_id not in set(before_visible_ids)
-        ]
-        return history_models.HistoryMutationResult(
-            changed=True,
-            active_branch_id=execution.active_branch_id,
-            created_branch_id=created_branch.id,
-            resume_step_id=replacement_step.id,
-            removed_visible_step_ids=removed_visible_step_ids,
-            upserted_steps=[
-                execution.get_step(step_id) for step_id in added_visible_ids
-            ],
+        return self.fork_from_step(
+            execution,
+            target_step.parent_step_id,
+            replacement_step,
+            base_step_id=target_step.id,
         )

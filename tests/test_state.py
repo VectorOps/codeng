@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.runner.base import iter_execution_messages
 
 
@@ -235,3 +236,33 @@ def test_switch_branch_changes_active_projection() -> None:
     assert run.step_ids == [step1.id, step2.id]
     assert exec1.step_ids == [step1.id, step2.id]
     assert branch2.head_step_id == step3.id
+
+
+def test_history_manager_fork_from_step_creates_new_branch_head() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    step1 = run.create_step(
+        execution_id=execution.id, type=state.StepType.OUTPUT_MESSAGE
+    )
+    step2 = run.create_step(
+        execution_id=execution.id, type=state.StepType.INPUT_MESSAGE
+    )
+
+    replacement = state.Step(
+        workflow_execution=run,
+        execution_id=execution.id,
+        type=state.StepType.INPUT_MESSAGE,
+    )
+    result = history.fork_from_step(
+        run,
+        step1.id,
+        replacement,
+        base_step_id=step2.id,
+    )
+
+    assert result.changed is True
+    assert result.created_branch_id is not None
+    assert result.branch_head_step_id == replacement.id
+    assert run.step_ids == [step1.id, replacement.id]
+    assert execution.step_ids == [step1.id, replacement.id]

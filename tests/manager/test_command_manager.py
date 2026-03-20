@@ -615,6 +615,84 @@ async def test_continue_command_calls_manager_continue(
 
 
 @pytest.mark.asyncio
+async def test_continue_command_preserves_existing_visible_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, _ = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    node = models.Node(
+        name="node-output",
+        type="resume-skip",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = type(
+        "_Workflow",
+        (),
+        {
+            "name": "wf-continue-visible-history",
+            "graph": models.Graph(nodes=[node], edges=[]),
+            "need_input": False,
+            "need_input_prompt": None,
+        },
+    )()
+    runner = manager_base.Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+    execution = runner.execution.create_node_execution(
+        node="node-output",
+        input_message_ids=[],
+        step_ids=[],
+        status=state.RunStatus.RUNNING,
+    )
+    message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
+    runner.execution.add_message(message)
+    output_step = runner.execution.create_step(
+        execution_id=execution.id,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message_id=message.id,
+        is_complete=True,
+    )
+    runner.status = state.RunnerStatus.STOPPED
+
+    frame = manager_base.RunnerFrame(
+        workflow_name="wf-continue-visible-history",
+        runner=runner,
+        initial_message=None,
+        agen=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    before_visible_step_ids = list(runner.execution.step_ids)
+    before_all_step_ids = set(runner.execution.steps_by_id.keys())
+
+    message_packet = state.Message(role=models.Role.USER, text="/continue")
+    user_packet = manager_proto.UserInputPacket(message=message_packet)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+
+    async def wait_for_driver() -> None:
+        while True:
+            task = server.manager._driver_task
+            if task is not None:
+                await task
+                return
+            await asyncio.sleep(0)
+
+    await server.on_ui_packet(envelope)
+    await wait_for_driver()
+
+    assert runner.execution.step_ids == before_visible_step_ids
+    assert set(runner.execution.steps_by_id.keys()) == before_all_step_ids
+    assert runner.execution.step_ids == [output_step.id]
+
+
+@pytest.mark.asyncio
 async def test_continue_command_with_args_reports_usage_error() -> None:
     project = StubProject()
 
