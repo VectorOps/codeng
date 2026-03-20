@@ -100,6 +100,55 @@ def test_codec_roundtrip_loaded_state_supports_explicit_id_updates():
     assert node_execution.step_ids[-1] == new_step.id
 
 
+def test_codec_roundtrip_restores_visible_step_ids_from_branch_projection():
+    execution = state.WorkflowExecution(workflow_name="wf")
+    node_execution = execution.create_node_execution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
+    message1 = state.Message(role=models.Role.USER, text="one")
+    execution.add_message(message1)
+    step1 = execution.create_step(
+        execution_id=node_execution.id,
+        type=state.StepType.INPUT_MESSAGE,
+        message_id=message1.id,
+        is_complete=True,
+    )
+    message2 = state.Message(role=models.Role.USER, text="two")
+    execution.add_message(message2)
+    step2 = execution.create_step(
+        execution_id=node_execution.id,
+        type=state.StepType.INPUT_MESSAGE,
+        message_id=message2.id,
+        is_complete=True,
+    )
+    branch1_id = execution.get_active_branch().id
+    execution.create_branch(
+        head_step_id=step1.id,
+        base_step_id=step2.id,
+        activate=True,
+    )
+    message3 = state.Message(role=models.Role.USER, text="three")
+    execution.add_message(message3)
+    step3 = execution.create_step(
+        execution_id=node_execution.id,
+        parent_step_id=step1.id,
+        type=state.StepType.INPUT_MESSAGE,
+        message_id=message3.id,
+        is_complete=True,
+    )
+
+    restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(execution))
+
+    assert restored.step_ids == [step1.id, step3.id]
+    assert restored.get_node_execution(node_execution.id).step_ids == [
+        step1.id,
+        step3.id,
+    ]
+    restored.switch_branch(branch1_id)
+    assert restored.step_ids == [step1.id, step2.id]
+
+
 @pytest.mark.asyncio
 async def test_state_manager_flushes_to_expected_session_layout(tmp_path):
     session_id = uuid.uuid4().hex

@@ -9,7 +9,7 @@ from . import models as history_models
 
 class HistoryManager:
     def get_visible_step_ids(self, execution: state.WorkflowExecution) -> list[UUID]:
-        return execution.get_active_step_ids()
+        return list(execution.step_ids)
 
     def get_last_user_input_step(
         self,
