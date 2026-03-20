@@ -7,19 +7,23 @@ import pytest
 
 from vocode import models
 from vocode import state
+from vocode.history.manager import HistoryManager
 from vocode.persistence import codec as persistence_codec
 from vocode.persistence import state_manager as persistence_state_manager
 
 
 def _build_sample_execution() -> state.WorkflowExecution:
+    history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
     input_message = state.Message(role=models.Role.USER, text="hi")
-    ne1 = run.create_node_execution(
+    ne1 = history.create_node_execution(
+        run,
         node="n1",
         input_messages=[input_message],
         status=state.RunStatus.RUNNING,
     )
-    s1 = run.create_step(
+    s1 = history.create_step(
+        run,
         execution_id=ne1.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message=state.Message(role=models.Role.ASSISTANT, text="hello"),
@@ -53,6 +57,7 @@ def test_codec_roundtrip_is_acyclic_and_restores_links():
 
 
 def test_codec_roundtrip_allows_auto_approved_bool():
+    history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
     msg = state.Message(role=models.Role.USER, text="hi")
     msg.tool_call_requests.append(
@@ -63,7 +68,8 @@ def test_codec_roundtrip_allows_auto_approved_bool():
             auto_approved=True,
         )
     )
-    ne1 = run.create_node_execution(
+    ne1 = history.create_node_execution(
+        run,
         node="n1",
         input_messages=[msg],
         status=state.RunStatus.RUNNING,
@@ -77,19 +83,21 @@ def test_codec_roundtrip_allows_auto_approved_bool():
 
 
 def test_codec_roundtrip_loaded_state_supports_explicit_id_updates():
+    history = HistoryManager()
     run = _build_sample_execution()
     restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(run))
 
     node_execution = next(iter(restored.node_executions.values()))
     new_message = state.Message(role=models.Role.USER, text="follow-up")
-    restored.add_message(new_message)
+    history.add_message(restored, new_message)
     node_execution.input_message_ids.append(new_message.id)
 
     new_step_message = state.Message(
         role=models.Role.ASSISTANT, text="follow-up-response"
     )
-    restored.add_message(new_step_message)
-    new_step = restored.create_step(
+    history.add_message(restored, new_step_message)
+    new_step = history.create_step(
+        restored,
         execution_id=node_execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=new_step_message.id,
@@ -101,37 +109,51 @@ def test_codec_roundtrip_loaded_state_supports_explicit_id_updates():
 
 
 def test_codec_roundtrip_restores_visible_step_ids_from_branch_projection():
+    history = HistoryManager()
     execution = state.WorkflowExecution(workflow_name="wf")
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node",
         status=state.RunStatus.RUNNING,
     )
     message1 = state.Message(role=models.Role.USER, text="one")
-    execution.add_message(message1)
-    step1 = execution.create_step(
+    history.add_message(execution, message1)
+    step1 = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=message1.id,
         is_complete=True,
     )
     message2 = state.Message(role=models.Role.USER, text="two")
-    execution.add_message(message2)
-    step2 = execution.create_step(
+    history.add_message(execution, message2)
+    step2 = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=message2.id,
         is_complete=True,
     )
     branch1_id = execution.get_active_branch().id
-    execution.create_branch(
+    branch2 = history.create_branch(
+        execution,
         head_step_id=step1.id,
         base_step_id=step2.id,
         activate=True,
     )
+    branched_execution = history.create_node_execution(
+        execution,
+        node=node_execution.node,
+        status=state.RunStatus.RUNNING,
+        branch_id=branch2.id,
+        input_message_ids=list(node_execution.input_message_ids),
+        previous_id=node_execution.previous_id,
+    )
     message3 = state.Message(role=models.Role.USER, text="three")
-    execution.add_message(message3)
-    step3 = execution.create_step(
-        execution_id=node_execution.id,
+    history.add_message(execution, message3)
+    step3 = history.create_step(
+        execution,
+        execution_id=branched_execution.id,
         parent_step_id=step1.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=message3.id,
@@ -143,9 +165,10 @@ def test_codec_roundtrip_restores_visible_step_ids_from_branch_projection():
     assert restored.step_ids == [step1.id, step3.id]
     assert restored.get_node_execution(node_execution.id).step_ids == [
         step1.id,
-        step3.id,
+        step2.id,
     ]
-    restored.switch_branch(branch1_id)
+    assert restored.get_node_execution(branched_execution.id).step_ids == [step3.id]
+    history.switch_branch(restored, branch1_id)
     assert restored.step_ids == [step1.id, step2.id]
 
 

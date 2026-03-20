@@ -6,6 +6,7 @@ import pytest
 
 from vocode import models, state
 from vocode import settings as vocode_settings
+from vocode.history.manager import HistoryManager
 from vocode.manager import helpers as manager_helpers
 from vocode.manager import proto as manager_proto
 from vocode.manager.commands import CommandManager, command, option
@@ -618,6 +619,7 @@ async def test_continue_command_calls_manager_continue(
 async def test_continue_command_preserves_existing_visible_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, _ = manager_helpers.InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
@@ -643,15 +645,15 @@ async def test_continue_command_preserves_existing_visible_history(
         project=project,
         initial_message=None,
     )
-    execution = runner.execution.create_node_execution(
+    execution = history.create_node_execution(
+        runner.execution,
         node="node-output",
-        input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
     message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
-    runner.execution.add_message(message)
-    output_step = runner.execution.create_step(
+    history.add_message(runner.execution, message)
+    output_step = history.create_step(
+        runner.execution,
         execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=message.id,

@@ -9,6 +9,7 @@ import pytest
 from tests.manager.runner_stubs import DummyRunnerWithWorkflow
 from tests.stub_project import StubProject
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode import settings as vocode_settings
 from vocode.manager import autocomplete_providers as autocomplete_providers
 from vocode.manager import proto as manager_proto
@@ -52,16 +53,19 @@ async def test_uiserver_applies_logging_settings() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_on_runner_event_roundtrip() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-server")
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node1",
         status=state.RunStatus.RUNNING,
     )
-    step = execution.create_step(
+    step = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
     )
@@ -109,13 +113,15 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
     await server.start()
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-node-start-time")
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node-start",
         status=state.RunStatus.RUNNING,
     )
@@ -159,8 +165,9 @@ async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
     assert payload.active_node_started_at is None
 
     message = state.Message(role=models.Role.USER, text="hello")
-    execution.add_message(message)
-    step = execution.create_step(
+    history.add_message(execution, message)
+    step = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=message.id,
@@ -182,13 +189,15 @@ async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
     await server.start()
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-stop-input")
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node-stop",
         status=state.RunStatus.RUNNING,
     )
@@ -306,16 +315,19 @@ async def test_run_autocomplete_provider_does_not_suggest_exact_match() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_on_runner_event_user_input_message() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-server-user-input")
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node1",
         status=state.RunStatus.RUNNING,
     )
-    step = execution.create_step(
+    step = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.PROMPT,
     )
@@ -384,16 +396,19 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-server-user-input-confirm")
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node1",
         status=state.RunStatus.RUNNING,
     )
-    step = execution.create_step(
+    step = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.PROMPT_CONFIRM,
     )
@@ -479,6 +494,7 @@ async def test_uiserver_autostarts_default_workflow(
 
 @pytest.mark.asyncio
 async def test_uiserver_status_event_emits_ui_state_packet() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
@@ -497,7 +513,8 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
         input_token_limit=1000,
     )
 
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node-status",
         status=state.RunStatus.RUNNING,
     )
@@ -591,6 +608,7 @@ async def test_uiserver_handles_stop_request_packet(
 async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
@@ -601,13 +619,15 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
             self.execution = state.WorkflowExecution(workflow_name="wf-edit")
 
     runner = DummyRunner()
-    node_execution = runner.execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        runner.execution,
         node="node",
         status=state.RunStatus.RUNNING,
     )
     message = state.Message(role=models.Role.USER, text="old")
-    runner.execution.add_message(message)
-    step = runner.execution.create_step(
+    history.add_message(runner.execution, message)
+    step = history.create_step(
+        runner.execution,
         execution_id=node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=message.id,
@@ -726,6 +746,7 @@ async def test_uiserver_user_input_sends_error_when_edit_fails(
 async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
@@ -736,13 +757,15 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
             self.execution = state.WorkflowExecution(workflow_name="wf-edit")
 
     runner = DummyRunner()
-    node_execution = runner.execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        runner.execution,
         node="node",
         status=state.RunStatus.RUNNING,
     )
     message = state.Message(role=models.Role.USER, text="old")
-    runner.execution.add_message(message)
-    step = runner.execution.create_step(
+    history.add_message(runner.execution, message)
+    step = history.create_step(
+        runner.execution,
         execution_id=node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=message.id,
@@ -813,12 +836,14 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
 
 @pytest.mark.asyncio
 async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-aa")
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node1",
         status=state.RunStatus.RUNNING,
     )
@@ -834,8 +859,9 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
         text="",
         tool_call_requests=[tool_req],
     )
-    execution.add_message(message)
-    step = execution.create_step(
+    history.add_message(execution, message)
+    step = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.TOOL_REQUEST,
         message_id=message.id,

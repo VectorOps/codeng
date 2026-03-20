@@ -7,6 +7,7 @@ import litellm
 from pydantic import BaseModel
 
 from vocode import state, models
+from vocode.history.manager import HistoryManager
 from vocode.logger import logger
 from . import helpers as llm_helpers
 from .preprocessors import base as pre_base
@@ -167,6 +168,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         outcome_name: Optional[str] = None,
     ) -> state.Step:
         workflow_execution = base_step._workflow_execution
+        history = HistoryManager()
         message = base_step.message
         if message is None:
             message = state.Message(
@@ -176,7 +178,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 tool_call_responses=tool_call_responses or [],
             )
             if workflow_execution is not None:
-                workflow_execution.add_message(message)
+                history.add_message(workflow_execution, message)
         else:
             message.role = role
             message.text = text
@@ -247,7 +249,8 @@ class LLMExecutor(runner_base.BaseExecutor):
                 tools = []
             tools.append(choose_tool)
 
-        step = inp.run.create_step(
+        step = HistoryManager().create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
         )

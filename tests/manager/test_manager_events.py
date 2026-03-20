@@ -6,6 +6,7 @@ from typing import AsyncIterator, Dict, Optional
 import pytest
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
@@ -26,12 +27,14 @@ class ManagerTestExecutor(BaseExecutor):
         super().__init__(config, project)
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="manager-output",
         )
-        inp.run.add_message(msg)
-        step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        step = history.create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,
@@ -53,12 +56,14 @@ class ManagerBlockingExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         assert block_event is not None
         await block_event.wait()
+        history = HistoryManager()
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="blocking-output",
         )
-        inp.run.add_message(msg)
-        step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        step = history.create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,
@@ -255,6 +260,7 @@ async def test_manager_emits_final_status_on_runner_stop() -> None:
 
 @pytest.mark.asyncio
 async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> None:
+    history = HistoryManager()
     node = models.Node(
         name="node-edit",
         type="manager-test",
@@ -273,7 +279,8 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     )
 
     execution = runner.execution
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node-edit",
         status=state.RunStatus.RUNNING,
     )
@@ -282,21 +289,24 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     user_message = state.Message(role=models.Role.USER, text="old user input")
     output_message = state.Message(role=models.Role.ASSISTANT, text="after input")
     for message in [prompt_message, user_message, output_message]:
-        execution.add_message(message)
+        history.add_message(execution, message)
 
-    prompt_step = execution.create_step(
+    prompt_step = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.PROMPT,
         message_id=prompt_message.id,
         is_complete=True,
     )
-    input_step = execution.create_step(
+    input_step = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=user_message.id,
         is_complete=True,
     )
-    execution.create_step(
+    history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=output_message.id,
@@ -338,6 +348,7 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
 async def test_manager_edit_history_stops_parent_runner_when_going_up_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    history = HistoryManager()
     project = FakeProject()
 
     parent_node = models.Node(
@@ -374,22 +385,25 @@ async def test_manager_edit_history_stops_parent_runner_when_going_up_stack(
     )
 
     parent_execution = parent_runner.execution
-    parent_node_execution = parent_execution.create_node_execution(
+    parent_node_execution = history.create_node_execution(
+        parent_execution,
         node="node-parent",
         status=state.RunStatus.RUNNING,
     )
 
     prompt_message = state.Message(role=models.Role.ASSISTANT, text="parent prompt")
     user_message = state.Message(role=models.Role.USER, text="parent input")
-    parent_execution.add_message(prompt_message)
-    parent_execution.add_message(user_message)
-    parent_execution.create_step(
+    history.add_message(parent_execution, prompt_message)
+    history.add_message(parent_execution, user_message)
+    history.create_step(
+        parent_execution,
         execution_id=parent_node_execution.id,
         type=state.StepType.PROMPT,
         message_id=prompt_message.id,
         is_complete=True,
     )
-    parent_execution.create_step(
+    history.create_step(
+        parent_execution,
         execution_id=parent_node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=user_message.id,

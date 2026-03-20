@@ -1,6 +1,7 @@
 import pytest
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.runner.base import ExecutorInput
 from vocode.runner.executors.llm.llm import (
     LLMExecutor,
@@ -66,6 +67,7 @@ class _FakeStream:
 
 
 def test_build_messages_with_tool_call_and_tool_result() -> None:
+    history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
         model="test-model",
@@ -73,10 +75,10 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = run.create_node_execution(
+    execution = history.create_node_execution(
+        run,
         node="llm-node",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
@@ -98,8 +100,9 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         tool_call_requests=[tool_req],
         tool_call_responses=[tool_resp],
     )
-    run.add_message(assistant_msg)
-    run.create_step(
+    history.add_message(run, assistant_msg)
+    history.create_step(
+        run,
         execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=assistant_msg.id,
@@ -130,6 +133,7 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
 
 
 def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
+    history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
         model="test-model",
@@ -146,10 +150,10 @@ def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = run.create_node_execution(
+    execution = history.create_node_execution(
+        run,
         node="llm-node",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
@@ -167,6 +171,7 @@ def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
 
 
 def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> None:
+    history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
         model="test-model",
@@ -174,20 +179,23 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = run.create_node_execution(
+    execution = history.create_node_execution(
+        run,
         node="llm-node",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
     assistant_msg = state.Message(role=models.Role.ASSISTANT, text="hello")
-    run.add_message(assistant_msg)
-    run.create_step(
+    history.add_message(run, assistant_msg)
+    history.create_step(
+        run,
         execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=assistant_msg.id,
-        state=LLMStepState(provider_state={"cache_control": {"type": "ephemeral"}}),
+        runtime_state=LLMStepState(
+            provider_state={"cache_control": {"type": "ephemeral"}}
+        ),
         is_complete=True,
     )
 
@@ -204,6 +212,7 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
 
 
 def test_build_step_from_message_reuses_existing_message_id_for_updates() -> None:
+    history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
         model="test-model",
@@ -211,13 +220,14 @@ def test_build_step_from_message_reuses_existing_message_id_for_updates() -> Non
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = run.create_node_execution(
+    execution = history.create_node_execution(
+        run,
         node="llm-node",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
-    base_step = run.create_step(
+    base_step = history.create_step(
+        run,
         execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
     )
@@ -249,6 +259,7 @@ def test_build_step_from_message_reuses_existing_message_id_for_updates() -> Non
 async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
         model="test-model",
@@ -256,10 +267,10 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = run.create_node_execution(
+    execution = history.create_node_execution(
+        run,
         node="llm-node",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
