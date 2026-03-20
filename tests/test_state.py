@@ -31,11 +31,11 @@ def test_delete_steps_removes_from_workflow_and_node_executions() -> None:
 
     run.delete_steps([step1.id, step3.id])
 
-    remaining_ids = {s.id for s in run.steps}
+    remaining_ids = {s.id for s in run.iter_steps()}
     assert remaining_ids == {step2.id}
 
-    exec1_ids = {s.id for s in exec1.steps}
-    exec2_ids = {s.id for s in exec2.steps}
+    exec1_ids = {s.id for s in exec1.iter_steps()}
+    exec2_ids = {s.id for s in exec2.iter_steps()}
     assert exec1_ids == {step2.id}
     assert exec2_ids == set()
 
@@ -48,13 +48,13 @@ def test_delete_steps_ignores_unknown_ids_and_empty_input() -> None:
     unknown_id = uuid4()
     run.delete_steps([unknown_id])
 
-    assert [s.id for s in run.steps] == [step1.id]
-    assert [s.id for s in exec1.steps] == [step1.id]
+    assert [s.id for s in run.iter_steps()] == [step1.id]
+    assert [s.id for s in exec1.iter_steps()] == [step1.id]
 
     run.delete_steps([])
 
-    assert [s.id for s in run.steps] == [step1.id]
-    assert [s.id for s in exec1.steps] == [step1.id]
+    assert [s.id for s in run.iter_steps()] == [step1.id]
+    assert [s.id for s in exec1.iter_steps()] == [step1.id]
 
 
 def test_delete_step_delegates_to_delete_steps() -> None:
@@ -64,8 +64,8 @@ def test_delete_step_delegates_to_delete_steps() -> None:
 
     run.delete_step(step1.id)
 
-    assert run.steps == ()
-    assert exec1.steps == ()
+    assert tuple(run.iter_steps()) == ()
+    assert tuple(exec1.iter_steps()) == ()
 
 
 def test_step_is_final_defaults_false() -> None:
@@ -136,12 +136,12 @@ def test_delete_node_execution_removes_execution_and_child_steps() -> None:
     assert exec1.id not in run.node_executions
     assert exec2.id in run.node_executions
 
-    remaining_step_ids = {s.id for s in run.steps}
+    remaining_step_ids = {s.id for s in run.iter_steps()}
     assert remaining_step_ids == {step3.id}
 
-    assert exec2.steps == (step3,)
-    assert all(step.id != step1.id for step in run.steps)
-    assert all(step.id != step2.id for step in run.steps)
+    assert tuple(exec2.iter_steps()) == (step3,)
+    assert all(step.id != step1.id for step in run.iter_steps())
+    assert all(step.id != step2.id for step in run.iter_steps())
 
 
 def test_reference_properties_reflect_canonical_ids() -> None:
@@ -187,4 +187,4 @@ def test_reference_properties_reflect_canonical_ids() -> None:
     assert exec2.previous_id == exec1.id
     assert exec1.input_message_ids == [in_1a.id, in_1b.id]
     assert exec1.step_ids == [step1.id, step2.id]
-    assert exec2.steps == (step3,)
+    assert tuple(exec2.iter_steps()) == (step3,)

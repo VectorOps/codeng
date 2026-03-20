@@ -65,7 +65,7 @@ class NestedWorkflowTool(tools_base.BaseTool):
 class StartNestedWorkflowExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput):
         has_tool_result = False
-        for existing_step in inp.execution.steps:
+        for existing_step in inp.execution.iter_steps():
             if (
                 existing_step.message is not None
                 and existing_step.message.tool_call_responses
@@ -193,7 +193,7 @@ async def test_nested_workflow_execution_via_manager():
     parent_exec = node_execs_by_name["parent-node"]
     tool_response_steps = [
         s
-        for s in parent_exec.steps
+        for s in parent_exec.iter_steps()
         if s.message is not None and s.message.tool_call_responses
     ]
     assert tool_response_steps
@@ -274,7 +274,7 @@ async def test_nested_workflow_failure_is_returned_as_tool_error():
     parent_exec = node_execs_by_name["parent-node"]
     tool_response_steps = [
         s
-        for s in parent_exec.steps
+        for s in parent_exec.iter_steps()
         if s.message is not None and s.message.tool_call_responses
     ]
     assert tool_response_steps

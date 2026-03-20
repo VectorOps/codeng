@@ -271,7 +271,7 @@ class Runner:
         if mode == models.ResultMode.ALL_MESSAGES:
             messages: list[state.Message] = []
             messages.extend(execution.input_messages)
-            for s in execution.steps:
+            for s in execution.iter_steps():
                 if s.message is None:
                     continue
                 if s.type not in (
@@ -283,7 +283,7 @@ class Runner:
             return messages
 
         final_message: Optional[state.Message] = None
-        for s in reversed(execution.steps):
+        for s in execution.iter_steps_reversed():
             if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None:
                 final_message = s.message
                 break
@@ -304,7 +304,7 @@ class Runner:
                     initial_user_message = m
                     break
             if initial_user_message is None:
-                for s in execution.steps:
+                for s in execution.iter_steps():
                     if s.type != state.StepType.INPUT_MESSAGE:
                         continue
                     if s.message is None:
@@ -379,10 +379,11 @@ class Runner:
         resume_step: Optional[state.Step] = None
         skip_executor = False
         changed = False
-        if self.execution.steps:
+        if self.execution.step_ids:
             anchor_index: Optional[int] = None
-            for i in range(len(self.execution.steps) - 1, -1, -1):
-                step = self.execution.steps[i]
+            steps = list(self.execution.iter_steps())
+            for i in range(len(steps) - 1, -1, -1):
+                step = steps[i]
                 if not step.is_complete:
                     continue
                 if step.type not in (
@@ -394,13 +395,13 @@ class Runner:
                 resume_step = step
                 break
             if anchor_index is None:
-                ids = [s.id for s in self.execution.steps]
+                ids = list(self.execution.step_ids)
                 if ids:
                     self.execution.delete_steps(ids)
                     changed = True
                 resume_step = None
             else:
-                tail_ids = [s.id for s in self.execution.steps[anchor_index + 1 :]]
+                tail_ids = [step.id for step in steps[anchor_index + 1 :]]
                 if tail_ids:
                     self.execution.delete_steps(tail_ids)
                     changed = True
@@ -413,7 +414,7 @@ class Runner:
             if changed:
                 self._touch_execution()
 
-        if not self.execution.steps:
+        if not self.execution.step_ids:
             runtime_node = self.graph.root
             current_execution: Optional[state.NodeExecution] = None
             if runtime_node is not None:
@@ -433,7 +434,7 @@ class Runner:
                     )
             return runtime_node, current_execution, None, False
 
-        last_step = self.execution.steps[-1]
+        last_step = self.execution.get_step(self.execution.step_ids[-1])
         execution_id = last_step.execution.id
         execution = self.execution.node_executions.get(
             execution_id, last_step.execution
@@ -518,7 +519,7 @@ class Runner:
             if (
                 self.need_input
                 and self.initial_message is None
-                and not self.execution.steps
+                and not self.execution.step_ids
                 and current_execution is not None
             ):
                 waiting_event = self.set_status(

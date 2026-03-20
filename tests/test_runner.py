@@ -181,7 +181,7 @@ class ToolPromptExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
         has_tool_result = False
-        for existing_step in execution.steps:
+        for existing_step in execution.iter_steps():
             if (
                 existing_step.message is not None
                 and existing_step.message.tool_call_responses
@@ -228,7 +228,7 @@ class FakeLLMToolExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
         has_tool_result = False
-        for existing_step in execution.steps:
+        for existing_step in execution.iter_steps():
             if (
                 existing_step.message is not None
                 and existing_step.message.tool_call_responses
@@ -557,14 +557,14 @@ async def test_runner_execution_flow():
 
     node1_output_steps = [
         s
-        for s in node1_exec.steps
+        for s in node1_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None
     ]
     assert any("run1-final" in s.message.text for s in node1_output_steps)
     assert any("run2-final" in s.message.text for s in node1_output_steps)
 
     node1_input_steps = [
-        s for s in node1_exec.steps if s.type == state.StepType.INPUT_MESSAGE
+        s for s in node1_exec.iter_steps() if s.type == state.StepType.INPUT_MESSAGE
     ]
     assert len(node1_input_steps) >= 2
 
@@ -577,7 +577,7 @@ async def test_runner_execution_flow():
     node2_exec = node_execs_by_name["node2"]
     node2_complete_steps = [
         s
-        for s in node2_exec.steps
+        for s in node2_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert node2_complete_steps
@@ -606,7 +606,7 @@ async def test_runner_execution_flow():
     )
 
     for ne in runner.execution.node_executions.values():
-        node_steps = ne.steps
+        node_steps = tuple(ne.iter_steps())
         if not node_steps:
             continue
         finals = [s for s in node_steps if s.is_final]
@@ -714,7 +714,7 @@ async def test_loop_confirmation_mode_repeats_node_without_transition():
     node1_exec = node_execs_by_name["node1"]
     node1_output_steps = [
         s
-        for s in node1_exec.steps
+        for s in node1_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None
     ]
     assert any("run1-final" in s.message.text for s in node1_output_steps)
@@ -1154,8 +1154,8 @@ async def test_runner_resume_from_output_message_skips_executor_run():
                 )
 
     assert runner.status == state.RunnerStatus.FINISHED
-    assert all(s.id != extra_step.id for s in runner.execution.steps)
-    assert all(s.id != extra_step.id for s in execution.steps)
+    assert all(s.id != extra_step.id for s in runner.execution.iter_steps())
+    assert all(s.id != extra_step.id for s in execution.iter_steps())
 
 
 @pytest.mark.asyncio
@@ -1216,7 +1216,7 @@ async def test_runner_resume_from_input_message_re_runs_executor():
     node_exec = node_execs_by_name["node-input"]
     complete_outputs = [
         s
-        for s in node_exec.steps
+        for s in node_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs
@@ -1622,13 +1622,15 @@ async def test_input_node_prompts_and_returns_user_message_as_output():
     assert set(node_execs_by_name.keys()) == {"input-node"}
     input_exec = node_execs_by_name["input-node"]
 
-    prompt_steps = [s for s in input_exec.steps if s.type == state.StepType.PROMPT]
+    prompt_steps = [
+        s for s in input_exec.iter_steps() if s.type == state.StepType.PROMPT
+    ]
     input_steps = [
-        s for s in input_exec.steps if s.type == state.StepType.INPUT_MESSAGE
+        s for s in input_exec.iter_steps() if s.type == state.StepType.INPUT_MESSAGE
     ]
     output_steps = [
         s
-        for s in input_exec.steps
+        for s in input_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
 
@@ -1728,11 +1730,15 @@ async def test_runner_requires_initial_input_and_forwards_to_first_node():
     assert set(node_execs_by_name.keys()) == {"root"}
     root_exec = node_execs_by_name["root"]
 
-    prompt_steps = [s for s in root_exec.steps if s.type == state.StepType.PROMPT]
-    input_steps = [s for s in root_exec.steps if s.type == state.StepType.INPUT_MESSAGE]
+    prompt_steps = [
+        s for s in root_exec.iter_steps() if s.type == state.StepType.PROMPT
+    ]
+    input_steps = [
+        s for s in root_exec.iter_steps() if s.type == state.StepType.INPUT_MESSAGE
+    ]
     output_steps = [
         s
-        for s in root_exec.steps
+        for s in root_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
 
@@ -1831,7 +1837,7 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
     node_exec = node_execs_by_name["node-tool"]
     complete_outputs = [
         s
-        for s in node_exec.steps
+        for s in node_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs
@@ -1980,7 +1986,7 @@ async def test_runner_start_after_stop_resumes_execution():
     assert node_exec.status == state.RunStatus.FINISHED
     complete_outputs = [
         s
-        for s in node_exec.steps
+        for s in node_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs

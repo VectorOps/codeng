@@ -733,8 +733,9 @@ class UIServer:
             if stats_execution_id is not None:
                 node_execution = execution.node_executions.get(stats_execution_id)
                 if node_execution is not None:
-                    if node_execution.steps:
-                        node_started_at = node_execution.steps[0].created_at
+                    if node_execution.step_ids:
+                        first_step = execution.get_step(node_execution.step_ids[0])
+                        node_started_at = first_step.created_at
                     node_name = node_execution.node
                     node_execution_id = str(node_execution.id)
             runners.append(
