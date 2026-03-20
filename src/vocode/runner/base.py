@@ -84,7 +84,7 @@ def iter_execution_messages(
     for exec_item in reversed(chain):
         for msg in exec_item.input_messages:
             yield msg, None
-        for step in exec_item.steps:
+        for step in exec_item.iter_steps():
             if step.message is None:
                 continue
             yield step.message, step

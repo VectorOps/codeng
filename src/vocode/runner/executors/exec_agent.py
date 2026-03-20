@@ -33,7 +33,7 @@ class RunAgentExecutor(BaseExecutor):
         result_step = next(
             (
                 s
-                for s in inp.execution.steps
+                for s in inp.execution.iter_steps()
                 if s.type == state.StepType.WORKFLOW_RESULT
             ),
             None,
@@ -55,7 +55,7 @@ class RunAgentExecutor(BaseExecutor):
         req_step = next(
             (
                 s
-                for s in inp.execution.steps
+                for s in inp.execution.iter_steps()
                 if s.type == state.StepType.WORKFLOW_REQUEST
             ),
             None,

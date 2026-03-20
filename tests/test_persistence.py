@@ -44,8 +44,9 @@ def test_codec_roundtrip_is_acyclic_and_restores_links():
 
     assert restored.id == run.id
     assert restored.workflow_name == run.workflow_name
-    assert len(restored.steps) == 1
-    step = restored.steps[0]
+    restored_steps = tuple(restored.iter_steps())
+    assert len(restored_steps) == 1
+    step = restored_steps[0]
     assert step.execution_id in restored.node_executions
     assert step.execution is restored.node_executions[step.execution_id]
     assert restored.updated_at == run.updated_at

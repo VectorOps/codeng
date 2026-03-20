@@ -123,7 +123,7 @@ async def test_http_input_executor_waits_for_external_message(tmp_path) -> None:
 
     output_steps = [
         s
-        for s in exec_item.steps
+        for s in exec_item.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None
     ]
     assert output_steps
@@ -238,7 +238,7 @@ async def test_http_input_executor_accepts_markdown_without_wrapping(tmp_path) -
 
     output_steps = [
         s
-        for s in exec_item.steps
+        for s in exec_item.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None
     ]
     assert output_steps

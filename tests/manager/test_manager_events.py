@@ -143,8 +143,10 @@ async def test_manager_run_event_subscriber_emits_and_handles_responses() -> Non
     prompt_steps = [s for s in events if s.type == state.StepType.PROMPT_CONFIRM]
     assert output_steps
     assert prompt_steps
-    assert [s for s in node_exec.steps if s.type == state.StepType.PROMPT_CONFIRM]
-    assert [s for s in node_exec.steps if s.type == state.StepType.APPROVAL]
+    assert [
+        s for s in node_exec.iter_steps() if s.type == state.StepType.PROMPT_CONFIRM
+    ]
+    assert [s for s in node_exec.iter_steps() if s.type == state.StepType.APPROVAL]
 
 
 @pytest.mark.asyncio
@@ -319,7 +321,7 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     assert res.is_edited is True
     assert res.deleted_step_ids
 
-    all_steps = runner.execution.steps
+    all_steps = tuple(runner.execution.iter_steps())
     assert all_steps
     assert all_steps[-1].type == state.StepType.INPUT_MESSAGE
     assert all_steps[-1].message is not None

@@ -225,13 +225,15 @@ class NodeExecution(BaseModel):
             for message_id in self.input_message_ids
         )
 
-    @property
-    def steps(self) -> tuple["Step", ...]:
+    def iter_steps(self):
         if self._workflow_execution is None:
             raise ValueError("NodeExecution is not attached to a workflow execution")
-        return tuple(
-            self._workflow_execution.get_step(step_id) for step_id in self.step_ids
-        )
+        return self._workflow_execution.iter_node_steps(self.id)
+
+    def iter_steps_reversed(self):
+        if self._workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        return self._workflow_execution.iter_node_steps_reversed(self.id)
 
 
 class Step(BaseModel):
@@ -356,9 +358,23 @@ class WorkflowExecution(BaseModel):
     def _attach_runtime_refs_after_validation(self) -> "WorkflowExecution":
         return self.attach_runtime_refs()
 
-    @property
-    def steps(self) -> tuple[Step, ...]:
-        return tuple(self.get_step(step_id) for step_id in self.step_ids)
+    def iter_steps(self):
+        for step_id in self.step_ids:
+            yield self.get_step(step_id)
+
+    def iter_steps_reversed(self):
+        for step_id in reversed(self.step_ids):
+            yield self.get_step(step_id)
+
+    def iter_node_steps(self, execution_id: UUID):
+        execution = self.get_node_execution(execution_id)
+        for step_id in execution.step_ids:
+            yield self.get_step(step_id)
+
+    def iter_node_steps_reversed(self, execution_id: UUID):
+        execution = self.get_node_execution(execution_id)
+        for step_id in reversed(execution.step_ids):
+            yield self.get_step(step_id)
 
     def get_step(self, step_id: UUID) -> Step:
         step = self.steps_by_id.get(step_id)
@@ -440,7 +456,7 @@ class WorkflowExecution(BaseModel):
         step_ids_set = set(step_ids)
         executions_step_ids: Dict[UUID, List[UUID]] = {}
         remaining_steps: List[Step] = []
-        for step in self.steps:
+        for step in self.iter_steps():
             if step.id in step_ids_set:
                 self.steps_by_id.pop(step.id, None)
                 execution_id = step.execution_id

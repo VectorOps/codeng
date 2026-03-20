@@ -209,7 +209,7 @@ class BaseManager:
         for frame_index in range(len(self._runner_stack) - 1, -1, -1):
             frame = self._runner_stack[frame_index]
             runner = frame.runner
-            for step in reversed(runner.execution.steps):
+            for step in runner.execution.iter_steps_reversed():
                 message = step.message
                 if (
                     step.type == state.StepType.INPUT_MESSAGE
@@ -238,7 +238,8 @@ class BaseManager:
         execution = runner.execution
 
         cut_index: Optional[int] = None
-        for i, step in enumerate(execution.steps):
+        steps = list(execution.iter_steps())
+        for i, step in enumerate(steps):
             if step.id == target_step.id:
                 cut_index = i
                 break
@@ -246,7 +247,7 @@ class BaseManager:
         if cut_index is None:
             return HistoryEditResult(is_edited=False)
 
-        delete_ids = [step.id for step in execution.steps[cut_index + 1 :]]
+        delete_ids = [step.id for step in steps[cut_index + 1 :]]
         deleted_step_ids = [str(step_id) for step_id in delete_ids]
         if delete_ids:
             execution.delete_steps(delete_ids)
