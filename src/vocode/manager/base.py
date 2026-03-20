@@ -6,6 +6,7 @@ from typing import List, Optional
 from collections.abc import Awaitable, Callable, AsyncIterator
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.logger import logger
 from vocode.project import Project
 from vocode.runner.runner import Runner, RunnerStopped
@@ -41,6 +42,9 @@ class HistoryEditResult:
     is_edited: bool
     step: Optional[state.Step] = None
     deleted_step_ids: list[str] = field(default_factory=list)
+    branch_id: Optional[str] = None
+    created_branch_id: Optional[str] = None
+    upserted_steps: list[state.Step] = field(default_factory=list)
 
 
 RunnerEventListener = Callable[
@@ -60,6 +64,7 @@ class BaseManager:
         self._started = False
         self._run_event_listener = run_event_listener
         self._driver_task: Optional[asyncio.Task[None]] = None
+        self._history = HistoryManager()
 
     def _ensure_driver_task(self) -> None:
         if self._driver_task is not None and not self._driver_task.done():
@@ -237,36 +242,33 @@ class BaseManager:
         runner = frame.runner
         execution = runner.execution
 
-        cut_index: Optional[int] = None
-        steps = list(execution.iter_steps())
-        for i, step in enumerate(steps):
-            if step.id == target_step.id:
-                cut_index = i
-                break
-
-        if cut_index is None:
+        result = self._history.edit_user_input(execution, target_step.id, text)
+        if not result.changed:
             return HistoryEditResult(is_edited=False)
 
-        delete_ids = [step.id for step in steps[cut_index + 1 :]]
-        deleted_step_ids = [str(step_id) for step_id in delete_ids]
-        if delete_ids:
-            execution.delete_steps(delete_ids)
-            execution.trim_empty_node_executions()
-
-        message = target_step.message
-        if message is None:
-            return HistoryEditResult(is_edited=False)
-
-        message.text = text
         execution.touch()
         self.project.state_manager.notify_changed(execution)
 
         if resume:
             await self.continue_current_runner()
+        upserted_steps = list(result.upserted_steps)
         return HistoryEditResult(
             is_edited=True,
-            step=target_step,
-            deleted_step_ids=deleted_step_ids,
+            step=(upserted_steps[-1] if upserted_steps else None),
+            deleted_step_ids=[
+                str(step_id) for step_id in result.removed_visible_step_ids
+            ],
+            branch_id=(
+                str(result.active_branch_id)
+                if result.active_branch_id is not None
+                else None
+            ),
+            created_branch_id=(
+                str(result.created_branch_id)
+                if result.created_branch_id is not None
+                else None
+            ),
+            upserted_steps=upserted_steps,
         )
 
     async def _emit_run_event(

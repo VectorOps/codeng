@@ -188,3 +188,46 @@ def test_reference_properties_reflect_canonical_ids() -> None:
     assert exec1.input_message_ids == [in_1a.id, in_1b.id]
     assert exec1.step_ids == [step1.id, step2.id]
     assert tuple(exec2.iter_steps()) == (step3,)
+
+
+def test_workflow_execution_active_branch_defaults_to_linear_path() -> None:
+    run = state.WorkflowExecution(workflow_name="wf")
+    exec1 = _make_node_execution(run, "node-1")
+    step1 = run.create_step(execution_id=exec1.id, type=state.StepType.OUTPUT_MESSAGE)
+    step2 = run.create_step(execution_id=exec1.id, type=state.StepType.INPUT_MESSAGE)
+
+    active_steps = tuple(run.iter_steps())
+
+    assert [step.id for step in active_steps] == [step1.id, step2.id]
+    assert step2.parent is step1
+    assert step1.children == (step2,)
+    assert run.active_branch_id is not None
+    branch = run.get_active_branch()
+    assert branch.head_step_id == step2.id
+
+
+def test_switch_branch_changes_active_projection() -> None:
+    run = state.WorkflowExecution(workflow_name="wf")
+    exec1 = _make_node_execution(run, "node-1")
+    step1 = run.create_step(execution_id=exec1.id, type=state.StepType.OUTPUT_MESSAGE)
+    step2 = run.create_step(execution_id=exec1.id, type=state.StepType.INPUT_MESSAGE)
+    branch1_id = run.get_active_branch().id
+
+    branch2 = run.create_branch(
+        head_step_id=step1.id,
+        base_step_id=step2.id,
+        activate=True,
+    )
+    step3 = run.create_step(
+        execution_id=exec1.id,
+        parent_step_id=step1.id,
+        type=state.StepType.INPUT_MESSAGE,
+    )
+
+    assert [step.id for step in run.iter_steps()] == [step1.id, step3.id]
+
+    run.switch_branch(branch1_id)
+
+    assert run.get_active_branch().id == branch1_id
+    assert [step.id for step in run.iter_steps()] == [step1.id, step2.id]
+    assert branch2.head_step_id == step3.id

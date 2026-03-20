@@ -1142,6 +1142,12 @@ async def test_runner_resume_from_output_message_skips_executor_run():
         type=state.StepType.PROMPT,
         is_complete=True,
     )
+    branch = runner.execution.create_branch(
+        head_step_id=output_step.id,
+        base_step_id=output_step.id,
+        activate=True,
+    )
+    branch.head_step_id = output_step.id
 
     agen = runner.run()
 
@@ -1156,6 +1162,91 @@ async def test_runner_resume_from_output_message_skips_executor_run():
     assert runner.status == state.RunnerStatus.FINISHED
     assert all(s.id != extra_step.id for s in runner.execution.iter_steps())
     assert all(s.id != extra_step.id for s in execution.iter_steps())
+
+
+@pytest.mark.asyncio
+async def test_runner_resume_uses_active_branch_projection() -> None:
+    node = models.Node(
+        name="node-input",
+        type="resume-run",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-resume-branch", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=None,
+    )
+
+    execution = runner.execution.create_node_execution(
+        node="node-input",
+        input_message_ids=[],
+        step_ids=[],
+        status=state.RunStatus.RUNNING,
+    )
+
+    old_message = state.Message(role=models.Role.USER, text="old user input")
+    runner.execution.add_message(old_message)
+    old_input_step = runner.execution.create_step(
+        execution_id=execution.id,
+        type=state.StepType.INPUT_MESSAGE,
+        message_id=old_message.id,
+        is_complete=True,
+    )
+    output_message = state.Message(role=models.Role.ASSISTANT, text="old output")
+    runner.execution.add_message(output_message)
+    runner.execution.create_step(
+        execution_id=execution.id,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message_id=output_message.id,
+        is_complete=True,
+    )
+
+    branched = runner.execution.create_branch(
+        head_step_id=old_input_step.parent_step_id,
+        base_step_id=old_input_step.id,
+        activate=True,
+    )
+    new_message = state.Message(role=models.Role.USER, text="new user input")
+    runner.execution.add_message(new_message)
+    new_input_step = runner.execution.create_step(
+        execution_id=execution.id,
+        parent_step_id=old_input_step.parent_step_id,
+        type=state.StepType.INPUT_MESSAGE,
+        message_id=new_message.id,
+        is_complete=True,
+    )
+
+    assert runner.execution.get_active_branch().id == branched.id
+    assert runner.execution.get_active_step_ids()[-1] == new_input_step.id
+
+    agen = runner.run()
+    events: list[RunEvent] = []
+
+    def handler(event: RunEvent) -> RunEventResp:
+        if event.step is not None:
+            events.append(event)
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    await drive_runner(agen, handler, ignore_non_step=True)
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    complete_outputs = [
+        event.step
+        for event in events
+        if event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.is_complete
+    ]
+    assert complete_outputs
+    assert complete_outputs[-1].message is not None
+    assert complete_outputs[-1].message.text == "resumed-output"
 
 
 @pytest.mark.asyncio

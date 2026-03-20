@@ -163,6 +163,23 @@ class Message(BaseModel):
         return [tool_call.id for tool_call in self.tool_call_responses]
 
 
+class BranchRecord(BaseModel):
+    id: UUID = Field(
+        default_factory=uuid4,
+        description="Unique identifier for this branch",
+    )
+    head_step_id: Optional[UUID] = Field(
+        default=None,
+        description="Current head step id for this branch, if any.",
+    )
+    base_step_id: Optional[UUID] = Field(
+        default=None,
+        description="Base step id where this branch diverged, if any.",
+    )
+    label: Optional[str] = Field(default=None, description="Optional branch label")
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class NodeExecution(BaseModel):
     """
     A single node execution
@@ -246,6 +263,14 @@ class Step(BaseModel):
         default_factory=uuid4, description="Unique identifier for this step"
     )
     execution_id: UUID = Field(..., description="Node execution id for this step")
+    parent_step_id: Optional[UUID] = Field(
+        default=None,
+        description="Parent step id for active-path tree navigation.",
+    )
+    child_step_ids: List[UUID] = Field(
+        default_factory=list,
+        description="Child step ids for active-path tree navigation.",
+    )
     type: StepType = Field(..., description="Step Type")
     message_id: Optional[UUID] = Field(
         default=None, description="Message id carried by this step, if any."
@@ -324,6 +349,23 @@ class Step(BaseModel):
             raise ValueError("Step is not attached to a workflow execution")
         return self._workflow_execution.get_message(self.message_id)
 
+    @property
+    def parent(self) -> Optional["Step"]:
+        if self.parent_step_id is None:
+            return None
+        if self._workflow_execution is None:
+            raise ValueError("Step is not attached to a workflow execution")
+        return self._workflow_execution.get_step(self.parent_step_id)
+
+    @property
+    def children(self) -> tuple["Step", ...]:
+        if self._workflow_execution is None:
+            raise ValueError("Step is not attached to a workflow execution")
+        return tuple(
+            self._workflow_execution.get_step(step_id)
+            for step_id in self.child_step_ids
+        )
+
 
 class WorkflowExecution(BaseModel):
     """
@@ -338,6 +380,8 @@ class WorkflowExecution(BaseModel):
     node_executions: Dict[UUID, NodeExecution] = Field(default_factory=dict)
     steps_by_id: Dict[UUID, Step] = Field(default_factory=dict)
     messages_by_id: Dict[UUID, Message] = Field(default_factory=dict)
+    branches_by_id: Dict[UUID, BranchRecord] = Field(default_factory=dict)
+    active_branch_id: Optional[UUID] = Field(default=None)
     step_ids: List[UUID] = Field(default_factory=list, description="A list of step ids")
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this workflow execution, if any."
@@ -359,21 +403,33 @@ class WorkflowExecution(BaseModel):
         return self.attach_runtime_refs()
 
     def iter_steps(self):
-        for step_id in self.step_ids:
+        for step_id in self.get_active_step_ids():
             yield self.get_step(step_id)
 
     def iter_steps_reversed(self):
-        for step_id in reversed(self.step_ids):
+        for step_id in reversed(self.get_active_step_ids()):
             yield self.get_step(step_id)
 
     def iter_node_steps(self, execution_id: UUID):
-        execution = self.get_node_execution(execution_id)
-        for step_id in execution.step_ids:
-            yield self.get_step(step_id)
+        for step_id in self.get_active_step_ids():
+            step = self.get_step(step_id)
+            if step.execution_id != execution_id:
+                continue
+            yield step
 
     def iter_node_steps_reversed(self, execution_id: UUID):
-        execution = self.get_node_execution(execution_id)
-        for step_id in reversed(execution.step_ids):
+        for step_id in reversed(self.get_active_step_ids()):
+            step = self.get_step(step_id)
+            if step.execution_id != execution_id:
+                continue
+            yield step
+
+    def iter_all_steps(self):
+        for step_id in self.step_ids:
+            yield self.get_step(step_id)
+
+    def iter_all_steps_reversed(self):
+        for step_id in reversed(self.step_ids):
             yield self.get_step(step_id)
 
     def get_step(self, step_id: UUID) -> Step:
@@ -394,6 +450,91 @@ class WorkflowExecution(BaseModel):
             raise KeyError(f"Unknown node execution id: {execution_id}")
         return execution
 
+    def get_branch(self, branch_id: UUID) -> BranchRecord:
+        branch = self.branches_by_id.get(branch_id)
+        if branch is None:
+            raise KeyError(f"Unknown branch id: {branch_id}")
+        return branch
+
+    def get_active_branch(self) -> BranchRecord:
+        return self._ensure_default_branch()
+
+    def get_branch_step_ids(self, branch_id: UUID) -> List[UUID]:
+        branch = self.get_branch(branch_id)
+        if branch.head_step_id is None:
+            return []
+        step_ids: List[UUID] = []
+        seen: set[UUID] = set()
+        current_step_id: Optional[UUID] = branch.head_step_id
+        while current_step_id is not None:
+            if current_step_id in seen:
+                break
+            seen.add(current_step_id)
+            step_ids.append(current_step_id)
+            current_step_id = self.get_step(current_step_id).parent_step_id
+        step_ids.reverse()
+        return step_ids
+
+    def get_active_step_ids(self) -> List[UUID]:
+        branch = self._ensure_default_branch()
+        return self.get_branch_step_ids(branch.id)
+
+    def get_active_steps(self) -> tuple[Step, ...]:
+        return tuple(self.get_step(step_id) for step_id in self.get_active_step_ids())
+
+    def get_active_step_id_set(self) -> set[UUID]:
+        return set(self.get_active_step_ids())
+
+    def get_active_head_step(self) -> Optional[Step]:
+        branch = self._ensure_default_branch()
+        if branch.head_step_id is None:
+            return None
+        return self.get_step(branch.head_step_id)
+
+    def switch_branch(self, branch_id: UUID) -> BranchRecord:
+        branch = self.get_branch(branch_id)
+        self.active_branch_id = branch.id
+        return branch
+
+    def create_branch(
+        self,
+        *,
+        head_step_id: Optional[UUID] = None,
+        base_step_id: Optional[UUID] = None,
+        label: Optional[str] = None,
+        activate: bool = True,
+    ) -> BranchRecord:
+        branch = BranchRecord(
+            head_step_id=head_step_id,
+            base_step_id=base_step_id,
+            label=label,
+        )
+        self.branches_by_id[branch.id] = branch
+        if activate:
+            self.active_branch_id = branch.id
+        return branch
+
+    def update_active_branch_head(self, step_id: Optional[UUID]) -> BranchRecord:
+        branch = self._ensure_default_branch()
+        branch.head_step_id = step_id
+        if branch.base_step_id is None:
+            branch.base_step_id = step_id
+        return branch
+
+    def find_lowest_common_ancestor(
+        self,
+        old_head_step_id: Optional[UUID],
+        new_head_step_id: Optional[UUID],
+    ) -> Optional[UUID]:
+        old_path = self._get_path_from_head(old_head_step_id)
+        new_path = self._get_path_from_head(new_head_step_id)
+        lca: Optional[UUID] = None
+        for old_step_id, new_step_id in zip(old_path, new_path):
+            if old_step_id != new_step_id:
+                break
+            lca = old_step_id
+        return lca
+
     def add_message(self, message: Message) -> Message:
         self.messages_by_id[message.id] = message
         return message
@@ -408,6 +549,13 @@ class WorkflowExecution(BaseModel):
             raise KeyError(f"Unknown node execution id: {step.execution_id}")
         if step.message_id is not None and step.message_id not in self.messages_by_id:
             raise KeyError(f"Unknown message id: {step.message_id}")
+        branch = self._ensure_default_branch()
+        if step.parent_step_id is None:
+            step.parent_step_id = branch.head_step_id
+        if step.parent_step_id is not None:
+            parent_step = self.get_step(step.parent_step_id)
+            if step.id not in parent_step.child_step_ids:
+                parent_step.child_step_ids.append(step.id)
         step._workflow_execution = self
         self.steps_by_id[step.id] = step
         if step.id not in self.step_ids:
@@ -415,9 +563,13 @@ class WorkflowExecution(BaseModel):
         execution = self.node_executions[step.execution_id]
         if step.id not in execution.step_ids:
             execution.step_ids.append(step.id)
+        branch.head_step_id = step.id
+        if branch.base_step_id is None:
+            branch.base_step_id = step.id
         return step
 
     def attach_runtime_refs(self) -> "WorkflowExecution":
+        self._normalize_tree_state()
         for execution in self.node_executions.values():
             execution._workflow_execution = self
         for step in self.steps_by_id.values():
@@ -454,10 +606,23 @@ class WorkflowExecution(BaseModel):
         if not step_ids:
             return
         step_ids_set = set(step_ids)
+        removed_parent_ids: Dict[UUID, Optional[UUID]] = {}
         executions_step_ids: Dict[UUID, List[UUID]] = {}
-        remaining_steps: List[Step] = []
-        for step in self.iter_steps():
+        for step in self.steps_by_id.values():
+            remaining_child_ids = [
+                child_step_id
+                for child_step_id in step.child_step_ids
+                if child_step_id not in step_ids_set
+            ]
+            if len(remaining_child_ids) != len(step.child_step_ids):
+                step.child_step_ids = remaining_child_ids
+        remaining_step_ids: List[UUID] = []
+        for step_id in self.step_ids:
+            step = self.steps_by_id.get(step_id)
+            if step is None:
+                continue
             if step.id in step_ids_set:
+                removed_parent_ids[step.id] = step.parent_step_id
                 self.steps_by_id.pop(step.id, None)
                 execution_id = step.execution_id
                 if execution_id in self.node_executions:
@@ -465,8 +630,10 @@ class WorkflowExecution(BaseModel):
                         executions_step_ids[execution_id] = []
                     executions_step_ids[execution_id].append(step.id)
             else:
-                remaining_steps.append(step)
-        self.step_ids = [step.id for step in remaining_steps]
+                if step.parent_step_id in step_ids_set:
+                    step.parent_step_id = None
+                remaining_step_ids.append(step.id)
+        self.step_ids = remaining_step_ids
         for execution_id, removed_ids in executions_step_ids.items():
             execution = self.node_executions.get(execution_id)
             if execution is not None:
@@ -476,6 +643,18 @@ class WorkflowExecution(BaseModel):
                     for current_step_id in execution.step_ids
                     if current_step_id not in removed_set
                 ]
+        for branch in self.branches_by_id.values():
+            if branch.head_step_id in step_ids_set:
+                branch.head_step_id = self._find_visible_ancestor(
+                    branch.head_step_id,
+                    removed_parent_ids,
+                )
+            if branch.base_step_id in step_ids_set:
+                branch.base_step_id = self._find_visible_ancestor(
+                    branch.base_step_id,
+                    removed_parent_ids,
+                )
+        self._ensure_default_branch()
 
     def delete_node_execution(self, execution_id: UUID) -> None:
         execution = self.node_executions.get(execution_id)
@@ -494,3 +673,96 @@ class WorkflowExecution(BaseModel):
                 empty_execution_ids.append(execution_id)
         for execution_id in empty_execution_ids:
             self.delete_node_execution(execution_id)
+
+    def _get_path_from_head(self, step_id: Optional[UUID]) -> List[UUID]:
+        if step_id is None:
+            return []
+        path: List[UUID] = []
+        seen: set[UUID] = set()
+        current_step_id: Optional[UUID] = step_id
+        while current_step_id is not None:
+            if current_step_id in seen:
+                break
+            seen.add(current_step_id)
+            path.append(current_step_id)
+            step = self.steps_by_id.get(current_step_id)
+            if step is None:
+                break
+            current_step_id = step.parent_step_id
+        path.reverse()
+        return path
+
+    def _ensure_default_branch(self) -> BranchRecord:
+        if self.active_branch_id is not None:
+            branch = self.branches_by_id.get(self.active_branch_id)
+            if branch is not None:
+                return branch
+        if self.branches_by_id:
+            branch = next(iter(self.branches_by_id.values()))
+            self.active_branch_id = branch.id
+            return branch
+        head_step_id = self.step_ids[-1] if self.step_ids else None
+        base_step_id = None
+        if self.step_ids:
+            base_step_id = self._get_path_from_head(head_step_id)[0]
+        branch = BranchRecord(
+            head_step_id=head_step_id,
+            base_step_id=base_step_id,
+        )
+        self.branches_by_id[branch.id] = branch
+        self.active_branch_id = branch.id
+        return branch
+
+    def _find_visible_ancestor(
+        self,
+        step_id: Optional[UUID],
+        removed_parent_ids: Optional[Dict[UUID, Optional[UUID]]] = None,
+    ) -> Optional[UUID]:
+        current_step_id = step_id
+        while current_step_id is not None:
+            step = self.steps_by_id.get(current_step_id)
+            if step is not None:
+                return current_step_id
+            if removed_parent_ids is None:
+                return None
+            current_step_id = removed_parent_ids.get(current_step_id)
+        return None
+
+    def _normalize_tree_state(self) -> None:
+        has_any_parent = any(
+            step.parent_step_id is not None for step in self.steps_by_id.values()
+        )
+        if not has_any_parent and self.step_ids:
+            previous_step_id: Optional[UUID] = None
+            for step_id in self.step_ids:
+                step = self.steps_by_id.get(step_id)
+                if step is None:
+                    continue
+                step.parent_step_id = previous_step_id
+                previous_step_id = step_id
+        child_ids_by_parent: Dict[UUID, List[UUID]] = {}
+        for step in self.steps_by_id.values():
+            step.child_step_ids = []
+        for step_id in self.step_ids:
+            step = self.steps_by_id.get(step_id)
+            if step is None:
+                continue
+            if step.parent_step_id is None:
+                continue
+            child_ids = child_ids_by_parent.get(step.parent_step_id)
+            if child_ids is None:
+                child_ids = []
+                child_ids_by_parent[step.parent_step_id] = child_ids
+            child_ids.append(step_id)
+        for parent_step_id, child_ids in child_ids_by_parent.items():
+            parent_step = self.steps_by_id.get(parent_step_id)
+            if parent_step is None:
+                continue
+            parent_step.child_step_ids = child_ids
+        branch = self._ensure_default_branch()
+        if branch.head_step_id is None and self.step_ids:
+            branch.head_step_id = self.step_ids[-1]
+        if branch.base_step_id is None and branch.head_step_id is not None:
+            path = self._get_path_from_head(branch.head_step_id)
+            if path:
+                branch.base_step_id = path[0]
