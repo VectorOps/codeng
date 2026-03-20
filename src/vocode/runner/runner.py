@@ -239,11 +239,10 @@ class Runner:
             type=state.StepType.REJECTION,
             message_id=error_message.id,
         )
-        persisted_error = self._persist_step(error_step)
         return RunEventReq(
             kind=runner_proto.RunEventReqKind.STEP,
             execution=self.execution,
-            step=persisted_error,
+            step=self._persist_step(error_step),
         )
 
     # History management
@@ -380,7 +379,6 @@ class Runner:
     ]:
         resume_step: Optional[state.Step] = None
         skip_executor = False
-        changed = False
         active_step_ids = self.execution.get_active_step_ids()
         if active_step_ids:
             anchor_index: Optional[int] = None
@@ -398,24 +396,13 @@ class Runner:
                 resume_step = step
                 break
             if anchor_index is None:
-                ids = list(active_step_ids)
-                if ids:
-                    self.execution.delete_steps(ids)
-                    changed = True
                 resume_step = None
             else:
-                tail_ids = [step.id for step in steps[anchor_index + 1 :]]
-                if tail_ids:
-                    self.execution.delete_steps(tail_ids)
-                    changed = True
                 if (
                     resume_step is not None
                     and resume_step.type == state.StepType.OUTPUT_MESSAGE
                 ):
                     skip_executor = True
-            self.execution.trim_empty_node_executions()
-            if changed:
-                self._touch_execution()
 
         active_step_ids = self.execution.get_active_step_ids()
         if not active_step_ids:

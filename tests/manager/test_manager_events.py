@@ -331,6 +331,7 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     assert prompt_step in all_steps
     assert runner.execution.steps_by_id[input_step.id].message is not None
     assert runner.execution.steps_by_id[input_step.id].message.text == "old user input"
+    assert res.branch_id is not None
 
 
 @pytest.mark.asyncio

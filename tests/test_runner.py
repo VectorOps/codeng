@@ -1177,6 +1177,7 @@ async def test_runner_resume_from_output_message_skips_executor_run():
                 )
 
     assert runner.status == state.RunnerStatus.FINISHED
+    assert extra_step.id in runner.execution.steps_by_id
     assert all(s.id != extra_step.id for s in runner.execution.iter_steps())
     assert all(s.id != extra_step.id for s in execution.iter_steps())
 
@@ -2098,3 +2099,60 @@ async def test_runner_start_after_stop_resumes_execution():
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs
+
+
+@pytest.mark.asyncio
+async def test_runner_continue_after_stop_does_not_create_new_steps_for_visible_history() -> (
+    None
+):
+    node = models.Node(
+        name="node-output",
+        type="resume-skip",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-continue-no-new-steps",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=None,
+    )
+
+    execution = runner.execution.create_node_execution(
+        node="node-output",
+        input_message_ids=[],
+        step_ids=[],
+        status=state.RunStatus.RUNNING,
+    )
+    message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
+    runner.execution.add_message(message)
+    output_step = runner.execution.create_step(
+        execution_id=execution.id,
+        type=state.StepType.OUTPUT_MESSAGE,
+        message_id=message.id,
+        is_complete=True,
+    )
+
+    runner.status = state.RunnerStatus.STOPPED
+    before_visible_step_ids = list(runner.execution.step_ids)
+    before_all_step_ids = set(runner.execution.steps_by_id.keys())
+
+    agen = runner.run()
+    events = await drive_runner(
+        agen,
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert runner.execution.step_ids == before_visible_step_ids
+    assert set(runner.execution.steps_by_id.keys()) == before_all_step_ids
+    assert runner.execution.step_ids == [output_step.id]
+    assert events == []
