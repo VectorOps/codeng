@@ -4,6 +4,7 @@ import pytest
 
 from vocode import models, state
 from vocode import settings as vocode_settings
+from vocode.history.manager import HistoryManager
 from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
@@ -60,6 +61,7 @@ class FakeExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         execution = inp.execution
         node_name = execution.node
         key = str(execution.id)
@@ -72,8 +74,9 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=f"{text_prefix}-partial",
             )
-            inp.run.add_message(partial_message)
-            step1 = inp.run.create_step(
+            history.add_message(inp.run, partial_message)
+            step1 = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=partial_message.id,
@@ -85,7 +88,7 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=f"{text_prefix}-final",
             )
-            inp.run.add_message(final_message)
+            history.add_message(inp.run, final_message)
             step2 = step1.model_copy(
                 update={
                     "message_id": final_message.id,
@@ -98,8 +101,9 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="node2-output",
             )
-            inp.run.add_message(msg)
-            step = inp.run.create_step(
+            history.add_message(inp.run, msg)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=msg.id,
@@ -112,8 +116,9 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="terminal-output",
             )
-            inp.run.add_message(msg)
-            step = inp.run.create_step(
+            history.add_message(inp.run, msg)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=msg.id,
@@ -137,6 +142,7 @@ class LoopExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         execution = inp.execution
         node_name = execution.node
         count = self._run_counts.get(node_name, 0) + 1
@@ -146,8 +152,9 @@ class LoopExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=f"loop-{count}",
         )
-        inp.run.add_message(msg)
-        interim_step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        interim_step = history.create_step(
+            inp.run,
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,
@@ -179,6 +186,7 @@ class ToolPromptExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         execution = inp.execution
         has_tool_result = False
         for existing_step in execution.iter_steps():
@@ -204,8 +212,9 @@ class ToolPromptExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after tool",
             )
-        inp.run.add_message(msg)
-        step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        step = history.create_step(
+            inp.run,
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,
@@ -226,6 +235,7 @@ class FakeLLMToolExecutor(BaseExecutor):
         return None
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         execution = inp.execution
         has_tool_result = False
         for existing_step in execution.iter_steps():
@@ -251,8 +261,9 @@ class FakeLLMToolExecutor(BaseExecutor):
                 text="with tool",
                 tool_call_requests=[tool_req],
             )
-            inp.run.add_message(msg)
-            step = inp.run.create_step(
+            history.add_message(inp.run, msg)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=msg.id,
@@ -264,8 +275,9 @@ class FakeLLMToolExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after tool",
             )
-            inp.run.add_message(msg)
-            step = inp.run.create_step(
+            history.add_message(inp.run, msg)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=msg.id,
@@ -379,12 +391,14 @@ async def test_result_mode_concatenate_final_includes_initial_user_input_step_on
 @ExecutorFactory.register("no-complete")
 class NoCompleteExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="no-complete",
         )
-        inp.run.add_message(msg)
-        step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        step = history.create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,
@@ -398,13 +412,15 @@ class MultiCompleteExecutor(BaseExecutor):
     type = "multi-complete"
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         execution = inp.execution
         msg1 = state.Message(
             role=models.Role.ASSISTANT,
             text="first",
         )
-        inp.run.add_message(msg1)
-        step1 = inp.run.create_step(
+        history.add_message(inp.run, msg1)
+        step1 = history.create_step(
+            inp.run,
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg1.id,
@@ -416,8 +432,9 @@ class MultiCompleteExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="second",
         )
-        inp.run.add_message(msg2)
-        step2 = inp.run.create_step(
+        history.add_message(inp.run, msg2)
+        step2 = history.create_step(
+            inp.run,
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg2.id,
@@ -429,6 +446,7 @@ class MultiCompleteExecutor(BaseExecutor):
 @ExecutorFactory.register("initial-input")
 class InitialInputEchoExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         execution = inp.execution
         last_input: state.Message | None = None
         for msg, step in runner_base.iter_execution_messages(execution):
@@ -441,8 +459,9 @@ class InitialInputEchoExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=text,
         )
-        inp.run.add_message(msg)
-        step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        step = history.create_step(
+            inp.run,
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,
@@ -1101,12 +1120,14 @@ class ResumeRunExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="resumed-output",
         )
-        inp.run.add_message(msg)
-        step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        step = history.create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,
@@ -1120,6 +1141,7 @@ ExecutorFactory.register("resume-run", ResumeRunExecutor)
 
 @pytest.mark.asyncio
 async def test_runner_resume_from_output_message_skips_executor_run():
+    history = HistoryManager()
     node = models.Node(
         name="node-output",
         type="resume-skip",
@@ -1135,10 +1157,10 @@ async def test_runner_resume_from_output_message_skips_executor_run():
         initial_message=None,
     )
 
-    execution = runner.execution.create_node_execution(
+    execution = history.create_node_execution(
+        runner.execution,
         node="node-output",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
@@ -1146,20 +1168,23 @@ async def test_runner_resume_from_output_message_skips_executor_run():
         role=models.Role.ASSISTANT,
         text="existing-output",
     )
-    runner.execution.add_message(msg)
-    output_step = runner.execution.create_step(
+    history.add_message(runner.execution, msg)
+    output_step = history.create_step(
+        runner.execution,
         execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=msg.id,
         is_complete=True,
     )
 
-    extra_step = runner.execution.create_step(
+    extra_step = history.create_step(
+        runner.execution,
         execution_id=execution.id,
         type=state.StepType.PROMPT,
         is_complete=True,
     )
-    branch = runner.execution.create_branch(
+    branch = history.create_branch(
+        runner.execution,
         head_step_id=output_step.id,
         base_step_id=output_step.id,
         activate=True,
@@ -1179,11 +1204,12 @@ async def test_runner_resume_from_output_message_skips_executor_run():
     assert runner.status == state.RunnerStatus.FINISHED
     assert extra_step.id in runner.execution.steps_by_id
     assert all(s.id != extra_step.id for s in runner.execution.iter_steps())
-    assert all(s.id != extra_step.id for s in execution.iter_steps())
+    assert any(s.id == extra_step.id for s in execution.iter_steps())
 
 
 @pytest.mark.asyncio
 async def test_runner_resume_uses_active_branch_projection() -> None:
+    history = HistoryManager()
     node = models.Node(
         name="node-input",
         type="resume-run",
@@ -1199,39 +1225,51 @@ async def test_runner_resume_uses_active_branch_projection() -> None:
         initial_message=None,
     )
 
-    execution = runner.execution.create_node_execution(
+    execution = history.create_node_execution(
+        runner.execution,
         node="node-input",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
     old_message = state.Message(role=models.Role.USER, text="old user input")
-    runner.execution.add_message(old_message)
-    old_input_step = runner.execution.create_step(
+    history.add_message(runner.execution, old_message)
+    old_input_step = history.create_step(
+        runner.execution,
         execution_id=execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=old_message.id,
         is_complete=True,
     )
     output_message = state.Message(role=models.Role.ASSISTANT, text="old output")
-    runner.execution.add_message(output_message)
-    runner.execution.create_step(
+    history.add_message(runner.execution, output_message)
+    history.create_step(
+        runner.execution,
         execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=output_message.id,
         is_complete=True,
     )
 
-    branched = runner.execution.create_branch(
+    branched = history.create_branch(
+        runner.execution,
         head_step_id=old_input_step.parent_step_id,
         base_step_id=old_input_step.id,
         activate=True,
     )
+    branched_execution = history.create_node_execution(
+        runner.execution,
+        node=execution.node,
+        status=execution.status,
+        branch_id=branched.id,
+        input_message_ids=list(execution.input_message_ids),
+        previous_id=execution.previous_id,
+    )
     new_message = state.Message(role=models.Role.USER, text="new user input")
-    runner.execution.add_message(new_message)
-    new_input_step = runner.execution.create_step(
-        execution_id=execution.id,
+    history.add_message(runner.execution, new_message)
+    new_input_step = history.create_step(
+        runner.execution,
+        execution_id=branched_execution.id,
         parent_step_id=old_input_step.parent_step_id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=new_message.id,
@@ -1269,6 +1307,7 @@ async def test_runner_resume_uses_active_branch_projection() -> None:
 
 @pytest.mark.asyncio
 async def test_runner_resume_from_input_message_re_runs_executor():
+    history = HistoryManager()
     node = models.Node(
         name="node-input",
         type="resume-run",
@@ -1284,10 +1323,10 @@ async def test_runner_resume_from_input_message_re_runs_executor():
         initial_message=None,
     )
 
-    execution = runner.execution.create_node_execution(
+    execution = history.create_node_execution(
+        runner.execution,
         node="node-input",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
@@ -1295,8 +1334,9 @@ async def test_runner_resume_from_input_message_re_runs_executor():
         role=models.Role.USER,
         text="user input",
     )
-    runner.execution.add_message(msg)
-    runner.execution.create_step(
+    history.add_message(runner.execution, msg)
+    history.create_step(
+        runner.execution,
         execution_id=execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=msg.id,
@@ -1883,6 +1923,7 @@ async def test_runner_requires_initial_input_and_forwards_to_first_node():
 
 @pytest.mark.asyncio
 async def test_runner_resume_from_tool_result_re_runs_executor():
+    history = HistoryManager()
     node = models.Node(
         name="node-tool",
         type="resume-run",
@@ -1898,10 +1939,10 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         initial_message=None,
     )
 
-    execution = runner.execution.create_node_execution(
+    execution = history.create_node_execution(
+        runner.execution,
         node="node-tool",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
 
@@ -1916,8 +1957,9 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         text="",
         tool_call_responses=[tool_resp],
     )
-    runner.execution.add_message(msg)
-    runner.execution.create_step(
+    history.add_message(runner.execution, msg)
+    history.create_step(
+        runner.execution,
         execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=msg.id,
@@ -2105,6 +2147,7 @@ async def test_runner_start_after_stop_resumes_execution():
 async def test_runner_continue_after_stop_does_not_create_new_steps_for_visible_history() -> (
     None
 ):
+    history = HistoryManager()
     node = models.Node(
         name="node-output",
         type="resume-skip",
@@ -2122,15 +2165,16 @@ async def test_runner_continue_after_stop_does_not_create_new_steps_for_visible_
         initial_message=None,
     )
 
-    execution = runner.execution.create_node_execution(
+    execution = history.create_node_execution(
+        runner.execution,
         node="node-output",
         input_message_ids=[],
-        step_ids=[],
         status=state.RunStatus.RUNNING,
     )
     message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
-    runner.execution.add_message(message)
-    output_step = runner.execution.create_step(
+    history.add_message(runner.execution, message)
+    output_step = history.create_step(
+        runner.execution,
         execution_id=execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=message.id,

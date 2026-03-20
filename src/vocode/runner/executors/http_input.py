@@ -7,6 +7,7 @@ from aiohttp import web
 from pydantic import Field
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.http import server as http_server
 from vocode.runner import base as runner_base
 
@@ -93,6 +94,7 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
 
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
+        history = HistoryManager()
 
         queue = self.project.project_state.get(self._queue_key)
         if queue is None:
@@ -104,8 +106,9 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
             role=models.Role.ASSISTANT,
             text=waiting_text,
         )
-        inp.run.add_message(waiting_message)
-        waiting_step = inp.run.create_step(
+        history.add_message(inp.run, waiting_message)
+        waiting_step = history.create_step(
+            inp.run,
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=waiting_message.id,
@@ -115,8 +118,9 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
         yield waiting_step
 
         message = await queue.get()
-        inp.run.add_message(message)
-        output_step = inp.run.create_step(
+        history.add_message(inp.run, message)
+        output_step = history.create_step(
+            inp.run,
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=message.id,

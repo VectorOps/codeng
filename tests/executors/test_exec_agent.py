@@ -1,6 +1,7 @@
 import pytest
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.runner.base import ExecutorInput
 from vocode.runner.executors.exec_agent import RunAgentExecutor, RunAgentNode
 from tests.stub_project import StubProject
@@ -8,6 +9,7 @@ from tests.stub_project import StubProject
 
 @pytest.mark.asyncio
 async def test_run_agent_executor_flow() -> None:
+    history = HistoryManager()
     node = RunAgentNode(
         name="agent_node",
         type="run_agent",
@@ -20,7 +22,8 @@ async def test_run_agent_executor_flow() -> None:
     executor = RunAgentExecutor(config=node, project=project)  # type: ignore
 
     run = state.WorkflowExecution(workflow_name="parent_workflow")
-    execution = run.create_node_execution(
+    execution = history.create_node_execution(
+        run,
         node=node.name,
         status=state.RunStatus.RUNNING,
     )
@@ -37,7 +40,7 @@ async def test_run_agent_executor_flow() -> None:
     assert step1.message.text == "Hello Child"
     assert step1.is_complete is True
 
-    run.add_step(step1)
+    history.upsert_step(run, step1)
 
     steps_retry: list[state.Step] = []
     async for step in executor.run(inp):
@@ -53,8 +56,9 @@ async def test_run_agent_executor_flow() -> None:
         role=models.Role.ASSISTANT,
         text="Child Result",
     )
-    run.add_message(result_msg)
-    result_step = run.create_step(
+    history.add_message(run, result_msg)
+    result_step = history.create_step(
+        run,
         execution_id=execution.id,
         type=state.StepType.WORKFLOW_RESULT,
         message_id=result_msg.id,

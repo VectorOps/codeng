@@ -3,6 +3,7 @@ from typing import AsyncIterator, Optional
 from pydantic import Field
 
 from vocode import state
+from vocode.history.manager import HistoryManager
 from vocode.models import Node, Role
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
@@ -29,6 +30,7 @@ class RunAgentExecutor(BaseExecutor):
     config: RunAgentNode
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = HistoryManager()
         # Check if we already have a result from the child workflow
         result_step = next(
             (
@@ -41,8 +43,9 @@ class RunAgentExecutor(BaseExecutor):
         if result_step:
             # We have a result. Emit it as final output.
             if result_step.message is not None:
-                inp.run.add_message(result_step.message)
-            yield inp.run.create_step(
+                history.add_message(inp.run, result_step.message)
+            yield history.create_step(
+                inp.run,
                 execution_id=inp.execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=result_step.message_id,
@@ -68,8 +71,9 @@ class RunAgentExecutor(BaseExecutor):
 
         # Create new request
         msg = state.Message(role=Role.ASSISTANT, text=self.config.initial_text or "")
-        inp.run.add_message(msg)
-        req_step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        req_step = history.create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.WORKFLOW_REQUEST,
             message_id=msg.id,

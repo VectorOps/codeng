@@ -6,6 +6,7 @@ import pytest
 from knowlt.settings import ProjectSettings as KnowProjectSettings
 from tests.stub_project import StubProject
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.runner.base import ExecutorFactory, ExecutorInput
 from vocode.runner.executors.apply_patch_node import (
     ApplyPatchExecutor,
@@ -26,6 +27,7 @@ class PatchExecTestProject(StubProject):
 
 @pytest.mark.asyncio
 async def test_apply_patch_executor_success(tmp_path: Path) -> None:
+    history = HistoryManager()
     (tmp_path / "f.txt").write_text("pre\n old\npost\n", encoding="utf-8")
     (tmp_path / "gone.txt").write_text("remove me", encoding="utf-8")
 
@@ -44,8 +46,9 @@ async def test_apply_patch_executor_success(tmp_path: Path) -> None:
     node = ApplyPatchNode(name="apply", format="v4a")
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
-    run.add_message(patch_message)
-    execution = run.create_node_execution(
+    history.add_message(run, patch_message)
+    execution = history.create_node_execution(
+        run,
         node=node.name,
         status=state.RunStatus.RUNNING,
         input_message_ids=[patch_message.id],
@@ -76,6 +79,7 @@ async def test_apply_patch_executor_success(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_apply_patch_executor_unsupported_format(tmp_path: Path) -> None:
+    history = HistoryManager()
     patch_text = """*** Begin Patch
 *** End Patch"""
 
@@ -83,8 +87,9 @@ async def test_apply_patch_executor_unsupported_format(tmp_path: Path) -> None:
     node = ApplyPatchNode(name="apply", format="unknown")
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
-    run.add_message(patch_message)
-    execution = run.create_node_execution(
+    history.add_message(run, patch_message)
+    execution = history.create_node_execution(
+        run,
         node=node.name,
         status=state.RunStatus.RUNNING,
         input_message_ids=[patch_message.id],
@@ -107,6 +112,7 @@ async def test_apply_patch_executor_unsupported_format(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_apply_patch_executor_rejects_knowlt_project_path(tmp_path: Path) -> None:
+    history = HistoryManager()
     patch_text = """*** Begin Patch
 *** Add File: repo/f.txt
 + blocked
@@ -123,8 +129,9 @@ async def test_apply_patch_executor_rejects_knowlt_project_path(tmp_path: Path) 
     node = ApplyPatchNode(name="apply", format="v4a")
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
-    run.add_message(patch_message)
-    execution = run.create_node_execution(
+    history.add_message(run, patch_message)
+    execution = history.create_node_execution(
+        run,
         node=node.name,
         status=state.RunStatus.RUNNING,
         input_message_ids=[patch_message.id],

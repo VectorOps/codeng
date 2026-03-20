@@ -6,6 +6,7 @@ from typing import AsyncIterator, Optional
 from pydantic import Field
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 
@@ -37,6 +38,7 @@ class NoopExecutor(BaseExecutor):
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
+        history = HistoryManager()
 
         delay = cfg.sleep_seconds
         if delay is not None and delay > 0:
@@ -60,8 +62,9 @@ class NoopExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="",
         )
-        inp.run.add_message(message)
-        step = inp.run.create_step(
+        history.add_message(inp.run, message)
+        step = history.create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=message.id,

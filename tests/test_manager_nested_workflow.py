@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.manager.base import BaseManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.project import ProjectState
@@ -64,6 +65,7 @@ class NestedWorkflowTool(tools_base.BaseTool):
 @ExecutorFactory.register("tool-start-nested-workflow")
 class StartNestedWorkflowExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput):
+        history = HistoryManager()
         has_tool_result = False
         for existing_step in inp.execution.iter_steps():
             if (
@@ -88,8 +90,9 @@ class StartNestedWorkflowExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after-nested",
             )
-        inp.run.add_message(msg)
-        step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        step = history.create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,
@@ -101,6 +104,7 @@ class StartNestedWorkflowExecutor(BaseExecutor):
 @ExecutorFactory.register("child-echo-initial")
 class ChildEchoInitialExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput):
+        history = HistoryManager()
         text = ""
         if inp.execution.input_messages:
             last = inp.execution.input_messages[-1]
@@ -110,8 +114,9 @@ class ChildEchoInitialExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=f"child-final:{text}",
         )
-        inp.run.add_message(msg)
-        step = inp.run.create_step(
+        history.add_message(inp.run, msg)
+        step = history.create_step(
+            inp.run,
             execution_id=inp.execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=msg.id,

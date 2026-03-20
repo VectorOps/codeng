@@ -8,6 +8,7 @@ import pytest
 from rich import console as rich_console
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode import settings as vocode_settings
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
@@ -26,15 +27,24 @@ def _make_step(
     output_mode: models.OutputMode = models.OutputMode.SHOW,
     is_final: bool = False,
 ) -> state.Step:
+    history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
-    run.add_node_execution(execution)
+    local_execution = execution.model_copy(
+        update={
+            "branch_id": None,
+            "step_ids": [],
+        }
+    )
+    run.node_executions[local_execution.id] = local_execution
+    local_execution._workflow_execution = run
     message_id = None
     if message is not None:
-        run.add_message(message)
+        history.add_message(run, message)
         message_id = message.id
-    return run.create_step(
+    return history.create_step(
+        run,
         id=step_id or uuid4(),
-        execution_id=execution.id,
+        execution_id=local_execution.id,
         type=step_type,
         message_id=message_id,
         output_mode=output_mode,

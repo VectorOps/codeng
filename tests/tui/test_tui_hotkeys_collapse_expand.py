@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.input import base as input_base
@@ -12,6 +13,8 @@ from vocode.tui.lib.input import base as input_base
 
 @pytest.mark.asyncio
 async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
+    history = HistoryManager()
+
     async def on_input(_: str) -> None:
         return
 
@@ -32,7 +35,11 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
         ui_state.add_rich_text(f"msg {i}")
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = run.create_node_execution(node="node", status=state.RunStatus.RUNNING)
+    execution = history.create_node_execution(
+        run,
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
     for i in range(12):
         req = state.ToolCallReq(id=f"call_{i}", name="tool", arguments={"i": i})
         resp = state.ToolCallResp(
@@ -46,8 +53,9 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
             tool_call_requests=[req],
             tool_call_responses=[resp],
         )
-        run.add_message(message)
-        req_step = run.create_step(
+        history.add_message(run, message)
+        req_step = history.create_step(
+            run,
             id=uuid4(),
             execution_id=execution.id,
             type=state.StepType.TOOL_REQUEST,
@@ -90,6 +98,8 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
 async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_other_key() -> (
     None
 ):
+    history = HistoryManager()
+
     async def on_input(_: str) -> None:
         return
 
@@ -107,7 +117,11 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = run.create_node_execution(node="node", status=state.RunStatus.RUNNING)
+    execution = history.create_node_execution(
+        run,
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
     for i in range(25):
         req = state.ToolCallReq(id=f"call_{i}", name="tool", arguments={"i": i})
         message = state.Message(
@@ -115,8 +129,9 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
             text="",
             tool_call_requests=[req],
         )
-        run.add_message(message)
-        req_step = run.create_step(
+        history.add_message(run, message)
+        req_step = history.create_step(
+            run,
             id=uuid4(),
             execution_id=execution.id,
             type=state.StepType.TOOL_REQUEST,

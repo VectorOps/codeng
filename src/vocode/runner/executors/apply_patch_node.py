@@ -6,6 +6,7 @@ from typing import AsyncIterator, Optional, TYPE_CHECKING
 from pydantic import Field, model_validator
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.patch import apply_patch, get_supported_formats
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
@@ -40,6 +41,7 @@ class ApplyPatchExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
         execution = inp.execution
+        history = HistoryManager()
 
         fmt = (cfg.format or "v4a").lower()
         supported = set(get_supported_formats())
@@ -53,8 +55,9 @@ class ApplyPatchExecutor(BaseExecutor):
                     f"Supported formats: {supported_list}"
                 ),
             )
-            inp.run.add_message(message)
-            step = inp.run.create_step(
+            history.add_message(inp.run, message)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
@@ -75,8 +78,9 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="No patch was provided. The patch application has failed.",
             )
-            inp.run.add_message(message)
-            step = inp.run.create_step(
+            history.add_message(inp.run, message)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
@@ -94,8 +98,9 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.SYSTEM,
                 text="ApplyPatchExecutor requires project.base_path",
             )
-            inp.run.add_message(message)
-            step = inp.run.create_step(
+            history.add_message(inp.run, message)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
@@ -135,8 +140,9 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=summary,
             )
-            inp.run.add_message(message)
-            step = inp.run.create_step(
+            history.add_message(inp.run, message)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,
@@ -150,8 +156,9 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=f"Error applying patch: {e}",
             )
-            inp.run.add_message(message)
-            step = inp.run.create_step(
+            history.add_message(inp.run, message)
+            step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=message.id,

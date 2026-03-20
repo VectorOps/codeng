@@ -9,6 +9,7 @@ from rich import console as rich_console
 
 from tests.stub_project import StubProject
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode import settings as vocode_settings
 from vocode.manager import proto as manager_proto
 from vocode.manager.helpers import InMemoryEndpoint
@@ -157,6 +158,7 @@ async def test_runner_req_display_opts_respects_node_visible_flag() -> None:
 
 @pytest.mark.asyncio
 async def test_runner_req_display_opts_propagates_tool_collapse_flag() -> None:
+    history = HistoryManager()
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
 
@@ -176,15 +178,20 @@ async def test_runner_req_display_opts_propagates_tool_collapse_flag() -> None:
         on_eof=None,
     )
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = run.create_node_execution(node="node", status=state.RunStatus.RUNNING)
+    execution = history.create_node_execution(
+        run,
+        node="node",
+        status=state.RunStatus.RUNNING,
+    )
     req = state.ToolCallReq(id="call_1", name="tool", arguments={})
     message = state.Message(
         role=models.Role.ASSISTANT,
         text="",
         tool_call_requests=[req],
     )
-    run.add_message(message)
-    step = run.create_step(
+    history.add_message(run, message)
+    step = history.create_step(
+        run,
         id=uuid4(),
         execution_id=execution.id,
         type=state.StepType.TOOL_REQUEST,

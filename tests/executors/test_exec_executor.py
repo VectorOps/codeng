@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from vocode import state, models
+from vocode.history.manager import HistoryManager
 from vocode.logger import logger
 from vocode.proc.manager import ProcessManager
 from vocode.runner.base import ExecutorInput
@@ -19,6 +20,7 @@ pytestmark = [
 
 def test_exec_executor_streaming(tmp_path: Path) -> None:
     async def scenario() -> None:
+        history = HistoryManager()
         pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
         proj = StubProject(process_manager=pm)
 
@@ -29,14 +31,14 @@ def test_exec_executor_streaming(tmp_path: Path) -> None:
             outcomes=[models.OutcomeSlot(name="done")],
         )
 
-        execution = state.NodeExecution(
-            node=node.name,
-            status=state.RunStatus.RUNNING,
-        )
         run = state.WorkflowExecution(
             workflow_name="test",
         )
-        run.add_node_execution(execution)
+        execution = history.create_node_execution(
+            run,
+            node=node.name,
+            status=state.RunStatus.RUNNING,
+        )
 
         executor = ExecExecutor(config=node, project=proj)  # type: ignore[arg-type]
         inp = ExecutorInput(execution=execution, run=run)

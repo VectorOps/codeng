@@ -3,6 +3,7 @@ from typing import AsyncIterator, Optional
 from pydantic import Field
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.runner import base as runner_base
 
 
@@ -28,6 +29,7 @@ class InputExecutor(runner_base.BaseExecutor):
 
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
+        history = HistoryManager()
 
         input_message: Optional[state.Message] = None
         for msg, step in runner_base.iter_execution_messages(execution):
@@ -40,8 +42,9 @@ class InputExecutor(runner_base.BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=prompt_text,
             )
-            inp.run.add_message(prompt_message)
-            prompt_step = inp.run.create_step(
+            history.add_message(inp.run, prompt_message)
+            prompt_step = history.create_step(
+                inp.run,
                 execution_id=execution.id,
                 type=state.StepType.PROMPT,
                 message_id=prompt_message.id,
@@ -50,7 +53,8 @@ class InputExecutor(runner_base.BaseExecutor):
             yield prompt_step
             return
 
-        output_step = inp.run.create_step(
+        output_step = history.create_step(
+            inp.run,
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=input_message.id,

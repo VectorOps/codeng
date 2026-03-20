@@ -5,11 +5,13 @@ import io
 from rich import console as rich_console
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.lib.input import base as input_base
 
 
 def test_tui_state_deletes_steps_by_id() -> None:
+    history = HistoryManager()
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
 
@@ -30,22 +32,25 @@ def test_tui_state_deletes_steps_by_id() -> None:
     )
 
     execution = state.WorkflowExecution(workflow_name="wf-step-delete")
-    node_execution = execution.create_node_execution(
+    node_execution = history.create_node_execution(
+        execution,
         node="node",
         status=state.RunStatus.RUNNING,
     )
 
     msg1 = state.Message(role=models.Role.ASSISTANT, text="hello")
     msg2 = state.Message(role=models.Role.USER, text="user")
-    execution.add_message(msg1)
-    execution.add_message(msg2)
-    step1 = execution.create_step(
+    history.add_message(execution, msg1)
+    history.add_message(execution, msg2)
+    step1 = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.OUTPUT_MESSAGE,
         message_id=msg1.id,
         is_complete=True,
     )
-    step2 = execution.create_step(
+    step2 = history.create_step(
+        execution,
         execution_id=node_execution.id,
         type=state.StepType.INPUT_MESSAGE,
         message_id=msg2.id,
