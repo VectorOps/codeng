@@ -177,14 +177,14 @@ class LLMExecutor(runner_base.BaseExecutor):
                 tool_call_responses=tool_call_responses or [],
             )
             if workflow_execution is not None:
-                history.add_message(workflow_execution, message)
+                history.upsert_message(workflow_execution, message)
         else:
             message.role = role
             message.text = text
             message.tool_call_requests = tool_call_requests or []
             message.tool_call_responses = tool_call_responses or []
             if workflow_execution is not None:
-                workflow_execution.messages_by_id[message.id] = message
+                history.upsert_message(workflow_execution, message)
 
         update: Dict[str, Any] = {
             "type": step_type,
@@ -248,10 +248,12 @@ class LLMExecutor(runner_base.BaseExecutor):
                 tools = []
             tools.append(choose_tool)
 
-        step = self.project.history.create_step(
+        step = self.project.history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+            ),
         )
 
         extra_args = dict(cfg.extra or {})

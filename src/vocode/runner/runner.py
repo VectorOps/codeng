@@ -165,9 +165,9 @@ class Runner:
             text="",
             tool_call_requests=[req],
         )
-        self._history.add_message(self.execution, prompt_message)
-        prompt_step = self._history.create_step(
-            self.execution,
+        self._history.upsert_message(self.execution, prompt_message)
+        prompt_step = state.Step(
+            workflow_execution=self.execution,
             execution_id=execution.id,
             type=state.StepType.TOOL_REQUEST,
             message_id=prompt_message.id,
@@ -233,9 +233,9 @@ class Runner:
             role=models.Role.SYSTEM,
             text=text,
         )
-        self._history.add_message(self.execution, error_message)
-        error_step = self._history.create_step(
-            self.execution,
+        self._history.upsert_message(self.execution, error_message)
+        error_step = state.Step(
+            workflow_execution=self.execution,
             execution_id=execution.id,
             type=state.StepType.REJECTION,
             message_id=error_message.id,
@@ -345,16 +345,21 @@ class Runner:
         input_messages: Optional[list[state.Message]] = None,
         previous_execution: Optional[state.NodeExecution] = None,
     ) -> state.NodeExecution:
-        effective_input_messages: list[state.Message] = []
+        input_message_ids = []
         if input_messages is not None:
-            effective_input_messages.extend(input_messages)
-        execution = self._history.create_node_execution(
-            self.execution,
+            for message in input_messages:
+                self._history.upsert_message(self.execution, message)
+                input_message_ids.append(message.id)
+        execution = state.NodeExecution(
+            workflow_execution=self.execution,
             node=node_name,
+            input_message_ids=input_message_ids,
             status=state.RunStatus.RUNNING,
-            input_messages=effective_input_messages,
-            previous_execution=previous_execution,
+            previous_id=(
+                previous_execution.id if previous_execution is not None else None
+            ),
         )
+        execution = self._history.upsert_node_execution(self.execution, execution)
         self._touch_execution()
         return execution
 
@@ -442,9 +447,9 @@ class Runner:
         else:
             return None
         if message is not None:
-            self._history.add_message(self.execution, message)
-        step = self._history.create_step(
-            self.execution,
+            self._history.upsert_message(self.execution, message)
+        step = state.Step(
+            workflow_execution=self.execution,
             execution_id=base_execution.id,
             type=step_type,
             message_id=(message.id if message is not None else None),
@@ -514,9 +519,9 @@ class Runner:
                     role=models.Role.ASSISTANT,
                     text=prompt_text,
                 )
-                self._history.add_message(self.execution, prompt_message)
-                prompt_step = self._history.create_step(
-                    self.execution,
+                self._history.upsert_message(self.execution, prompt_message)
+                prompt_step = state.Step(
+                    workflow_execution=self.execution,
                     execution_id=current_execution.id,
                     type=state.StepType.PROMPT,
                     message_id=prompt_message.id,
@@ -669,9 +674,9 @@ class Runner:
                             ),
                         )
 
-                    self._history.add_message(self.execution, result_message)
-                    result_step = self._history.create_step(
-                        self.execution,
+                    self._history.upsert_message(self.execution, result_message)
+                    result_step = state.Step(
+                        workflow_execution=self.execution,
                         execution_id=current_execution.id,
                         type=state.StepType.WORKFLOW_RESULT,
                         message_id=result_message.id,
@@ -868,9 +873,7 @@ class Runner:
                             if tool_message is None:
                                 continue
                             tool_message.tool_call_responses = list(per_req)
-                            self.execution.messages_by_id[tool_message.id] = (
-                                tool_message
-                            )
+                            self._history.upsert_message(self.execution, tool_message)
                             persisted_tool_step = self._persist_step(tool_step)
                             tool_event = RunEventReq(
                                 kind=runner_proto.RunEventReqKind.STEP,
@@ -879,7 +882,7 @@ class Runner:
                             )
                             _ = yield tool_event
 
-                        self.execution.messages_by_id[msg.id] = msg
+                        self._history.upsert_message(self.execution, msg)
                         persisted_step = self._persist_step(last_complete_step)
                         event = RunEventReq(
                             kind=runner_proto.RunEventReqKind.STEP,
@@ -901,8 +904,8 @@ class Runner:
                         prompt_type = state.StepType.PROMPT_CONFIRM
                         if confirmation_mode == models.Confirmation.LOOP:
                             prompt_type = state.StepType.PROMPT
-                        prompt_step = self._history.create_step(
-                            self.execution,
+                        prompt_step = state.Step(
+                            workflow_execution=self.execution,
                             execution_id=current_execution.id,
                             type=prompt_type,
                         )

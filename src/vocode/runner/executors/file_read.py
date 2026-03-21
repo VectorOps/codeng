@@ -107,14 +107,17 @@ class FileReadExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=combined,
         )
-        history.add_message(inp.run, message)
-        step = history.create_step(
+        history.upsert_message(inp.run, message)
+        step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=message.id,
-            is_complete=True,
-            is_final=True,
-            outcome_name=outcome_name,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                is_complete=True,
+                is_final=True,
+                outcome_name=outcome_name,
+            ),
         )
         yield step

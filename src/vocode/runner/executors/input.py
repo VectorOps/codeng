@@ -41,23 +41,29 @@ class InputExecutor(runner_base.BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=prompt_text,
             )
-            history.add_message(inp.run, prompt_message)
-            prompt_step = history.create_step(
+            history.upsert_message(inp.run, prompt_message)
+            prompt_step = history.upsert_step(
                 inp.run,
-                execution_id=execution.id,
-                type=state.StepType.PROMPT,
-                message_id=prompt_message.id,
-                is_complete=True,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.PROMPT,
+                    message_id=prompt_message.id,
+                    is_complete=True,
+                ),
             )
             yield prompt_step
             return
 
-        output_step = history.create_step(
+        output_step = history.upsert_step(
             inp.run,
-            execution_id=execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=input_message.id,
-            is_complete=True,
-            is_final=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=input_message.id,
+                is_complete=True,
+                is_final=True,
+            ),
         )
         yield output_step

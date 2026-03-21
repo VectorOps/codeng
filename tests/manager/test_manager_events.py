@@ -33,12 +33,14 @@ class ManagerTestExecutor(BaseExecutor):
             text="manager-output",
         )
         history.add_message(inp.run, msg)
-        step = history.create_step(
+        step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=True,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -62,12 +64,14 @@ class ManagerBlockingExecutor(BaseExecutor):
             text="blocking-output",
         )
         history.add_message(inp.run, msg)
-        step = history.create_step(
+        step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=True,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -280,10 +284,12 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     )
 
     execution = runner.execution
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node-edit",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-edit",
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     prompt_message = state.Message(role=models.Role.ASSISTANT, text="prompt")
@@ -292,26 +298,32 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     for message in [prompt_message, user_message, output_message]:
         history.add_message(execution, message)
 
-    prompt_step = history.create_step(
+    prompt_step = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.PROMPT,
-        message_id=prompt_message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.PROMPT,
+            message_id=prompt_message.id,
+            is_complete=True,
+        ),
     )
-    input_step = history.create_step(
+    input_step = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=user_message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=user_message.id,
+            is_complete=True,
+        ),
     )
-    history.create_step(
+    history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=output_message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=output_message.id,
+            is_complete=True,
+        ),
     )
 
     runner.status = state.RunnerStatus.STOPPED
@@ -386,29 +398,35 @@ async def test_manager_edit_history_stops_parent_runner_when_going_up_stack(
     )
 
     parent_execution = parent_runner.execution
-    parent_node_execution = history.create_node_execution(
+    parent_node_execution = history.upsert_node_execution(
         parent_execution,
-        node="node-parent",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-parent",
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     prompt_message = state.Message(role=models.Role.ASSISTANT, text="parent prompt")
     user_message = state.Message(role=models.Role.USER, text="parent input")
     history.add_message(parent_execution, prompt_message)
     history.add_message(parent_execution, user_message)
-    history.create_step(
+    history.upsert_step(
         parent_execution,
-        execution_id=parent_node_execution.id,
-        type=state.StepType.PROMPT,
-        message_id=prompt_message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=parent_node_execution.id,
+            type=state.StepType.PROMPT,
+            message_id=prompt_message.id,
+            is_complete=True,
+        ),
     )
-    history.create_step(
+    history.upsert_step(
         parent_execution,
-        execution_id=parent_node_execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=user_message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=parent_node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=user_message.id,
+            is_complete=True,
+        ),
     )
 
     parent_runner.status = state.RunnerStatus.RUNNING

@@ -41,14 +41,16 @@ def _make_step(
     if message is not None:
         history.add_message(run, message)
         message_id = message.id
-    return history.create_step(
+    return history.upsert_step(
         run,
-        id=step_id or uuid4(),
-        execution_id=local_execution.id,
-        type=step_type,
-        message_id=message_id,
-        output_mode=output_mode,
-        is_final=is_final,
+        state.Step(
+            id=step_id or uuid4(),
+            execution_id=local_execution.id,
+            type=step_type,
+            message_id=message_id,
+            output_mode=output_mode,
+            is_final=is_final,
+        ),
     )
 
 

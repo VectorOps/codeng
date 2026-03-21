@@ -42,14 +42,17 @@ class RunAgentExecutor(BaseExecutor):
         if result_step:
             # We have a result. Emit it as final output.
             if result_step.message is not None:
-                history.add_message(inp.run, result_step.message)
-            yield history.create_step(
+                history.upsert_message(inp.run, result_step.message)
+            yield history.upsert_step(
                 inp.run,
-                execution_id=inp.execution.id,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message_id=result_step.message_id,
-                is_complete=True,
-                is_final=True,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=inp.execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=result_step.message_id,
+                    is_complete=True,
+                    is_final=True,
+                ),
             )
             return
 
@@ -70,12 +73,14 @@ class RunAgentExecutor(BaseExecutor):
 
         # Create new request
         msg = state.Message(role=Role.ASSISTANT, text=self.config.initial_text or "")
-        history.add_message(inp.run, msg)
-        req_step = history.create_step(
+        history.upsert_message(inp.run, msg)
+        req_step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.WORKFLOW_REQUEST,
-            message_id=msg.id,
-            is_complete=True,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.WORKFLOW_REQUEST,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield req_step

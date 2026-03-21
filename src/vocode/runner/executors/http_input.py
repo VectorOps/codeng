@@ -105,25 +105,31 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
             role=models.Role.ASSISTANT,
             text=waiting_text,
         )
-        history.add_message(inp.run, waiting_message)
-        waiting_step = history.create_step(
+        history.upsert_message(inp.run, waiting_message)
+        waiting_step = history.upsert_step(
             inp.run,
-            execution_id=execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=waiting_message.id,
-            is_complete=False,
-            status_hint=state.RunnerStatus.WAITING_INPUT,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=waiting_message.id,
+                is_complete=False,
+                status_hint=state.RunnerStatus.WAITING_INPUT,
+            ),
         )
         yield waiting_step
 
         message = await queue.get()
-        history.add_message(inp.run, message)
-        output_step = history.create_step(
+        history.upsert_message(inp.run, message)
+        output_step = history.upsert_step(
             inp.run,
-            execution_id=execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=message.id,
-            is_complete=True,
-            is_final=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                is_complete=True,
+                is_final=True,
+            ),
         )
         yield output_step
