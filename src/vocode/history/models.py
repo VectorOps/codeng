@@ -12,7 +12,5 @@ class HistoryMutationResult(BaseModel):
     changed: bool = Field(default=False)
     active_branch_id: Optional[UUID] = Field(default=None)
     created_branch_id: Optional[UUID] = Field(default=None)
-    branch_head_step_id: Optional[UUID] = Field(default=None)
-    resume_step_id: Optional[UUID] = Field(default=None)
-    removed_visible_step_ids: List[UUID] = Field(default_factory=list)
+    removed_step_ids: List[UUID] = Field(default_factory=list)
     upserted_steps: List[state.Step] = Field(default_factory=list)

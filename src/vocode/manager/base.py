@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 from collections.abc import Awaitable, Callable, AsyncIterator
 
 from vocode import models, state
+from vocode.history import models as history_models
 from vocode.logger import logger
 from vocode.project import Project
 from vocode.runner.runner import Runner, RunnerStopped
@@ -34,16 +35,6 @@ class RunnerFrame:
     initial_message: Optional[state.Message]
     agen: Optional[AsyncIterator[RunEventReq]] = None
     last_stats: Optional[runner_proto.RunStats] = None
-
-
-@dataclass
-class HistoryEditResult:
-    is_edited: bool
-    step: Optional[state.Step] = None
-    deleted_step_ids: list[str] = field(default_factory=list)
-    branch_id: Optional[str] = None
-    created_branch_id: Optional[str] = None
-    upserted_steps: list[state.Step] = field(default_factory=list)
 
 
 RunnerEventListener = Callable[
@@ -203,9 +194,9 @@ class BaseManager:
 
     async def edit_history_with_text(
         self, text: str, *, resume: bool = True
-    ) -> HistoryEditResult:
+    ) -> history_models.HistoryMutationResult:
         if not self._runner_stack:
-            return HistoryEditResult(is_edited=False)
+            return history_models.HistoryMutationResult(changed=False)
 
         target_index: Optional[int] = None
         target_step: Optional[state.Step] = None
@@ -227,7 +218,7 @@ class BaseManager:
                 break
 
         if target_index is None or target_step is None:
-            return HistoryEditResult(is_edited=False)
+            return history_models.HistoryMutationResult(changed=False)
 
         if target_index + 1 < len(self._runner_stack):
             tail_frames = self._runner_stack[target_index + 1 :]
@@ -243,32 +234,14 @@ class BaseManager:
 
         result = self._history.edit_user_input(execution, target_step.id, text)
         if not result.changed:
-            return HistoryEditResult(is_edited=False)
+            return history_models.HistoryMutationResult(changed=False)
 
         execution.touch()
         self.project.state_manager.notify_changed(execution)
 
         if resume:
             await self.continue_current_runner()
-        upserted_steps = list(result.upserted_steps)
-        return HistoryEditResult(
-            is_edited=True,
-            step=(upserted_steps[-1] if upserted_steps else None),
-            deleted_step_ids=[
-                str(step_id) for step_id in result.removed_visible_step_ids
-            ],
-            branch_id=(
-                str(result.active_branch_id)
-                if result.active_branch_id is not None
-                else None
-            ),
-            created_branch_id=(
-                str(result.created_branch_id)
-                if result.created_branch_id is not None
-                else None
-            ),
-            upserted_steps=upserted_steps,
-        )
+        return result
 
     async def _emit_run_event(
         self,

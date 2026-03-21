@@ -7,6 +7,7 @@ import pytest
 
 from vocode import models, state
 from vocode.history.manager import HistoryManager
+from vocode.history.models import HistoryMutationResult
 from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
@@ -341,8 +342,8 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     manager._runner_stack.append(frame)
 
     res = await manager.edit_history_with_text("new user input", resume=False)
-    assert res.is_edited is True
-    assert res.deleted_step_ids
+    assert res.changed is True
+    assert res.removed_step_ids
     assert res.created_branch_id is not None
 
     all_steps = tuple(runner.execution.iter_steps())
@@ -354,7 +355,7 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     assert prompt_step in all_steps
     assert runner.execution.steps_by_id[input_step.id].message is not None
     assert runner.execution.steps_by_id[input_step.id].message.text == "old user input"
-    assert res.branch_id is not None
+    assert res.active_branch_id is not None
 
 
 @pytest.mark.asyncio
@@ -467,8 +468,9 @@ async def test_manager_edit_history_stops_parent_runner_when_going_up_stack(
     monkeypatch.setattr(manager, "_stop_runner_frame", fake_stop_runner_frame)
 
     res = await manager.edit_history_with_text("edited parent input", resume=False)
-    assert res.is_edited is True
-    assert len(res.deleted_step_ids) == 1
+    assert isinstance(res, HistoryMutationResult)
+    assert res.changed is True
+    assert len(res.removed_step_ids) == 1
 
     assert len(manager._runner_stack) == 1
     assert manager._runner_stack[0] is parent_frame
