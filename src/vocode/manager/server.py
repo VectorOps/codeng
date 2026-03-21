@@ -844,17 +844,16 @@ class UIServer:
                     text,
                     resume=False,
                 )
-                if res.is_edited and res.deleted_step_ids:
+                if res.changed and res.removed_step_ids:
                     await self.send_packet(
-                        manager_proto.StepDeletedPacket(step_ids=res.deleted_step_ids)
+                        manager_proto.StepDeletedPacket(
+                            step_ids=[str(step_id) for step_id in res.removed_step_ids]
+                        )
                     )
-                if res.is_edited:
+                if res.changed:
                     execution = runner.execution
                     frame = self._manager.runner_stack[-1]
-                    upsert_steps = res.upserted_steps
-                    if not upsert_steps and res.step is not None:
-                        upsert_steps = [res.step]
-                    for upsert_step in upsert_steps:
+                    for upsert_step in res.upserted_steps:
                         packet = manager_proto.RunnerReqPacket(
                             workflow_id=frame.workflow_name,
                             workflow_name=execution.workflow_name,
@@ -864,9 +863,9 @@ class UIServer:
                             display=None,
                         )
                         await self.send_packet(packet)
-                if res.is_edited:
+                if res.changed:
                     await self._manager.continue_current_runner()
-                if not res.is_edited:
+                if not res.changed:
                     await self.send_text_message(
                         "Unable to edit history: no previous user input to replace."
                     )

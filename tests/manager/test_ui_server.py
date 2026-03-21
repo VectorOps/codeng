@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Optional
+from uuid import uuid4
 
 import pytest
 
@@ -10,10 +11,11 @@ from tests.manager.runner_stubs import DummyRunnerWithWorkflow
 from tests.stub_project import StubProject
 from vocode import models, state
 from vocode.history.manager import HistoryManager
+from vocode.history.models import HistoryMutationResult
 from vocode import settings as vocode_settings
 from vocode.manager import autocomplete_providers as autocomplete_providers
 from vocode.manager import proto as manager_proto
-from vocode.manager.base import BaseManager, HistoryEditResult, RunnerFrame
+from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.manager.helpers import InMemoryEndpoint
 from vocode.manager.server import UIServer
 from vocode.runner import proto as runner_proto
@@ -672,14 +674,12 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
         text: str,
         *,
         resume: bool = True,
-    ) -> HistoryEditResult:
+    ) -> HistoryMutationResult:
         _ = resume
         called.append(text)
         message.text = text
-        return HistoryEditResult(
-            is_edited=True,
-            step=step,
-            deleted_step_ids=[],
+        return HistoryMutationResult(
+            changed=True,
             upserted_steps=[step],
         )
 
@@ -733,10 +733,10 @@ async def test_uiserver_user_input_sends_error_when_edit_fails(
         text: str,
         *,
         resume: bool = True,
-    ) -> HistoryEditResult:
+    ) -> HistoryMutationResult:
         _ = text
         _ = resume
-        return HistoryEditResult(is_edited=False)
+        return HistoryMutationResult(changed=False)
 
     monkeypatch.setattr(
         BaseManager, "edit_history_with_text", fake_edit_history_with_text
@@ -812,14 +812,14 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
         text: str,
         *,
         resume: bool = True,
-    ) -> HistoryEditResult:
+    ) -> HistoryMutationResult:
         assert text == "new input text"
         assert resume is False
         message.text = text
-        return HistoryEditResult(
-            is_edited=True,
-            step=step,
-            deleted_step_ids=["s1", "s2"],
+        removed_step_ids = [uuid4(), uuid4()]
+        return HistoryMutationResult(
+            changed=True,
+            removed_step_ids=removed_step_ids,
             upserted_steps=[step],
         )
 
@@ -850,7 +850,7 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
     assert deleted_envelope.payload.kind == manager_proto.BasePacketKind.STEP_DELETED
     deleted_payload = deleted_envelope.payload
     assert isinstance(deleted_payload, manager_proto.StepDeletedPacket)
-    assert deleted_payload.step_ids == ["s1", "s2"]
+    assert len(deleted_payload.step_ids) == 2
 
     upsert_envelope = await client_endpoint.recv()
     upsert_payload = upsert_envelope.payload

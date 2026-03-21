@@ -434,7 +434,6 @@ def test_history_manager_fork_from_step_creates_new_branch_head() -> None:
 
     assert result.changed is True
     assert result.created_branch_id is not None
-    assert result.branch_head_step_id == replacement.id
     assert run.step_ids == [step1.id, replacement.id]
     assert execution.step_ids == [step1.id, step2.id]
     assert replacement.execution_id != execution.id
