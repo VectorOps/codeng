@@ -22,10 +22,12 @@ async def test_run_agent_executor_flow() -> None:
     executor = RunAgentExecutor(config=node, project=project)  # type: ignore
 
     run = state.WorkflowExecution(workflow_name="parent_workflow")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node=node.name,
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node=node.name,
+            status=state.RunStatus.RUNNING,
+        ),
     )
     inp = ExecutorInput(execution=execution, run=run)
 
@@ -56,14 +58,14 @@ async def test_run_agent_executor_flow() -> None:
         role=models.Role.ASSISTANT,
         text="Child Result",
     )
-    history.add_message(run, result_msg)
-    result_step = history.create_step(
-        run,
+    history.upsert_message(run, result_msg)
+    result_step = state.Step(
         execution_id=execution.id,
         type=state.StepType.WORKFLOW_RESULT,
         message_id=result_msg.id,
         is_complete=True,
     )
+    history.upsert_step(run, result_step)
 
     steps_final: list[state.Step] = []
     async for step in executor.run(inp):

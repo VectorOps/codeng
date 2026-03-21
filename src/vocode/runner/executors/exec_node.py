@@ -92,15 +92,18 @@ class ExecExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=output,
         )
-        history.add_message(inp.run, message)
-        step = history.create_step(
+        history.upsert_message(inp.run, message)
+        step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=message.id,
-            content_type=cfg.content_type,
-            is_complete=False,
-            is_final=False,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                content_type=cfg.content_type,
+                is_complete=False,
+                is_final=False,
+            ),
         )
 
         timed_out = False

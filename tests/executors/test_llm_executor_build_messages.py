@@ -75,11 +75,13 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node="llm-node",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     tool_req = state.ToolCallReq(
@@ -100,13 +102,16 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         tool_call_requests=[tool_req],
         tool_call_responses=[tool_resp],
     )
-    history.add_message(run, assistant_msg)
-    history.create_step(
+    history.upsert_message(run, assistant_msg)
+    history.upsert_step(
         run,
-        execution_id=execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=assistant_msg.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_msg.id,
+            is_complete=True,
+        ),
     )
 
     executor = LLMExecutor(config=cfg, project=StubProject())
@@ -150,11 +155,13 @@ def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node="llm-node",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     executor = LLMExecutor(config=cfg, project=StubProject())
@@ -179,24 +186,27 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node="llm-node",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     assistant_msg = state.Message(role=models.Role.ASSISTANT, text="hello")
-    history.add_message(run, assistant_msg)
-    history.create_step(
+    history.upsert_message(run, assistant_msg)
+    history.upsert_step(
         run,
-        execution_id=execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=assistant_msg.id,
-        runtime_state=LLMStepState(
-            provider_state={"cache_control": {"type": "ephemeral"}}
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_msg.id,
+            state=LLMStepState(provider_state={"cache_control": {"type": "ephemeral"}}),
+            is_complete=True,
         ),
-        is_complete=True,
     )
 
     executor = LLMExecutor(config=cfg, project=StubProject())
@@ -220,16 +230,21 @@ def test_build_step_from_message_reuses_existing_message_id_for_updates() -> Non
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node="llm-node",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    base_step = history.create_step(
+    base_step = history.upsert_step(
         run,
-        execution_id=execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
 
     executor = LLMExecutor(config=cfg, project=StubProject())
@@ -267,11 +282,13 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node="llm-node",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     executor = LLMExecutor(config=cfg, project=StubProject())

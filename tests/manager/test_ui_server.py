@@ -59,15 +59,19 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
     server = UIServer(project=project, endpoint=server_endpoint)
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-server")
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node1",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    step = history.create_step(
+    step = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STEP,
@@ -120,10 +124,12 @@ async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
     await server.start()
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-node-start-time")
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node-start",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-start",
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     stats = runner_proto.RunStats(
@@ -166,11 +172,13 @@ async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
 
     message = state.Message(role=models.Role.USER, text="hello")
     history.add_message(execution, message)
-    step = history.create_step(
+    step = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=message.id,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
+        ),
     )
 
     resp2 = await server.on_runner_event(frame, event)
@@ -196,10 +204,12 @@ async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
     await server.start()
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-stop-input")
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node-stop",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-stop",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     stats = runner_proto.RunStats(
         status=state.RunnerStatus.STOPPED,
@@ -321,15 +331,19 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     server = UIServer(project=project, endpoint=server_endpoint)
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-server-user-input")
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node1",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    step = history.create_step(
+    step = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.PROMPT,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.PROMPT,
+        ),
     )
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STEP,
@@ -402,15 +416,19 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
     server = UIServer(project=project, endpoint=server_endpoint)
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-server-user-input-confirm")
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node1",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    step = history.create_step(
+    step = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.PROMPT_CONFIRM,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.PROMPT_CONFIRM,
+        ),
     )
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STEP,
@@ -513,10 +531,12 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
         input_token_limit=1000,
     )
 
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node-status",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-status",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     stats = runner_proto.RunStats(
         status=state.RunnerStatus.RUNNING,
@@ -619,19 +639,23 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
             self.execution = state.WorkflowExecution(workflow_name="wf-edit")
 
     runner = DummyRunner()
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         runner.execution,
-        node="node",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     message = state.Message(role=models.Role.USER, text="old")
     history.add_message(runner.execution, message)
-    step = history.create_step(
+    step = history.upsert_step(
         runner.execution,
-        execution_id=node_execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
     )
     frame = RunnerFrame(
         workflow_name="wf-user-input-edit",
@@ -757,19 +781,23 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
             self.execution = state.WorkflowExecution(workflow_name="wf-edit")
 
     runner = DummyRunner()
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         runner.execution,
-        node="node",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     message = state.Message(role=models.Role.USER, text="old")
     history.add_message(runner.execution, message)
-    step = history.create_step(
+    step = history.upsert_step(
         runner.execution,
-        execution_id=node_execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
     )
     frame = RunnerFrame(
         workflow_name="wf-user-input-edit-delete",
@@ -842,10 +870,12 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
     server = UIServer(project=project, endpoint=server_endpoint)
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-aa")
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node1",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     tool_req = state.ToolCallReq(
@@ -860,12 +890,14 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
         tool_call_requests=[tool_req],
     )
     history.add_message(execution, message)
-    step = history.create_step(
+    step = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.TOOL_REQUEST,
-        message_id=message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.TOOL_REQUEST,
+            message_id=message.id,
+            is_complete=True,
+        ),
     )
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STEP,

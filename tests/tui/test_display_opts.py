@@ -178,10 +178,12 @@ async def test_runner_req_display_opts_propagates_tool_collapse_flag() -> None:
         on_eof=None,
     )
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node="node",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     req = state.ToolCallReq(id="call_1", name="tool", arguments={})
     message = state.Message(
@@ -190,12 +192,14 @@ async def test_runner_req_display_opts_propagates_tool_collapse_flag() -> None:
         tool_call_requests=[req],
     )
     history.add_message(run, message)
-    step = history.create_step(
+    step = history.upsert_step(
         run,
-        id=uuid4(),
-        execution_id=execution.id,
-        type=state.StepType.TOOL_REQUEST,
-        message_id=message.id,
+        state.Step(
+            id=uuid4(),
+            execution_id=execution.id,
+            type=state.StepType.TOOL_REQUEST,
+            message_id=message.id,
+        ),
     )
 
     display = manager_proto.RunnerReqDisplayOpts(tool_collapse=True)

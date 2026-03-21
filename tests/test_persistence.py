@@ -16,19 +16,28 @@ def _build_sample_execution() -> state.WorkflowExecution:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
     input_message = state.Message(role=models.Role.USER, text="hi")
-    ne1 = history.create_node_execution(
+    output_message = state.Message(role=models.Role.ASSISTANT, text="hello")
+    history.upsert_message(run, input_message)
+    history.upsert_message(run, output_message)
+    ne1 = history.upsert_node_execution(
         run,
-        node="n1",
-        input_messages=[input_message],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="n1",
+            input_message_ids=[input_message.id],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    s1 = history.create_step(
+    history.upsert_step(
         run,
-        execution_id=ne1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message=state.Message(role=models.Role.ASSISTANT, text="hello"),
-        is_complete=True,
-        is_final=True,
+        state.Step(
+            workflow_execution=run,
+            execution_id=ne1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=output_message.id,
+            is_complete=True,
+            is_final=True,
+        ),
     )
     run.touch()
     return run
@@ -68,11 +77,15 @@ def test_codec_roundtrip_allows_auto_approved_bool():
             auto_approved=True,
         )
     )
-    ne1 = history.create_node_execution(
+    history.upsert_message(run, msg)
+    ne1 = history.upsert_node_execution(
         run,
-        node="n1",
-        input_messages=[msg],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="n1",
+            input_message_ids=[msg.id],
+            status=state.RunStatus.RUNNING,
+        ),
     )
     run.touch()
 
@@ -89,18 +102,21 @@ def test_codec_roundtrip_loaded_state_supports_explicit_id_updates():
 
     node_execution = next(iter(restored.node_executions.values()))
     new_message = state.Message(role=models.Role.USER, text="follow-up")
-    history.add_message(restored, new_message)
+    history.upsert_message(restored, new_message)
     node_execution.input_message_ids.append(new_message.id)
 
     new_step_message = state.Message(
         role=models.Role.ASSISTANT, text="follow-up-response"
     )
-    history.add_message(restored, new_step_message)
-    new_step = history.create_step(
+    history.upsert_message(restored, new_step_message)
+    new_step = history.upsert_step(
         restored,
-        execution_id=node_execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=new_step_message.id,
+        state.Step(
+            workflow_execution=restored,
+            execution_id=node_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=new_step_message.id,
+        ),
     )
 
     assert node_execution.input_message_ids[-1] == new_message.id
@@ -111,28 +127,37 @@ def test_codec_roundtrip_loaded_state_supports_explicit_id_updates():
 def test_codec_roundtrip_restores_visible_step_ids_from_branch_projection():
     history = HistoryManager()
     execution = state.WorkflowExecution(workflow_name="wf")
-    node_execution = history.create_node_execution(
+    node_execution = history.upsert_node_execution(
         execution,
-        node="node",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            workflow_execution=execution,
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     message1 = state.Message(role=models.Role.USER, text="one")
-    history.add_message(execution, message1)
-    step1 = history.create_step(
+    history.upsert_message(execution, message1)
+    step1 = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=message1.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=execution,
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message1.id,
+            is_complete=True,
+        ),
     )
     message2 = state.Message(role=models.Role.USER, text="two")
-    history.add_message(execution, message2)
-    step2 = history.create_step(
+    history.upsert_message(execution, message2)
+    step2 = history.upsert_step(
         execution,
-        execution_id=node_execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=message2.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=execution,
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message2.id,
+            is_complete=True,
+        ),
     )
     branch1_id = execution.get_active_branch().id
     branch2 = history.create_branch(
@@ -141,23 +166,29 @@ def test_codec_roundtrip_restores_visible_step_ids_from_branch_projection():
         base_step_id=step2.id,
         activate=True,
     )
-    branched_execution = history.create_node_execution(
+    branched_execution = history.upsert_node_execution(
         execution,
-        node=node_execution.node,
-        status=state.RunStatus.RUNNING,
-        branch_id=branch2.id,
-        input_message_ids=list(node_execution.input_message_ids),
-        previous_id=node_execution.previous_id,
+        state.NodeExecution(
+            workflow_execution=execution,
+            node=node_execution.node,
+            status=state.RunStatus.RUNNING,
+            branch_id=branch2.id,
+            input_message_ids=list(node_execution.input_message_ids),
+            previous_id=node_execution.previous_id,
+        ),
     )
     message3 = state.Message(role=models.Role.USER, text="three")
-    history.add_message(execution, message3)
-    step3 = history.create_step(
+    history.upsert_message(execution, message3)
+    step3 = history.upsert_step(
         execution,
-        execution_id=branched_execution.id,
-        parent_step_id=step1.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=message3.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=execution,
+            execution_id=branched_execution.id,
+            parent_step_id=step1.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message3.id,
+            is_complete=True,
+        ),
     )
 
     restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(execution))

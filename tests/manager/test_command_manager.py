@@ -13,6 +13,7 @@ from vocode.manager.commands import CommandManager, command, option
 from vocode.manager.server import UIServer
 from vocode.manager.commands import workflows as workflow_commands
 from vocode.manager import base as manager_base
+from vocode.runner import base as runner_base
 from tests.stub_project import StubProject
 
 
@@ -97,6 +98,24 @@ class _FakeKnowProject:
                 elapsed_seconds = 2.5
 
             progress_callback(_Evt())
+
+
+@runner_base.ExecutorFactory.register("resume-skip")
+class _ResumeSkipExecutor(runner_base.BaseExecutor):
+    async def run(
+        self, inp: runner_base.ExecutorInput
+    ) -> runner_base.AsyncIterator[state.Step]:
+        message = state.Message(role=models.Role.ASSISTANT, text="resumed")
+        self.project.history.add_message(inp.run, message)
+        yield self.project.history.upsert_step(
+            inp.run,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                is_complete=True,
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -645,19 +664,23 @@ async def test_continue_command_preserves_existing_visible_history(
         project=project,
         initial_message=None,
     )
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         runner.execution,
-        node="node-output",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-output",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
     history.add_message(runner.execution, message)
-    output_step = history.create_step(
+    output_step = history.upsert_step(
         runner.execution,
-        execution_id=execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=message.id,
-        is_complete=True,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
     )
     runner.status = state.RunnerStatus.STOPPED
 

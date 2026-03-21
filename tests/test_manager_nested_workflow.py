@@ -92,12 +92,15 @@ class StartNestedWorkflowExecutor(BaseExecutor):
                 text="after-nested",
             )
         history.add_message(inp.run, msg)
-        step = history.create_step(
+        step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -116,12 +119,15 @@ class ChildEchoInitialExecutor(BaseExecutor):
             text=f"child-final:{text}",
         )
         history.add_message(inp.run, msg)
-        step = history.create_step(
+        step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 

@@ -47,11 +47,13 @@ async def test_apply_patch_executor_success(tmp_path: Path) -> None:
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
     history.add_message(run, patch_message)
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node=node.name,
-        status=state.RunStatus.RUNNING,
-        input_message_ids=[patch_message.id],
+        state.NodeExecution(
+            node=node.name,
+            status=state.RunStatus.RUNNING,
+            input_message_ids=[patch_message.id],
+        ),
     )
     executor = ExecutorFactory.create_for_node(node, project=project)
     assert isinstance(executor, ApplyPatchExecutor)
@@ -88,11 +90,13 @@ async def test_apply_patch_executor_unsupported_format(tmp_path: Path) -> None:
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
     history.add_message(run, patch_message)
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node=node.name,
-        status=state.RunStatus.RUNNING,
-        input_message_ids=[patch_message.id],
+        state.NodeExecution(
+            node=node.name,
+            status=state.RunStatus.RUNNING,
+            input_message_ids=[patch_message.id],
+        ),
     )
     executor = ExecutorFactory.create_for_node(node, project=project)
     assert isinstance(executor, ApplyPatchExecutor)
@@ -130,11 +134,13 @@ async def test_apply_patch_executor_rejects_knowlt_project_path(tmp_path: Path) 
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
     history.add_message(run, patch_message)
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node=node.name,
-        status=state.RunStatus.RUNNING,
-        input_message_ids=[patch_message.id],
+        state.NodeExecution(
+            node=node.name,
+            status=state.RunStatus.RUNNING,
+            input_message_ids=[patch_message.id],
+        ),
     )
     executor = ExecutorFactory.create_for_node(node, project=project)
     assert isinstance(executor, ApplyPatchExecutor)

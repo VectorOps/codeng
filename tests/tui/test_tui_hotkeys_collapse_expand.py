@@ -35,10 +35,12 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
         ui_state.add_rich_text(f"msg {i}")
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node="node",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     for i in range(12):
         req = state.ToolCallReq(id=f"call_{i}", name="tool", arguments={"i": i})
@@ -54,12 +56,14 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
             tool_call_responses=[resp],
         )
         history.add_message(run, message)
-        req_step = history.create_step(
+        req_step = history.upsert_step(
             run,
-            id=uuid4(),
-            execution_id=execution.id,
-            type=state.StepType.TOOL_REQUEST,
-            message_id=message.id,
+            state.Step(
+                id=uuid4(),
+                execution_id=execution.id,
+                type=state.StepType.TOOL_REQUEST,
+                message_id=message.id,
+            ),
         )
         ui_state.handle_step(req_step)
 
@@ -117,10 +121,12 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
     )
 
     run = state.WorkflowExecution(workflow_name="wf")
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         run,
-        node="node",
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
     )
     for i in range(25):
         req = state.ToolCallReq(id=f"call_{i}", name="tool", arguments={"i": i})
@@ -130,12 +136,14 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
             tool_call_requests=[req],
         )
         history.add_message(run, message)
-        req_step = history.create_step(
+        req_step = history.upsert_step(
             run,
-            id=uuid4(),
-            execution_id=execution.id,
-            type=state.StepType.TOOL_REQUEST,
-            message_id=message.id,
+            state.Step(
+                id=uuid4(),
+                execution_id=execution.id,
+                type=state.StepType.TOOL_REQUEST,
+                message_id=message.id,
+            ),
         )
         ui_state.handle_step(req_step)
 

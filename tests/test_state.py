@@ -14,13 +14,14 @@ def _make_node_execution(
 ) -> state.NodeExecution:
     history = HistoryManager()
     message = _make_message()
-    history.add_message(run, message)
-    return history.create_node_execution(
-        run,
+    history.upsert_message(run, message)
+    node_execution = state.NodeExecution(
+        workflow_execution=run,
         node=name,
         input_message_ids=[message.id],
         status=state.RunStatus.RUNNING,
     )
+    return history.upsert_node_execution(run, node_execution)
 
 
 def test_delete_steps_removes_from_workflow_and_node_executions() -> None:
@@ -29,20 +30,29 @@ def test_delete_steps_removes_from_workflow_and_node_executions() -> None:
     exec1 = _make_node_execution(run, "node-1")
     exec2 = _make_node_execution(run, "node-2")
 
-    step1 = history.create_step(
+    step1 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
-    step2 = history.create_step(
+    step2 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.INPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
     )
-    step3 = history.create_step(
+    step3 = history.upsert_step(
         run,
-        execution_id=exec2.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec2.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
 
     history.delete_steps(run, [step1.id, step3.id])
@@ -60,10 +70,13 @@ def test_delete_steps_ignores_unknown_ids_and_empty_input() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="test")
     exec1 = _make_node_execution(run, "node-1")
-    step1 = history.create_step(
+    step1 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
 
     unknown_id = uuid4()
@@ -82,10 +95,13 @@ def test_delete_step_delegates_to_delete_steps() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="test")
     exec1 = _make_node_execution(run, "node-1")
-    step1 = history.create_step(
+    step1 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
 
     history.delete_step(run, step1.id)
@@ -98,10 +114,13 @@ def test_step_is_final_defaults_false() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="test")
     exec1 = _make_node_execution(run, "node-1")
-    step = history.create_step(
+    step = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
     assert step.is_final is False
 
@@ -111,48 +130,63 @@ def test_iter_execution_messages_traverses_previous_chain_in_order() -> None:
     run = state.WorkflowExecution(workflow_name="test")
     in_1a = state.Message(role=models.Role.USER, text="in-1-a")
     in_1b = state.Message(role=models.Role.USER, text="in-1-b")
-    history.add_message(run, in_1a)
-    history.add_message(run, in_1b)
-    exec1 = history.create_node_execution(
+    history.upsert_message(run, in_1a)
+    history.upsert_message(run, in_1b)
+    exec1 = history.upsert_node_execution(
         run,
-        node="node",
-        input_message_ids=[in_1a.id, in_1b.id],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node",
+            input_message_ids=[in_1a.id, in_1b.id],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     out_1a = state.Message(role=models.Role.ASSISTANT, text="out-1-a")
     in_1c = state.Message(role=models.Role.USER, text="in-1-c")
-    history.add_message(run, out_1a)
-    history.add_message(run, in_1c)
-    history.create_step(
+    history.upsert_message(run, out_1a)
+    history.upsert_message(run, in_1c)
+    history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=out_1a.id,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=out_1a.id,
+        ),
     )
-    history.create_step(
+    history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=in_1c.id,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=in_1c.id,
+        ),
     )
 
     in_2a = state.Message(role=models.Role.USER, text="in-2-a")
     out_2a = state.Message(role=models.Role.ASSISTANT, text="out-2-a")
-    history.add_message(run, in_2a)
-    history.add_message(run, out_2a)
-    exec2 = history.create_node_execution(
+    history.upsert_message(run, in_2a)
+    history.upsert_message(run, out_2a)
+    exec2 = history.upsert_node_execution(
         run,
-        node="node",
-        previous_id=exec1.id,
-        input_message_ids=[in_2a.id],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node",
+            previous_id=exec1.id,
+            input_message_ids=[in_2a.id],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    history.create_step(
+    history.upsert_step(
         run,
-        execution_id=exec2.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=out_2a.id,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec2.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=out_2a.id,
+        ),
     )
 
     texts = [m.text for (m, _t) in iter_execution_messages(exec2)]
@@ -165,20 +199,29 @@ def test_delete_node_execution_removes_execution_and_child_steps() -> None:
     exec1 = _make_node_execution(run, "node-1")
     exec2 = _make_node_execution(run, "node-2")
 
-    step1 = history.create_step(
+    step1 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
-    step2 = history.create_step(
+    step2 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.INPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
     )
-    step3 = history.create_step(
+    step3 = history.upsert_step(
         run,
-        execution_id=exec2.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec2.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
 
     history.delete_node_execution(run, exec1.id)
@@ -204,38 +247,53 @@ def test_reference_properties_reflect_canonical_ids() -> None:
     in_2a = state.Message(role=models.Role.USER, text="in-2-a")
     out_2a = state.Message(role=models.Role.ASSISTANT, text="out-2-a")
     for message in [in_1a, in_1b, out_1a, in_1c, in_2a, out_2a]:
-        history.add_message(run, message)
+        history.upsert_message(run, message)
 
-    exec1 = history.create_node_execution(
+    exec1 = history.upsert_node_execution(
         run,
-        node="node",
-        input_message_ids=[in_1a.id, in_1b.id],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node",
+            input_message_ids=[in_1a.id, in_1b.id],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    step1 = history.create_step(
+    step1 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=out_1a.id,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=out_1a.id,
+        ),
     )
-    step2 = history.create_step(
+    step2 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=in_1c.id,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=in_1c.id,
+        ),
     )
-    exec2 = history.create_node_execution(
+    exec2 = history.upsert_node_execution(
         run,
-        node="node",
-        previous_id=exec1.id,
-        input_message_ids=[in_2a.id],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node",
+            previous_id=exec1.id,
+            input_message_ids=[in_2a.id],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    step3 = history.create_step(
+    step3 = history.upsert_step(
         run,
-        execution_id=exec2.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=out_2a.id,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec2.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=out_2a.id,
+        ),
     )
 
     assert step1.execution_id == exec1.id
@@ -250,15 +308,21 @@ def test_workflow_execution_active_branch_defaults_to_linear_path() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
     exec1 = _make_node_execution(run, "node-1")
-    step1 = history.create_step(
+    step1 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
-    step2 = history.create_step(
+    step2 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.INPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
     )
 
     active_steps = tuple(run.iter_steps())
@@ -275,15 +339,21 @@ def test_switch_branch_changes_active_projection() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
     exec1 = _make_node_execution(run, "node-1")
-    step1 = history.create_step(
+    step1 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.OUTPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
-    step2 = history.create_step(
+    step2 = history.upsert_step(
         run,
-        execution_id=exec1.id,
-        type=state.StepType.INPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec1.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
     )
     branch1_id = run.get_active_branch().id
 
@@ -293,19 +363,25 @@ def test_switch_branch_changes_active_projection() -> None:
         base_step_id=step2.id,
         activate=True,
     )
-    exec2 = history.create_node_execution(
+    exec2 = history.upsert_node_execution(
         run,
-        node=exec1.node,
-        status=state.RunStatus.RUNNING,
-        branch_id=branch2.id,
-        input_message_ids=list(exec1.input_message_ids),
-        previous_id=exec1.previous_id,
+        state.NodeExecution(
+            workflow_execution=run,
+            node=exec1.node,
+            status=state.RunStatus.RUNNING,
+            branch_id=branch2.id,
+            input_message_ids=list(exec1.input_message_ids),
+            previous_id=exec1.previous_id,
+        ),
     )
-    step3 = history.create_step(
+    step3 = history.upsert_step(
         run,
-        execution_id=exec2.id,
-        parent_step_id=step1.id,
-        type=state.StepType.INPUT_MESSAGE,
+        state.Step(
+            workflow_execution=run,
+            execution_id=exec2.id,
+            parent_step_id=step1.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
     )
 
     assert [step.id for step in run.iter_steps()] == [step1.id, step3.id]
@@ -327,11 +403,21 @@ def test_history_manager_fork_from_step_creates_new_branch_head() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
     execution = _make_node_execution(run, "node-1")
-    step1 = history.create_step(
-        run, execution_id=execution.id, type=state.StepType.OUTPUT_MESSAGE
+    step1 = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
     )
-    step2 = history.create_step(
-        run, execution_id=execution.id, type=state.StepType.INPUT_MESSAGE
+    step2 = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
     )
 
     replacement = state.Step(
@@ -354,3 +440,87 @@ def test_history_manager_fork_from_step_creates_new_branch_head() -> None:
     assert replacement.execution_id != execution.id
     assert replacement.execution.branch_id == result.created_branch_id
     assert replacement.execution.step_ids == [replacement.id]
+
+
+def test_upsert_step_updates_existing_step_without_duplicate_node_step_ids() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    message1 = state.Message(role=models.Role.ASSISTANT, text="one")
+    message2 = state.Message(role=models.Role.ASSISTANT, text="two")
+    history.upsert_message(run, message1)
+    history.upsert_message(run, message2)
+
+    step = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message1.id,
+        ),
+    )
+
+    updated = step.model_copy(update={"message_id": message2.id, "is_complete": False})
+    history.upsert_step(run, updated)
+
+    assert execution.step_ids == [step.id]
+    assert run.get_step(step.id).message_id == message2.id
+    assert run.get_step(step.id).is_complete is False
+
+
+def test_upsert_step_reparents_existing_step() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    parent1 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+    parent2 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+    child = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            parent_step_id=parent1.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
+    )
+
+    history.upsert_step(
+        run,
+        child.model_copy(update={"parent_step_id": parent2.id}),
+    )
+
+    assert child.id not in run.get_step(parent1.id).child_step_ids
+    assert child.id in run.get_step(parent2.id).child_step_ids
+
+
+def test_upsert_step_moves_existing_step_between_node_executions() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution1 = _make_node_execution(run, "node-1")
+    execution2 = _make_node_execution(run, "node-2")
+    step = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+
+    history.upsert_step(
+        run,
+        step.model_copy(update={"execution_id": execution2.id}),
+    )
+
+    assert step.id not in execution1.step_ids
+    assert step.id in execution2.step_ids

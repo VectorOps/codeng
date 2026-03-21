@@ -74,13 +74,16 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=f"{text_prefix}-partial",
             )
-            history.add_message(inp.run, partial_message)
-            step1 = history.create_step(
+            history.upsert_message(inp.run, partial_message)
+            step1 = history.upsert_step(
                 inp.run,
-                execution_id=execution.id,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message_id=partial_message.id,
-                is_complete=False,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=partial_message.id,
+                    is_complete=False,
+                ),
             )
             yield step1
 
@@ -88,7 +91,7 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=f"{text_prefix}-final",
             )
-            history.add_message(inp.run, final_message)
+            history.upsert_message(inp.run, final_message)
             step2 = step1.model_copy(
                 update={
                     "message_id": final_message.id,
@@ -101,14 +104,17 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="node2-output",
             )
-            history.add_message(inp.run, msg)
-            step = history.create_step(
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
                 inp.run,
-                execution_id=execution.id,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message_id=msg.id,
-                outcome_name="go",
-                is_complete=True,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=msg.id,
+                    outcome_name="go",
+                    is_complete=True,
+                ),
             )
             yield step
         else:
@@ -116,13 +122,16 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="terminal-output",
             )
-            history.add_message(inp.run, msg)
-            step = history.create_step(
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
                 inp.run,
-                execution_id=execution.id,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message_id=msg.id,
-                is_complete=True,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=msg.id,
+                    is_complete=True,
+                ),
             )
             yield step
 
@@ -152,13 +161,16 @@ class LoopExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=f"loop-{count}",
         )
-        history.add_message(inp.run, msg)
-        interim_step = history.create_step(
+        history.upsert_message(inp.run, msg)
+        interim_step = history.upsert_step(
             inp.run,
-            execution_id=execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=False,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=False,
+            ),
         )
         yield interim_step
 
@@ -212,13 +224,16 @@ class ToolPromptExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after tool",
             )
-        history.add_message(inp.run, msg)
-        step = history.create_step(
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
             inp.run,
-            execution_id=execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -261,27 +276,33 @@ class FakeLLMToolExecutor(BaseExecutor):
                 text="with tool",
                 tool_call_requests=[tool_req],
             )
-            history.add_message(inp.run, msg)
-            step = history.create_step(
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
                 inp.run,
-                execution_id=execution.id,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message_id=msg.id,
-                llm_usage=usage,
-                is_complete=True,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=msg.id,
+                    llm_usage=usage,
+                    is_complete=True,
+                ),
             )
         else:
             msg = state.Message(
                 role=models.Role.ASSISTANT,
                 text="after tool",
             )
-            history.add_message(inp.run, msg)
-            step = history.create_step(
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
                 inp.run,
-                execution_id=execution.id,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message_id=msg.id,
-                is_complete=True,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=msg.id,
+                    is_complete=True,
+                ),
             )
         yield step
 
@@ -396,13 +417,16 @@ class NoCompleteExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="no-complete",
         )
-        history.add_message(inp.run, msg)
-        step = history.create_step(
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=False,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=False,
+            ),
         )
         yield step
 
@@ -418,13 +442,16 @@ class MultiCompleteExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="first",
         )
-        history.add_message(inp.run, msg1)
-        step1 = history.create_step(
+        history.upsert_message(inp.run, msg1)
+        step1 = history.upsert_step(
             inp.run,
-            execution_id=execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg1.id,
-            is_complete=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg1.id,
+                is_complete=True,
+            ),
         )
         yield step1
 
@@ -432,13 +459,16 @@ class MultiCompleteExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="second",
         )
-        history.add_message(inp.run, msg2)
-        step2 = history.create_step(
+        history.upsert_message(inp.run, msg2)
+        step2 = history.upsert_step(
             inp.run,
-            execution_id=execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg2.id,
-            is_complete=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg2.id,
+                is_complete=True,
+            ),
         )
         yield step2
 
@@ -459,13 +489,16 @@ class InitialInputEchoExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=text,
         )
-        history.add_message(inp.run, msg)
-        step = history.create_step(
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
             inp.run,
-            execution_id=execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -1126,12 +1159,15 @@ class ResumeRunExecutor(BaseExecutor):
             text="resumed-output",
         )
         history.add_message(inp.run, msg)
-        step = history.create_step(
+        step = history.upsert_step(
             inp.run,
-            execution_id=inp.execution.id,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message_id=msg.id,
-            is_complete=True,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -1157,11 +1193,13 @@ async def test_runner_resume_from_output_message_skips_executor_run():
         initial_message=None,
     )
 
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         runner.execution,
-        node="node-output",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-output",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     msg = state.Message(
@@ -1169,19 +1207,25 @@ async def test_runner_resume_from_output_message_skips_executor_run():
         text="existing-output",
     )
     history.add_message(runner.execution, msg)
-    output_step = history.create_step(
+    output_step = history.upsert_step(
         runner.execution,
-        execution_id=execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=msg.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=msg.id,
+            is_complete=True,
+        ),
     )
 
-    extra_step = history.create_step(
+    extra_step = history.upsert_step(
         runner.execution,
-        execution_id=execution.id,
-        type=state.StepType.PROMPT,
-        is_complete=True,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.PROMPT,
+            is_complete=True,
+        ),
     )
     branch = history.create_branch(
         runner.execution,
@@ -1225,30 +1269,38 @@ async def test_runner_resume_uses_active_branch_projection() -> None:
         initial_message=None,
     )
 
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         runner.execution,
-        node="node-input",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-input",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     old_message = state.Message(role=models.Role.USER, text="old user input")
     history.add_message(runner.execution, old_message)
-    old_input_step = history.create_step(
+    old_input_step = history.upsert_step(
         runner.execution,
-        execution_id=execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=old_message.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_message.id,
+            is_complete=True,
+        ),
     )
     output_message = state.Message(role=models.Role.ASSISTANT, text="old output")
     history.add_message(runner.execution, output_message)
-    history.create_step(
+    history.upsert_step(
         runner.execution,
-        execution_id=execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=output_message.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=output_message.id,
+            is_complete=True,
+        ),
     )
 
     branched = history.create_branch(
@@ -1257,23 +1309,28 @@ async def test_runner_resume_uses_active_branch_projection() -> None:
         base_step_id=old_input_step.id,
         activate=True,
     )
-    branched_execution = history.create_node_execution(
+    branched_execution = history.upsert_node_execution(
         runner.execution,
-        node=execution.node,
-        status=execution.status,
-        branch_id=branched.id,
-        input_message_ids=list(execution.input_message_ids),
-        previous_id=execution.previous_id,
+        state.NodeExecution(
+            node=execution.node,
+            status=execution.status,
+            branch_id=branched.id,
+            input_message_ids=list(execution.input_message_ids),
+            previous_id=execution.previous_id,
+        ),
     )
     new_message = state.Message(role=models.Role.USER, text="new user input")
     history.add_message(runner.execution, new_message)
-    new_input_step = history.create_step(
+    new_input_step = history.upsert_step(
         runner.execution,
-        execution_id=branched_execution.id,
-        parent_step_id=old_input_step.parent_step_id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=new_message.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=branched_execution.id,
+            parent_step_id=old_input_step.parent_step_id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=new_message.id,
+            is_complete=True,
+        ),
     )
 
     assert runner.execution.get_active_branch().id == branched.id
@@ -1323,11 +1380,13 @@ async def test_runner_resume_from_input_message_re_runs_executor():
         initial_message=None,
     )
 
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         runner.execution,
-        node="node-input",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-input",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     msg = state.Message(
@@ -1335,12 +1394,15 @@ async def test_runner_resume_from_input_message_re_runs_executor():
         text="user input",
     )
     history.add_message(runner.execution, msg)
-    history.create_step(
+    history.upsert_step(
         runner.execution,
-        execution_id=execution.id,
-        type=state.StepType.INPUT_MESSAGE,
-        message_id=msg.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=msg.id,
+            is_complete=True,
+        ),
     )
 
     agen = runner.run()
@@ -1939,11 +2001,13 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         initial_message=None,
     )
 
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         runner.execution,
-        node="node-tool",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-tool",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
 
     tool_resp = state.ToolCallResp(
@@ -1958,12 +2022,15 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         tool_call_responses=[tool_resp],
     )
     history.add_message(runner.execution, msg)
-    history.create_step(
+    history.upsert_step(
         runner.execution,
-        execution_id=execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=msg.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=msg.id,
+            is_complete=True,
+        ),
     )
 
     agen = runner.run()
@@ -2165,20 +2232,25 @@ async def test_runner_continue_after_stop_does_not_create_new_steps_for_visible_
         initial_message=None,
     )
 
-    execution = history.create_node_execution(
+    execution = history.upsert_node_execution(
         runner.execution,
-        node="node-output",
-        input_message_ids=[],
-        status=state.RunStatus.RUNNING,
+        state.NodeExecution(
+            node="node-output",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
     message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
     history.add_message(runner.execution, message)
-    output_step = history.create_step(
+    output_step = history.upsert_step(
         runner.execution,
-        execution_id=execution.id,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message_id=message.id,
-        is_complete=True,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
     )
 
     runner.status = state.RunnerStatus.STOPPED
