@@ -18,13 +18,6 @@ class HistoryManager:
         execution.messages_by_id[message.id] = message
         return message
 
-    def add_message(
-        self,
-        execution: state.WorkflowExecution,
-        message: state.Message,
-    ) -> state.Message:
-        return self.upsert_message(execution, message)
-
     def create_branch(
         self,
         execution: state.WorkflowExecution,
@@ -43,7 +36,7 @@ class HistoryManager:
         execution.branches_by_id[branch.id] = branch
         if activate:
             execution.active_branch_id = branch.id
-            self._refresh_visible_step_ids(execution)
+            self._refresh_step_ids(execution)
         return branch
 
     def upsert_node_execution(
@@ -114,7 +107,7 @@ class HistoryManager:
             path = self._get_path_from_head(execution, step.id)
             branch.base_step_id = path[0] if path else step.id
         if execution.active_branch_id == branch.id:
-            self._refresh_visible_step_ids(execution)
+            self._refresh_step_ids(execution)
         return step
 
     def delete_steps(
@@ -147,19 +140,19 @@ class HistoryManager:
             ]
         for branch in execution.branches_by_id.values():
             if branch.head_step_id in step_ids_set:
-                branch.head_step_id = self._find_visible_ancestor(
+                branch.head_step_id = self._find_existing_ancestor(
                     execution,
                     branch.head_step_id,
                     removed_parent_ids,
                 )
             if branch.base_step_id in step_ids_set:
-                branch.base_step_id = self._find_visible_ancestor(
+                branch.base_step_id = self._find_existing_ancestor(
                     execution,
                     branch.base_step_id,
                     removed_parent_ids,
                 )
         self._ensure_default_branch(execution)
-        self._refresh_visible_step_ids(execution)
+        self._refresh_step_ids(execution)
 
     def delete_step(
         self,
@@ -246,7 +239,7 @@ class HistoryManager:
         label: Optional[str] = None,
         activate: bool = True,
     ) -> history_models.HistoryMutationResult:
-        before_visible_ids = execution.get_visible_step_ids()
+        before_step_ids = execution.get_step_ids()
         created_branch = self.create_branch(
             execution,
             head_step_id=from_step_id,
@@ -264,10 +257,10 @@ class HistoryManager:
             new_step.execution_id = forked_execution.id
         new_step.parent_step_id = from_step_id
         persisted_step = self.upsert_step(execution, new_step)
-        after_visible_ids = execution.get_visible_step_ids()
+        after_step_ids = execution.get_step_ids()
         removed_step_ids = self.compute_removed_step_ids(
-            before_visible_ids,
-            after_visible_ids,
+            before_step_ids,
+            after_step_ids,
         )
         return history_models.HistoryMutationResult(
             changed=True,
@@ -293,33 +286,31 @@ class HistoryManager:
 
     def compute_removed_step_ids(
         self,
-        before_visible_ids: list[UUID],
-        after_visible_ids: list[UUID],
+        before_step_ids: list[UUID],
+        after_step_ids: list[UUID],
     ) -> list[UUID]:
-        after_ids = set(after_visible_ids)
-        return [step_id for step_id in before_visible_ids if step_id not in after_ids]
+        after_ids = set(after_step_ids)
+        return [step_id for step_id in before_step_ids if step_id not in after_ids]
 
     def switch_branch(
         self,
         execution: state.WorkflowExecution,
         branch_id: UUID,
     ) -> history_models.HistoryMutationResult:
-        before_visible_ids = execution.get_active_step_ids()
+        before_step_ids = execution.get_step_ids()
         branch = execution.get_branch(branch_id)
         execution.active_branch_id = branch.id
-        self._refresh_visible_step_ids(execution)
-        after_visible_ids = execution.get_active_step_ids()
+        self._refresh_step_ids(execution)
+        after_step_ids = execution.get_step_ids()
         removed_step_ids = self.compute_removed_step_ids(
-            before_visible_ids,
-            after_visible_ids,
+            before_step_ids,
+            after_step_ids,
         )
         added_visible_ids = [
-            step_id
-            for step_id in after_visible_ids
-            if step_id not in set(before_visible_ids)
+            step_id for step_id in after_step_ids if step_id not in set(before_step_ids)
         ]
         return history_models.HistoryMutationResult(
-            changed=before_visible_ids != after_visible_ids,
+            changed=before_step_ids != after_step_ids,
             active_branch_id=branch.id,
             removed_step_ids=removed_step_ids,
             upserted_steps=[
@@ -392,7 +383,7 @@ class HistoryManager:
         execution.active_branch_id = branch.id
         return branch
 
-    def _refresh_visible_step_ids(
+    def _refresh_step_ids(
         self,
         execution: state.WorkflowExecution,
     ) -> None:
@@ -441,7 +432,7 @@ class HistoryManager:
         path.reverse()
         return path
 
-    def _find_visible_ancestor(
+    def _find_existing_ancestor(
         self,
         execution: state.WorkflowExecution,
         step_id: Optional[UUID],

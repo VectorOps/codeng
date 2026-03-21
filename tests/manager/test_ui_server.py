@@ -173,7 +173,7 @@ async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
     assert payload.active_node_started_at is None
 
     message = state.Message(role=models.Role.USER, text="hello")
-    history.add_message(execution, message)
+    history.upsert_message(execution, message)
     step = history.upsert_step(
         execution,
         state.Step(
@@ -649,7 +649,7 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
         ),
     )
     message = state.Message(role=models.Role.USER, text="old")
-    history.add_message(runner.execution, message)
+    history.upsert_message(runner.execution, message)
     step = history.upsert_step(
         runner.execution,
         state.Step(
@@ -789,7 +789,7 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
         ),
     )
     message = state.Message(role=models.Role.USER, text="old")
-    history.add_message(runner.execution, message)
+    history.upsert_message(runner.execution, message)
     step = history.upsert_step(
         runner.execution,
         state.Step(
@@ -889,7 +889,7 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
         text="",
         tool_call_requests=[tool_req],
     )
-    history.add_message(execution, message)
+    history.upsert_message(execution, message)
     step = history.upsert_step(
         execution,
         state.Step(

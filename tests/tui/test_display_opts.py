@@ -191,7 +191,7 @@ async def test_runner_req_display_opts_propagates_tool_collapse_flag() -> None:
         text="",
         tool_call_requests=[req],
     )
-    history.add_message(run, message)
+    history.upsert_message(run, message)
     step = history.upsert_step(
         run,
         state.Step(

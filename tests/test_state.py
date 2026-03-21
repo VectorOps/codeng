@@ -335,6 +335,46 @@ def test_workflow_execution_active_branch_defaults_to_linear_path() -> None:
     assert branch.head_step_id == step2.id
 
 
+def test_workflow_execution_step_navigation_helpers() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    step1 = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+    step2 = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
+    )
+    step3 = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+
+    assert run.get_step_ids() == [step1.id, step2.id, step3.id]
+    assert run.get_steps() == (step1, step2, step3)
+    assert run.get_step_id_set() == {step1.id, step2.id, step3.id}
+    assert run.get_first_step() is step1
+    assert run.get_last_step() is step3
+    assert run.get_previous_step(step1.id) is None
+    assert run.get_previous_step(step3.id) is step2
+    assert run.get_next_step(step1.id) is step2
+    assert run.get_next_step(step3.id) is None
+
+
 def test_switch_branch_changes_active_projection() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")

@@ -373,8 +373,7 @@ class Runner:
     ]:
         resume_step: Optional[state.Step] = None
         skip_executor = False
-        active_step_ids = self.execution.get_active_step_ids()
-        if active_step_ids:
+        if self.execution.step_ids:
             anchor_index: Optional[int] = None
             steps = list(self.execution.iter_steps())
             for i in range(len(steps) - 1, -1, -1):
@@ -398,8 +397,7 @@ class Runner:
                 ):
                     skip_executor = True
 
-        active_step_ids = self.execution.get_active_step_ids()
-        if not active_step_ids:
+        if not self.execution.step_ids:
             runtime_node = self.graph.root
             current_execution: Optional[state.NodeExecution] = None
             if runtime_node is not None:
@@ -419,7 +417,9 @@ class Runner:
                     )
             return runtime_node, current_execution, None, False
 
-        last_step = self.execution.get_step(active_step_ids[-1])
+        last_step = self.execution.get_last_step()
+        if last_step is None:
+            raise RuntimeError("Expected a visible step when resuming execution")
         execution_id = last_step.execution.id
         execution = self.execution.node_executions.get(
             execution_id, last_step.execution
@@ -505,7 +505,7 @@ class Runner:
             if (
                 self.need_input
                 and self.initial_message is None
-                and not self.execution.get_active_step_ids()
+                and not self.execution.step_ids
                 and current_execution is not None
             ):
                 waiting_event = self.set_status(

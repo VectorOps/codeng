@@ -1158,7 +1158,7 @@ class ResumeRunExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="resumed-output",
         )
-        history.add_message(inp.run, msg)
+        history.upsert_message(inp.run, msg)
         step = history.upsert_step(
             inp.run,
             state.Step(
@@ -1206,7 +1206,7 @@ async def test_runner_resume_from_output_message_skips_executor_run():
         role=models.Role.ASSISTANT,
         text="existing-output",
     )
-    history.add_message(runner.execution, msg)
+    history.upsert_message(runner.execution, msg)
     output_step = history.upsert_step(
         runner.execution,
         state.Step(
@@ -1279,7 +1279,7 @@ async def test_runner_resume_uses_active_branch_projection() -> None:
     )
 
     old_message = state.Message(role=models.Role.USER, text="old user input")
-    history.add_message(runner.execution, old_message)
+    history.upsert_message(runner.execution, old_message)
     old_input_step = history.upsert_step(
         runner.execution,
         state.Step(
@@ -1291,7 +1291,7 @@ async def test_runner_resume_uses_active_branch_projection() -> None:
         ),
     )
     output_message = state.Message(role=models.Role.ASSISTANT, text="old output")
-    history.add_message(runner.execution, output_message)
+    history.upsert_message(runner.execution, output_message)
     history.upsert_step(
         runner.execution,
         state.Step(
@@ -1320,7 +1320,7 @@ async def test_runner_resume_uses_active_branch_projection() -> None:
         ),
     )
     new_message = state.Message(role=models.Role.USER, text="new user input")
-    history.add_message(runner.execution, new_message)
+    history.upsert_message(runner.execution, new_message)
     new_input_step = history.upsert_step(
         runner.execution,
         state.Step(
@@ -1334,7 +1334,7 @@ async def test_runner_resume_uses_active_branch_projection() -> None:
     )
 
     assert runner.execution.get_active_branch().id == branched.id
-    assert runner.execution.get_active_step_ids()[-1] == new_input_step.id
+    assert runner.execution.get_last_step() is new_input_step
 
     agen = runner.run()
     events: list[RunEvent] = []
@@ -1393,7 +1393,7 @@ async def test_runner_resume_from_input_message_re_runs_executor():
         role=models.Role.USER,
         text="user input",
     )
-    history.add_message(runner.execution, msg)
+    history.upsert_message(runner.execution, msg)
     history.upsert_step(
         runner.execution,
         state.Step(
@@ -2021,7 +2021,7 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         text="",
         tool_call_responses=[tool_resp],
     )
-    history.add_message(runner.execution, msg)
+    history.upsert_message(runner.execution, msg)
     history.upsert_step(
         runner.execution,
         state.Step(
@@ -2241,7 +2241,7 @@ async def test_runner_continue_after_stop_does_not_create_new_steps_for_visible_
         ),
     )
     message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
-    history.add_message(runner.execution, message)
+    history.upsert_message(runner.execution, message)
     output_step = history.upsert_step(
         runner.execution,
         state.Step(
