@@ -46,7 +46,7 @@ async def test_apply_patch_executor_success(tmp_path: Path) -> None:
     node = ApplyPatchNode(name="apply", format="v4a")
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
-    history.add_message(run, patch_message)
+    history.upsert_message(run, patch_message)
     execution = history.upsert_node_execution(
         run,
         state.NodeExecution(
@@ -89,7 +89,7 @@ async def test_apply_patch_executor_unsupported_format(tmp_path: Path) -> None:
     node = ApplyPatchNode(name="apply", format="unknown")
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
-    history.add_message(run, patch_message)
+    history.upsert_message(run, patch_message)
     execution = history.upsert_node_execution(
         run,
         state.NodeExecution(
@@ -133,7 +133,7 @@ async def test_apply_patch_executor_rejects_knowlt_project_path(tmp_path: Path) 
     node = ApplyPatchNode(name="apply", format="v4a")
     run = state.WorkflowExecution(workflow_name="wf")
     patch_message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
-    history.add_message(run, patch_message)
+    history.upsert_message(run, patch_message)
     execution = history.upsert_node_execution(
         run,
         state.NodeExecution(

@@ -201,7 +201,10 @@ class NodeExecution(BaseModel):
         default_factory=list,
         description="Initial input message ids for this node",
     )
-    step_ids: List[UUID] = Field(default_factory=list, description="A list of step ids")
+    step_ids: List[UUID] = Field(
+        default_factory=list,
+        description="Step ids visible on the active branch.",
+    )
     status: RunStatus = Field(..., description="Node execution status")
     state: Optional[BaseModel] = Field(
         default=None,
@@ -386,7 +389,10 @@ class WorkflowExecution(BaseModel):
     messages_by_id: Dict[UUID, Message] = Field(default_factory=dict)
     branches_by_id: Dict[UUID, BranchRecord] = Field(default_factory=dict)
     active_branch_id: Optional[UUID] = Field(default=None)
-    step_ids: List[UUID] = Field(default_factory=list, description="A list of step ids")
+    step_ids: List[UUID] = Field(
+        default_factory=list,
+        description="Step ids visible on the active branch.",
+    )
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this workflow execution, if any."
     )
@@ -454,30 +460,44 @@ class WorkflowExecution(BaseModel):
             raise KeyError(f"Unknown branch id: {branch_id}")
         return branch
 
-    def get_visible_step_ids(self) -> List[UUID]:
+    def get_step_ids(self) -> List[UUID]:
         return list(self.step_ids)
+
+    def get_steps(self) -> tuple[Step, ...]:
+        return tuple(self.get_step(step_id) for step_id in self.step_ids)
+
+    def get_step_id_set(self) -> set[UUID]:
+        return set(self.step_ids)
+
+    def get_first_step(self) -> Optional[Step]:
+        if not self.step_ids:
+            return None
+        return self.get_step(self.step_ids[0])
+
+    def get_last_step(self) -> Optional[Step]:
+        if not self.step_ids:
+            return None
+        return self.get_step(self.step_ids[-1])
+
+    def get_step_index(self, step_id: UUID) -> int:
+        return self.step_ids.index(step_id)
+
+    def get_previous_step(self, step_id: UUID) -> Optional[Step]:
+        index = self.get_step_index(step_id)
+        if index == 0:
+            return None
+        return self.get_step(self.step_ids[index - 1])
+
+    def get_next_step(self, step_id: UUID) -> Optional[Step]:
+        index = self.get_step_index(step_id)
+        if index + 1 >= len(self.step_ids):
+            return None
+        return self.get_step(self.step_ids[index + 1])
 
     def get_active_branch(self) -> BranchRecord:
         if self.active_branch_id is None:
             raise KeyError("No active branch id is set")
         return self.get_branch(self.active_branch_id)
-
-    def get_active_step_ids(self) -> List[UUID]:
-        return self.get_visible_step_ids()
-
-    def get_active_steps(self) -> tuple[Step, ...]:
-        return tuple(self.get_step(step_id) for step_id in self.get_active_step_ids())
-
-    def get_active_step_id_set(self) -> set[UUID]:
-        return set(self.get_active_step_ids())
-
-    def get_active_head_step(self) -> Optional[Step]:
-        if self.active_branch_id is None:
-            return None
-        branch = self.get_branch(self.active_branch_id)
-        if branch.head_step_id is None:
-            return None
-        return self.get_step(branch.head_step_id)
 
     def attach_runtime_refs(self) -> "WorkflowExecution":
         for execution in self.node_executions.values():

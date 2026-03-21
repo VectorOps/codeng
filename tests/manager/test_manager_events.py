@@ -33,7 +33,7 @@ class ManagerTestExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="manager-output",
         )
-        history.add_message(inp.run, msg)
+        history.upsert_message(inp.run, msg)
         step = history.upsert_step(
             inp.run,
             state.Step(
@@ -64,7 +64,7 @@ class ManagerBlockingExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="blocking-output",
         )
-        history.add_message(inp.run, msg)
+        history.upsert_message(inp.run, msg)
         step = history.upsert_step(
             inp.run,
             state.Step(
@@ -297,7 +297,7 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
     user_message = state.Message(role=models.Role.USER, text="old user input")
     output_message = state.Message(role=models.Role.ASSISTANT, text="after input")
     for message in [prompt_message, user_message, output_message]:
-        history.add_message(execution, message)
+        history.upsert_message(execution, message)
 
     prompt_step = history.upsert_step(
         execution,
@@ -409,8 +409,8 @@ async def test_manager_edit_history_stops_parent_runner_when_going_up_stack(
 
     prompt_message = state.Message(role=models.Role.ASSISTANT, text="parent prompt")
     user_message = state.Message(role=models.Role.USER, text="parent input")
-    history.add_message(parent_execution, prompt_message)
-    history.add_message(parent_execution, user_message)
+    history.upsert_message(parent_execution, prompt_message)
+    history.upsert_message(parent_execution, user_message)
     history.upsert_step(
         parent_execution,
         state.Step(

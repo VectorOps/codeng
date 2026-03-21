@@ -39,7 +39,7 @@ def _make_step(
     local_execution._workflow_execution = run
     message_id = None
     if message is not None:
-        history.add_message(run, message)
+        history.upsert_message(run, message)
         message_id = message.id
     return history.upsert_step(
         run,

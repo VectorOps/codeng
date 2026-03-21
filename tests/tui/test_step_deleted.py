@@ -42,8 +42,8 @@ def test_tui_state_deletes_steps_by_id() -> None:
 
     msg1 = state.Message(role=models.Role.ASSISTANT, text="hello")
     msg2 = state.Message(role=models.Role.USER, text="user")
-    history.add_message(execution, msg1)
-    history.add_message(execution, msg2)
+    history.upsert_message(execution, msg1)
+    history.upsert_message(execution, msg2)
     step1 = history.upsert_step(
         execution,
         state.Step(

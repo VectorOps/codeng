@@ -91,7 +91,7 @@ class StartNestedWorkflowExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after-nested",
             )
-        history.add_message(inp.run, msg)
+        history.upsert_message(inp.run, msg)
         step = history.upsert_step(
             inp.run,
             state.Step(
@@ -118,7 +118,7 @@ class ChildEchoInitialExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=f"child-final:{text}",
         )
-        history.add_message(inp.run, msg)
+        history.upsert_message(inp.run, msg)
         step = history.upsert_step(
             inp.run,
             state.Step(

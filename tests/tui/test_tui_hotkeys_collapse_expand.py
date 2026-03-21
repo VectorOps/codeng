@@ -55,7 +55,7 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
             tool_call_requests=[req],
             tool_call_responses=[resp],
         )
-        history.add_message(run, message)
+        history.upsert_message(run, message)
         req_step = history.upsert_step(
             run,
             state.Step(
@@ -135,7 +135,7 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
             text="",
             tool_call_requests=[req],
         )
-        history.add_message(run, message)
+        history.upsert_message(run, message)
         req_step = history.upsert_step(
             run,
             state.Step(

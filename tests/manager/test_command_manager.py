@@ -106,7 +106,7 @@ class _ResumeSkipExecutor(runner_base.BaseExecutor):
         self, inp: runner_base.ExecutorInput
     ) -> runner_base.AsyncIterator[state.Step]:
         message = state.Message(role=models.Role.ASSISTANT, text="resumed")
-        self.project.history.add_message(inp.run, message)
+        self.project.history.upsert_message(inp.run, message)
         yield self.project.history.upsert_step(
             inp.run,
             state.Step(
@@ -672,7 +672,7 @@ async def test_continue_command_preserves_existing_visible_history(
         ),
     )
     message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
-    history.add_message(runner.execution, message)
+    history.upsert_message(runner.execution, message)
     output_step = history.upsert_step(
         runner.execution,
         state.Step(
