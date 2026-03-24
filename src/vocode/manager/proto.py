@@ -23,6 +23,9 @@ class BasePacketKind(str, Enum):
     RUNNER_REQ = "runner_req"
     UI_STATE = "ui_state"
     STEP_DELETED = "step_deleted"
+    BRANCH_CHANGED = "branch_changed"
+    BRANCH_LIST = "branch_list"
+    HISTORY_VIEW_DIFF = "history_view_diff"
     USER_INPUT = "user_input"
     INPUT_PROMPT = "input_prompt"
     STOP_REQ = "stop_req"
@@ -55,6 +58,41 @@ class StepDeletedPacket(BaseModel):
         default=BasePacketKind.STEP_DELETED
     )
     step_ids: list[str] = Field(default_factory=list)
+
+
+class BranchSummary(BaseModel):
+    branch_id: str
+    head_step_id: Optional[str] = Field(default=None)
+    base_step_id: Optional[str] = Field(default=None)
+    label: Optional[str] = Field(default=None)
+    created_at: datetime
+    is_active: bool = Field(default=False)
+
+
+class BranchChangedPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.BRANCH_CHANGED] = Field(
+        default=BasePacketKind.BRANCH_CHANGED
+    )
+    workflow_execution_id: str
+    active_branch_id: str
+    created_branch_id: Optional[str] = Field(default=None)
+
+
+class BranchListPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.BRANCH_LIST] = Field(
+        default=BasePacketKind.BRANCH_LIST
+    )
+    workflow_execution_id: str
+    branches: list[BranchSummary] = Field(default_factory=list)
+
+
+class HistoryViewDiffPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.HISTORY_VIEW_DIFF] = Field(
+        default=BasePacketKind.HISTORY_VIEW_DIFF
+    )
+    workflow_execution_id: str
+    removed_step_ids: list[str] = Field(default_factory=list)
+    upserted_step_ids: list[str] = Field(default_factory=list)
 
 
 class UserInputPacket(BaseModel):
@@ -231,6 +269,9 @@ BasePacket = Annotated[
         AckPacket,
         RunnerReqPacket,
         StepDeletedPacket,
+        BranchChangedPacket,
+        BranchListPacket,
+        HistoryViewDiffPacket,
         UserInputPacket,
         InputPromptPacket,
         UIServerStatePacket,

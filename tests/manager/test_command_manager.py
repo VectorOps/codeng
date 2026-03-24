@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from uuid import uuid4
 
 import pytest
 
 from vocode import models, state
 from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
+from vocode.history.models import HistoryMutationResult
 from vocode.manager import helpers as manager_helpers
 from vocode.manager import proto as manager_proto
 from vocode.manager.commands import CommandManager, command, option
@@ -545,6 +547,106 @@ async def test_run_command_stops_all_and_starts_workflow(
 
     assert ("stop_all", None) in called
     assert ("start", "alpha") in called
+
+
+@pytest.mark.asyncio
+async def test_branch_list_command_outputs_branches() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    execution = state.WorkflowExecution(workflow_name="wf-branches")
+    branch = project.history.create_branch(execution, activate=True, label="main")
+
+    runner = type(
+        "_Runner",
+        (),
+        {
+            "execution": execution,
+        },
+    )()
+    server.manager._runner_stack.append(
+        manager_base.RunnerFrame(
+            workflow_name="wf-branches",
+            runner=runner,
+            initial_message=None,
+        )
+    )
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    message = state.Message(role=models.Role.USER, text="/branch list")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert str(branch.id) in payload.text
+    assert "main" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_branch_switch_command_emits_history_mutation_packets() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    server.enable_branch_packets()
+
+    execution = state.WorkflowExecution(workflow_name="wf-branches")
+    runner = type(
+        "_Runner",
+        (),
+        {
+            "execution": execution,
+        },
+    )()
+    frame = manager_base.RunnerFrame(
+        workflow_name="wf-branches",
+        runner=runner,
+        initial_message=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    branch_id = uuid4()
+
+    async def fake_emit_history_mutation(
+        frame_arg,
+        result,
+    ) -> None:
+        assert frame_arg is frame
+        assert result.active_branch_id == branch_id
+
+    def fake_switch_branch(execution_arg, branch_id_arg):
+        assert execution_arg is execution
+        assert branch_id_arg == branch_id
+        return HistoryMutationResult(
+            changed=True,
+            active_branch_id=branch_id,
+            upserted_step_ids=[],
+        )
+
+    server.manager.project.history.switch_branch = fake_switch_branch
+    server.emit_history_mutation = fake_emit_history_mutation
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    message = state.Message(
+        role=models.Role.USER,
+        text=f"/branch switch {branch_id}",
+    )
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
 
 
 @pytest.mark.asyncio

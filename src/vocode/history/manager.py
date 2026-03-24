@@ -10,6 +10,27 @@ from . import models as history_models
 
 
 class HistoryManager:
+    def list_branch_summaries(
+        self,
+        execution: state.WorkflowExecution,
+    ) -> list[history_models.HistoryBranchSummary]:
+        self._ensure_default_branch(execution)
+        branches = sorted(
+            execution.branches_by_id.values(),
+            key=lambda branch: branch.created_at,
+        )
+        return [
+            history_models.HistoryBranchSummary(
+                id=branch.id,
+                head_step_id=branch.head_step_id,
+                base_step_id=branch.base_step_id,
+                label=branch.label,
+                created_at=branch.created_at,
+                is_active=branch.id == execution.active_branch_id,
+            )
+            for branch in branches
+        ]
+
     def upsert_message(
         self,
         execution: state.WorkflowExecution,
@@ -264,10 +285,13 @@ class HistoryManager:
         )
         return history_models.HistoryMutationResult(
             changed=True,
+            mutation_kind=history_models.HistoryMutationKind.FORK,
             active_branch_id=execution.active_branch_id,
             created_branch_id=created_branch.id,
             removed_step_ids=removed_step_ids,
+            upserted_step_ids=[persisted_step.id],
             upserted_steps=[persisted_step],
+            branch_summaries=self.list_branch_summaries(execution),
         )
 
     def get_last_user_input_step(
@@ -311,11 +335,14 @@ class HistoryManager:
         ]
         return history_models.HistoryMutationResult(
             changed=before_step_ids != after_step_ids,
+            mutation_kind=history_models.HistoryMutationKind.SWITCH_BRANCH,
             active_branch_id=branch.id,
             removed_step_ids=removed_step_ids,
+            upserted_step_ids=added_visible_ids,
             upserted_steps=[
                 execution.get_step(step_id) for step_id in added_visible_ids
             ],
+            branch_summaries=self.list_branch_summaries(execution),
         )
 
     def edit_user_input(
