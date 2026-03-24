@@ -863,6 +863,108 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
 
 
 @pytest.mark.asyncio
+async def test_uiserver_emits_branch_packets_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = HistoryManager()
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    server.enable_branch_packets()
+
+    class DummyRunner:
+        def __init__(self) -> None:
+            self.status = state.RunnerStatus.STOPPED
+            self.execution = state.WorkflowExecution(workflow_name="wf-edit")
+
+    runner = DummyRunner()
+    node_execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    message = state.Message(role=models.Role.USER, text="old")
+    history.upsert_message(runner.execution, message)
+    step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
+    )
+    frame = RunnerFrame(
+        workflow_name="wf-user-input-edit-branch-packets",
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    branch_id = uuid4()
+    created_branch_id = uuid4()
+
+    async def fake_edit_history_with_text(
+        self: BaseManager,
+        text: str,
+        *,
+        resume: bool = True,
+    ) -> HistoryMutationResult:
+        assert text == "new input text"
+        assert resume is False
+        message.text = text
+        return HistoryMutationResult(
+            changed=True,
+            active_branch_id=branch_id,
+            created_branch_id=created_branch_id,
+            removed_step_ids=[uuid4()],
+            upserted_step_ids=[step.id],
+            upserted_steps=[step],
+            branch_summaries=[],
+        )
+
+    async def fake_continue_current_runner(self: BaseManager) -> object:
+        return object()
+
+    monkeypatch.setattr(
+        BaseManager, "edit_history_with_text", fake_edit_history_with_text
+    )
+    monkeypatch.setattr(
+        BaseManager, "continue_current_runner", fake_continue_current_runner
+    )
+
+    user_message = state.Message(role=models.Role.USER, text="new input text")
+    packet = manager_proto.UserInputPacket(message=user_message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    deleted_envelope = await client_endpoint.recv()
+    assert isinstance(deleted_envelope.payload, manager_proto.StepDeletedPacket)
+
+    upsert_envelope = await client_endpoint.recv()
+    assert isinstance(upsert_envelope.payload, manager_proto.RunnerReqPacket)
+
+    branch_changed_envelope = await client_endpoint.recv()
+    assert isinstance(
+        branch_changed_envelope.payload, manager_proto.BranchChangedPacket
+    )
+    assert branch_changed_envelope.payload.active_branch_id == str(branch_id)
+    assert branch_changed_envelope.payload.created_branch_id == str(created_branch_id)
+
+    diff_envelope = await client_endpoint.recv()
+    assert isinstance(diff_envelope.payload, manager_proto.HistoryViewDiffPacket)
+    assert diff_envelope.payload.upserted_step_ids == [str(step.id)]
+    assert diff_envelope.payload.removed_step_ids
+
+
+@pytest.mark.asyncio
 async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None:
     history = HistoryManager()
     project = StubProject()

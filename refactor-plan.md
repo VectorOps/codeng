@@ -134,6 +134,8 @@ I do not recommend inventing a separate top-level `Assignment` abstraction for t
 
 ## Project 1: normalize the data model while keeping a single linear history
 
+Status in current codebase: complete.
+
 ### Goals
 
 - Remove cyclic persistence requirements.
@@ -346,38 +348,51 @@ To minimize churn:
 1. Add `parent_step_id` and `child_step_ids` to steps.
 2. Add branch metadata to `WorkflowExecution`.
 3. Initialize a default branch for all existing executions during load/creation.
-4. Provide helper APIs:
-   - `get_active_step_ids()`
-   - `get_active_steps()`
+4. Use `WorkflowExecution.step_ids` as the canonical flat visible-path view.
+5. Provide helper APIs where the flat visible-path view is not sufficient:
    - `switch_branch(branch_id)`
    - `fork_from_step(step_id, replacement_message)`
-   - `find_lowest_common_ancestor(old_head, new_head)`
+
+Notes:
+
+- `get_active_step_ids()` and `get_active_steps()` are not needed because `WorkflowExecution.step_ids` already provides the active visible history projection.
+- `find_lowest_common_ancestor(old_head, new_head)` is not required for the current compatibility rollout.
 
 #### Phase 2.2: refactor edit-history behavior to fork instead of truncate
 
 1. Replace `BaseManager.edit_history_with_text()` destructive behavior with a call into the new history manager.
-2. Return a result object containing:
-   - active branch id
-   - removed visible step ids
-   - added/upserted visible steps
-   - resume cursor information
+2. Return a result object containing the visible-path mutation information needed by the compatibility layer.
 3. Keep manager/server behavior compatible by translating that result into current packets.
+
+Notes:
+
+- Explicit resume cursor information is not needed.
 
 #### Phase 2.3: project node executions onto the active branch
 
 1. Decide whether `NodeExecution` remains a stored record or becomes mostly a derived view.
 2. Recommended transition:
    - keep `NodeExecution` records
-   - add branch-safe ordering by using `step_ids`
-   - expose `node_execution.steps` as active-branch projection
+   - keep branch-safe ordering by using stored `step_ids`
+   - do not require `node_execution.steps` to become a separately derived active-branch projection yet
 3. Update `iter_execution_messages()` and resume logic to follow active-path projections.
+
+Notes:
+
+- This is expected for the current rollout. `WorkflowExecution.step_ids` is the primary active visible-path projection.
 
 #### Phase 2.4: compatibility diff layer for the current UI
 
-1. Implement visible-path diffing in the history manager.
+1. Keep visible-path diffing centralized in the history manager.
 2. Continue emitting `StepDeletedPacket` for steps leaving the active view.
 3. Continue sending `RunnerReqPacket` upserts for newly visible or updated steps.
 4. Do not expose the full tree to the TUI yet.
+
+Notes:
+
+- The centralized diff result is represented by `HistoryMutationResult`.
+- Removed visible items are returned as step ids.
+- Added or changed visible items are returned as upserted steps.
 
 #### Phase 2.5: additive branch-aware protocol
 

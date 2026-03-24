@@ -46,6 +46,7 @@ class UIServer:
         self._pending_input_step: Optional[state.Step] = None
         self._progress_last_sent_at_by_id: dict[str, float] = {}
         self._know_repo_label_by_id: dict[str, str] = {}
+        self._emit_branch_packets = False
 
         self._router.register(
             manager_proto.BasePacketKind.USER_INPUT,
@@ -127,6 +128,86 @@ class UIServer:
             payload=payload,
         )
         await self._endpoint.send(envelope)
+
+    def enable_branch_packets(self) -> None:
+        self._emit_branch_packets = True
+
+    def _build_branch_summaries(
+        self,
+        result,
+    ) -> list[manager_proto.BranchSummary]:
+        return [
+            manager_proto.BranchSummary(
+                branch_id=str(branch.id),
+                head_step_id=(
+                    str(branch.head_step_id)
+                    if branch.head_step_id is not None
+                    else None
+                ),
+                base_step_id=(
+                    str(branch.base_step_id)
+                    if branch.base_step_id is not None
+                    else None
+                ),
+                label=branch.label,
+                created_at=branch.created_at,
+                is_active=branch.is_active,
+            )
+            for branch in result.branch_summaries
+        ]
+
+    async def emit_history_mutation(
+        self,
+        frame: RunnerFrame,
+        result,
+    ) -> None:
+        execution = frame.runner.execution
+        if result.removed_step_ids:
+            await self.send_packet(
+                manager_proto.StepDeletedPacket(
+                    step_ids=[str(step_id) for step_id in result.removed_step_ids]
+                )
+            )
+        for upsert_step in result.upserted_steps:
+            packet = manager_proto.RunnerReqPacket(
+                workflow_id=frame.workflow_name,
+                workflow_name=execution.workflow_name,
+                workflow_execution_id=str(execution.id),
+                step=upsert_step,
+                input_required=False,
+                display=None,
+            )
+            await self.send_packet(packet)
+        if not self._emit_branch_packets:
+            return
+        if result.active_branch_id is not None:
+            await self.send_packet(
+                manager_proto.BranchChangedPacket(
+                    workflow_execution_id=str(execution.id),
+                    active_branch_id=str(result.active_branch_id),
+                    created_branch_id=(
+                        str(result.created_branch_id)
+                        if result.created_branch_id is not None
+                        else None
+                    ),
+                )
+            )
+        if result.branch_summaries:
+            await self.send_packet(
+                manager_proto.BranchListPacket(
+                    workflow_execution_id=str(execution.id),
+                    branches=self._build_branch_summaries(result),
+                )
+            )
+        await self.send_packet(
+            manager_proto.HistoryViewDiffPacket(
+                workflow_execution_id=str(execution.id),
+                removed_step_ids=[str(step_id) for step_id in result.removed_step_ids],
+                upserted_step_ids=[
+                    str(step_id) for step_id in result.upserted_step_ids
+                ],
+            )
+        )
 
     async def _recv_loop(self) -> None:
         while True:
@@ -844,25 +925,9 @@ class UIServer:
                     text,
                     resume=False,
                 )
-                if res.changed and res.removed_step_ids:
-                    await self.send_packet(
-                        manager_proto.StepDeletedPacket(
-                            step_ids=[str(step_id) for step_id in res.removed_step_ids]
-                        )
-                    )
                 if res.changed:
-                    execution = runner.execution
                     frame = self._manager.runner_stack[-1]
-                    for upsert_step in res.upserted_steps:
-                        packet = manager_proto.RunnerReqPacket(
-                            workflow_id=frame.workflow_name,
-                            workflow_name=execution.workflow_name,
-                            workflow_execution_id=str(execution.id),
-                            step=upsert_step,
-                            input_required=False,
-                            display=None,
-                        )
-                        await self.send_packet(packet)
+                    await self.emit_history_mutation(frame, res)
                 if res.changed:
                     await self._manager.continue_current_runner()
                 if not res.changed:
