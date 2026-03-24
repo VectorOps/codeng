@@ -6,7 +6,7 @@ readme = "readme.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "devtools>=0.12.2",
-    "litellm>=1.81.4",
+    "litellm>=1.81.4,<1.82.4",
     "pydantic>=2.11.7",
     "pytest>=8.4.1",
     "pyyaml>=6.0.2",
