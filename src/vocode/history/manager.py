@@ -242,9 +242,9 @@ class HistoryManager:
         forked_execution = state.NodeExecution(
             workflow_execution=execution,
             node=source_execution.node,
-            previous_id=source_execution.previous_id,
+            previous_id=source_execution.id,
             branch_id=branch_id,
-            input_message_ids=list(source_execution.input_message_ids),
+            input_message_ids=[],
             status=source_execution.status,
             state=source_execution.state,
         )
