@@ -221,6 +221,75 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
     assert first["provider_specific_fields"] == {"cache_control": {"type": "ephemeral"}}
 
 
+def test_build_messages_uses_active_history_view_after_user_input_edit() -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    initial_message = state.Message(role=models.Role.USER, text="initial input")
+    history.upsert_message(run, initial_message)
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[initial_message.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    prompt_message = state.Message(role=models.Role.ASSISTANT, text="prompt")
+    old_user_message = state.Message(role=models.Role.USER, text="old user input")
+    old_output_message = state.Message(role=models.Role.ASSISTANT, text="old output")
+    for message in [prompt_message, old_user_message, old_output_message]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=prompt_message.id,
+            is_complete=True,
+        ),
+    )
+    old_input_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user_message.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=old_output_message.id,
+            is_complete=True,
+        ),
+    )
+
+    history.edit_user_input(run, old_input_step.id, "new user input")
+    active_execution = run.get_last_step().execution
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    inp = ExecutorInput(execution=active_execution, run=run)
+
+    conv = executor.build_messages(inp)
+
+    assert [message["content"] for message in conv] == ["prompt", "new user input"]
+
+
 def test_build_step_from_message_reuses_existing_message_id_for_updates() -> None:
     history = HistoryManager()
     cfg = LLMNode(

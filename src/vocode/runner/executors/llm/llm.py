@@ -41,6 +41,24 @@ class LLMExecutor(runner_base.BaseExecutor):
         litellm.suppress_debug_info = True
         litellm.set_verbose = False
 
+    def _iter_prompt_messages(
+        self,
+        inp: runner_base.ExecutorInput,
+    ) -> List[tuple[state.Message, Optional[state.Step]]]:
+        run = inp.run
+        execution = inp.execution
+        active_execution_ids = {
+            step.execution_id for step in run.iter_steps() if step.message is not None
+        }
+        if execution.id in active_execution_ids:
+            return [
+                (step.message, step)
+                for step in run.iter_steps()
+                if step.message is not None
+                and step.execution_id in active_execution_ids
+            ]
+        return list(runner_base.iter_execution_messages(execution))
+
     def build_messages(self, inp: runner_base.ExecutorInput) -> List[Dict]:
         """
         Generate an OpenAI-compatible conversation from execution state.
@@ -132,7 +150,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 for resp in msg.tool_call_responses:
                     _append_tool_response(resp)
 
-        for msg, step in runner_base.iter_execution_messages(execution):
+        for msg, step in self._iter_prompt_messages(inp):
             if step is not None and step.type not in INCLUDED_STEP_TYPES:
                 continue
             collected_messages.append(msg)

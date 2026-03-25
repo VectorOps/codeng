@@ -481,6 +481,93 @@ def test_history_manager_fork_from_step_creates_new_branch_head() -> None:
     assert replacement.execution.step_ids == [replacement.id]
 
 
+def test_edit_user_input_preserves_visible_history_and_execution_chain() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    original_input = state.Message(role=models.Role.USER, text="original input")
+    history.upsert_message(run, original_input)
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-1",
+            input_message_ids=[original_input.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    prompt_message = state.Message(role=models.Role.ASSISTANT, text="prompt")
+    old_user_message = state.Message(role=models.Role.USER, text="old user input")
+    old_output_message = state.Message(role=models.Role.ASSISTANT, text="old output")
+    for message in [prompt_message, old_user_message, old_output_message]:
+        history.upsert_message(run, message)
+
+    prompt_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=prompt_message.id,
+            is_complete=True,
+        ),
+    )
+    old_input_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user_message.id,
+            is_complete=True,
+        ),
+    )
+    old_output_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=old_output_message.id,
+            is_complete=True,
+        ),
+    )
+
+    result = history.edit_user_input(run, old_input_step.id, "new user input")
+
+    assert result.changed is True
+    assert result.created_branch_id is not None
+    assert run.step_ids == [prompt_step.id, result.upserted_steps[0].id]
+
+    replacement_step = result.upserted_steps[0]
+    replacement_execution = replacement_step.execution
+
+    assert replacement_step.parent_step_id == prompt_step.id
+    assert replacement_step.parent is prompt_step
+    assert prompt_step.children == (old_input_step, replacement_step)
+
+    assert execution.step_ids == [prompt_step.id, old_input_step.id, old_output_step.id]
+    assert replacement_execution.step_ids == [replacement_step.id]
+    assert replacement_execution.previous_id == execution.id
+
+    visible_texts = [
+        step.message.text for step in run.iter_steps() if step.message is not None
+    ]
+    assert visible_texts == ["prompt", "new user input"]
+
+    rebuilt_texts = [
+        message.text
+        for message, _step in iter_execution_messages(replacement_execution)
+    ]
+    assert rebuilt_texts == [
+        "original input",
+        "prompt",
+        "old user input",
+        "old output",
+        "new user input",
+    ]
+
+
 def test_upsert_step_updates_existing_step_without_duplicate_node_step_ids() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
