@@ -5,18 +5,18 @@ description = "Vectorops Code"
 readme = "readme.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "devtools>=0.12.2",
-    "litellm>=1.81.4,<1.82.4",
-    "pydantic>=2.11.7",
-    "pytest>=8.4.1",
-    "pyyaml>=6.0.2",
-    "gitpython>=3.1.36",
-    "structlog>=25.4.0",
-    "json5>=0.9",
-    "knowlt @ git+https://github.com/vectorops/knowlt.git",
-    "rich>=14.2.0",
-    "pyfiglet>=1.0.4",
-    "aiohttp>=3.11.11",
+    "devtools==0.12.2",
+    "litellm==1.82.3",
+    "pydantic==2.12.5",
+    "pytest==9.0.2",
+    "pyyaml==6.0.3",
+    "gitpython==3.1.46",
+    "structlog==25.5.0",
+    "json5==0.13.0",
+    "knowlt @ git+https://github.com/vectorops/knowlt.git@11b72cea2681aa17da06a550992a0c7fb0bf3c13",
+    "rich==14.3.3",
+    "pyfiglet==1.0.4",
+    "aiohttp==3.13.3",
 ]
 
 [tool.uv]
@@ -30,7 +30,7 @@ plugins = ['pydantic.mypy']
 
 [dependency-groups]
 dev = [
-    "black>=25.1.0",
-    "mypy>=1.17.1",
-    "pytest-asyncio>=1.1.0",
+    "black==25.12.0",
+    "mypy==1.19.1",
+    "pytest-asyncio==1.3.0",
 ]

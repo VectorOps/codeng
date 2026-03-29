@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.input import base as input_base
@@ -12,6 +13,8 @@ from vocode.tui.lib.input import base as input_base
 
 @pytest.mark.asyncio
 async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
+    history = HistoryManager()
+
     async def on_input(_: str) -> None:
         return
 
@@ -31,27 +34,35 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
     for i in range(12):
         ui_state.add_rich_text(f"msg {i}")
 
-    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
     for i in range(12):
-        req = state.ToolCallReq(
-            id=f"call_{i}",
-            name="tool",
-            arguments={"i": i},
-        )
+        req = state.ToolCallReq(id=f"call_{i}", name="tool", arguments={"i": i})
         resp = state.ToolCallResp(
             id=f"call_{i}",
             name="tool",
             result={"ok": True, "i": i},
         )
-        req_step = state.Step(
-            id=uuid4(),
-            execution=execution,
-            type=state.StepType.TOOL_REQUEST,
-            message=state.Message(
-                role=models.Role.ASSISTANT,
-                text="",
-                tool_call_requests=[req],
-                tool_call_responses=[resp],
+        message = state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+            tool_call_responses=[resp],
+        )
+        history.upsert_message(run, message)
+        req_step = history.upsert_step(
+            run,
+            state.Step(
+                id=uuid4(),
+                execution_id=execution.id,
+                type=state.StepType.TOOL_REQUEST,
+                message_id=message.id,
             ),
         )
         ui_state.handle_step(req_step)
@@ -79,7 +90,6 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
     assert ui_state._action_stack[-1].kind is not tui_uistate.ActionKind.COMMAND_MANAGER
     assert all(c.is_collapsed for c in tool_components[-10:])
     assert all(c.is_expanded for c in tool_components[:-10])
-    # Command manager closed; clean up removed components before reopening.
     ui_state.terminal._delete_removed_components()
 
     ui_state._input_handler.publish(open_cmd)
@@ -92,6 +102,8 @@ async def test_ctrl_shift_dot_collapses_tool_steps_progressively() -> None:
 async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_other_key() -> (
     None
 ):
+    history = HistoryManager()
+
     async def on_input(_: str) -> None:
         return
 
@@ -108,21 +120,29 @@ async def test_ctrl_shift_comma_expands_tool_steps_progressively_and_resets_on_o
         on_eof=None,
     )
 
-    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
     for i in range(25):
-        req = state.ToolCallReq(
-            id=f"call_{i}",
-            name="tool",
-            arguments={"i": i},
+        req = state.ToolCallReq(id=f"call_{i}", name="tool", arguments={"i": i})
+        message = state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
         )
-        req_step = state.Step(
-            id=uuid4(),
-            execution=execution,
-            type=state.StepType.TOOL_REQUEST,
-            message=state.Message(
-                role=models.Role.ASSISTANT,
-                text="",
-                tool_call_requests=[req],
+        history.upsert_message(run, message)
+        req_step = history.upsert_step(
+            run,
+            state.Step(
+                id=uuid4(),
+                execution_id=execution.id,
+                type=state.StepType.TOOL_REQUEST,
+                message_id=message.id,
             ),
         )
         ui_state.handle_step(req_step)

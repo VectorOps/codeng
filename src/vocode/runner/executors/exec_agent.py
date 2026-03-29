@@ -29,23 +29,30 @@ class RunAgentExecutor(BaseExecutor):
     config: RunAgentNode
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
         # Check if we already have a result from the child workflow
         result_step = next(
             (
                 s
-                for s in inp.execution.steps
+                for s in inp.execution.iter_steps()
                 if s.type == state.StepType.WORKFLOW_RESULT
             ),
             None,
         )
         if result_step:
             # We have a result. Emit it as final output.
-            yield state.Step(
-                execution=inp.execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=result_step.message,
-                is_complete=True,
-                is_final=True,
+            if result_step.message is not None:
+                history.upsert_message(inp.run, result_step.message)
+            yield history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=inp.execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=result_step.message_id,
+                    is_complete=True,
+                    is_final=True,
+                ),
             )
             return
 
@@ -53,7 +60,7 @@ class RunAgentExecutor(BaseExecutor):
         req_step = next(
             (
                 s
-                for s in inp.execution.steps
+                for s in inp.execution.iter_steps()
                 if s.type == state.StepType.WORKFLOW_REQUEST
             ),
             None,
@@ -65,13 +72,15 @@ class RunAgentExecutor(BaseExecutor):
             return
 
         # Create new request
-        msg = state.Message(
-            role=Role.ASSISTANT, text=self.config.initial_text or ""
-        )
-        req_step = state.Step(
-            execution=inp.execution,
-            type=state.StepType.WORKFLOW_REQUEST,
-            message=msg,
-            is_complete=True,
+        msg = state.Message(role=Role.ASSISTANT, text=self.config.initial_text or "")
+        history.upsert_message(inp.run, msg)
+        req_step = history.upsert_step(
+            inp.run,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.WORKFLOW_REQUEST,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield req_step

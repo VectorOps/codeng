@@ -60,6 +60,7 @@ class ExecExecutor(BaseExecutor):
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
+        history = self.project.history
         shell_manager = self.project.shells
         if shell_manager is None:
             raise RuntimeError("ExecExecutor requires project.shells (ShellManager)")
@@ -91,13 +92,18 @@ class ExecExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=output,
         )
-        step = state.Step(
-            execution=inp.execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=message,
-            content_type=cfg.content_type,
-            is_complete=False,
-            is_final=False,
+        history.upsert_message(inp.run, message)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                content_type=cfg.content_type,
+                is_complete=False,
+                is_final=False,
+            ),
         )
 
         timed_out = False

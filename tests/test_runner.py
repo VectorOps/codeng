@@ -1,16 +1,17 @@
-from typing import AsyncIterator, Dict, Callable
+from typing import AsyncIterator, Callable, Dict
 
 import pytest
 
-from vocode import state, models
+from vocode import models, state
 from vocode import settings as vocode_settings
-from vocode.tools import base as tools_base
-from tests.stub_project import StubProject
+from vocode.history.manager import HistoryManager
+from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
-from vocode.runner.runner import Runner, RunEvent, RunnerStopped
 from vocode.runner.proto import RunEventResp, RunEventResponseType
-from vocode.runner import base as runner_base
+from vocode.runner.runner import RunEvent, Runner, RunnerStopped
+from vocode.tools import base as tools_base
+from tests.stub_project import StubProject
 
 
 async def drive_runner(
@@ -60,6 +61,7 @@ class FakeExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
         execution = inp.execution
         node_name = execution.node
         key = str(execution.id)
@@ -68,26 +70,31 @@ class FakeExecutor(BaseExecutor):
 
         if node_name == "node1":
             text_prefix = "run1" if count == 1 else "run2"
-            base_step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
+            partial_message = state.Message(
+                role=models.Role.ASSISTANT,
+                text=f"{text_prefix}-partial",
             )
-            step1 = base_step.model_copy(
-                update={
-                    "message": state.Message(
-                        role=models.Role.ASSISTANT,
-                        text=f"{text_prefix}-partial",
-                    ),
-                    "is_complete": False,
-                }
+            history.upsert_message(inp.run, partial_message)
+            step1 = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=partial_message.id,
+                    is_complete=False,
+                ),
             )
             yield step1
+
+            final_message = state.Message(
+                role=models.Role.ASSISTANT,
+                text=f"{text_prefix}-final",
+            )
+            history.upsert_message(inp.run, final_message)
             step2 = step1.model_copy(
                 update={
-                    "message": state.Message(
-                        role=models.Role.ASSISTANT,
-                        text=f"{text_prefix}-final",
-                    ),
+                    "message_id": final_message.id,
                     "is_complete": True,
                 }
             )
@@ -97,12 +104,17 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="node2-output",
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=msg,
-                outcome_name="go",
-                is_complete=True,
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=msg.id,
+                    outcome_name="go",
+                    is_complete=True,
+                ),
             )
             yield step
         else:
@@ -110,11 +122,16 @@ class FakeExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="terminal-output",
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=msg,
-                is_complete=True,
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=msg.id,
+                    is_complete=True,
+                ),
             )
             yield step
 
@@ -134,6 +151,7 @@ class LoopExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
         execution = inp.execution
         node_name = execution.node
         count = self._run_counts.get(node_name, 0) + 1
@@ -143,21 +161,25 @@ class LoopExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=f"loop-{count}",
         )
-        interim_step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
-            is_complete=False,
+        history.upsert_message(inp.run, msg)
+        interim_step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=False,
+            ),
         )
         yield interim_step
 
         outcome = "again" if count == 1 else "done"
-        final_step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
-            outcome_name=outcome,
-            is_complete=True,
+        final_step = interim_step.model_copy(
+            update={
+                "outcome_name": outcome,
+                "is_complete": True,
+            }
         )
         yield final_step
 
@@ -176,9 +198,10 @@ class ToolPromptExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
         execution = inp.execution
         has_tool_result = False
-        for existing_step in execution.steps:
+        for existing_step in execution.iter_steps():
             if (
                 existing_step.message is not None
                 and existing_step.message.tool_call_responses
@@ -201,11 +224,16 @@ class ToolPromptExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="after tool",
             )
-        step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
-            is_complete=True,
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -222,9 +250,10 @@ class FakeLLMToolExecutor(BaseExecutor):
         return None
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
         execution = inp.execution
         has_tool_result = False
-        for existing_step in execution.steps:
+        for existing_step in execution.iter_steps():
             if (
                 existing_step.message is not None
                 and existing_step.message.tool_call_responses
@@ -247,23 +276,33 @@ class FakeLLMToolExecutor(BaseExecutor):
                 text="with tool",
                 tool_call_requests=[tool_req],
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=msg,
-                llm_usage=usage,
-                is_complete=True,
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=msg.id,
+                    llm_usage=usage,
+                    is_complete=True,
+                ),
             )
         else:
             msg = state.Message(
                 role=models.Role.ASSISTANT,
                 text="after tool",
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=msg,
-                is_complete=True,
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=msg.id,
+                    is_complete=True,
+                ),
             )
         yield step
 
@@ -373,16 +412,21 @@ async def test_result_mode_concatenate_final_includes_initial_user_input_step_on
 @ExecutorFactory.register("no-complete")
 class NoCompleteExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        execution = inp.execution
+        history = self.project.history
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="no-complete",
         )
-        step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
-            is_complete=False,
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=False,
+            ),
         )
         yield step
 
@@ -392,16 +436,22 @@ class MultiCompleteExecutor(BaseExecutor):
     type = "multi-complete"
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
         execution = inp.execution
         msg1 = state.Message(
             role=models.Role.ASSISTANT,
             text="first",
         )
-        step1 = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg1,
-            is_complete=True,
+        history.upsert_message(inp.run, msg1)
+        step1 = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg1.id,
+                is_complete=True,
+            ),
         )
         yield step1
 
@@ -409,11 +459,16 @@ class MultiCompleteExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text="second",
         )
-        step2 = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg2,
-            is_complete=True,
+        history.upsert_message(inp.run, msg2)
+        step2 = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg2.id,
+                is_complete=True,
+            ),
         )
         yield step2
 
@@ -421,6 +476,7 @@ class MultiCompleteExecutor(BaseExecutor):
 @ExecutorFactory.register("initial-input")
 class InitialInputEchoExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
         execution = inp.execution
         last_input: state.Message | None = None
         for msg, step in runner_base.iter_execution_messages(execution):
@@ -433,11 +489,16 @@ class InitialInputEchoExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=text,
         )
-        step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
-            is_complete=True,
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -548,14 +609,24 @@ async def test_runner_execution_flow():
 
     node1_output_steps = [
         s
-        for s in node1_exec.steps
+        for s in node1_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None
     ]
     assert any("run1-final" in s.message.text for s in node1_output_steps)
     assert any("run2-final" in s.message.text for s in node1_output_steps)
+    prompt_steps = [
+        s for s in node1_exec.iter_steps() if s.type == state.StepType.PROMPT_CONFIRM
+    ]
+    assert prompt_steps
+    assert all(step.message is None for step in prompt_steps)
+    node1_prompt_steps = [
+        s for s in node1_exec.iter_steps() if s.type == state.StepType.PROMPT_CONFIRM
+    ]
+    assert node1_prompt_steps
+    assert all(step.message is None for step in node1_prompt_steps)
 
     node1_input_steps = [
-        s for s in node1_exec.steps if s.type == state.StepType.INPUT_MESSAGE
+        s for s in node1_exec.iter_steps() if s.type == state.StepType.INPUT_MESSAGE
     ]
     assert len(node1_input_steps) >= 2
 
@@ -568,7 +639,7 @@ async def test_runner_execution_flow():
     node2_exec = node_execs_by_name["node2"]
     node2_complete_steps = [
         s
-        for s in node2_exec.steps
+        for s in node2_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert node2_complete_steps
@@ -597,7 +668,7 @@ async def test_runner_execution_flow():
     )
 
     for ne in runner.execution.node_executions.values():
-        node_steps = ne.steps
+        node_steps = tuple(ne.iter_steps())
         if not node_steps:
             continue
         finals = [s for s in node_steps if s.is_final]
@@ -609,6 +680,13 @@ async def test_runner_execution_flow():
                 break
         assert last_complete_output is not None
         assert finals[0] is last_complete_output
+
+    empty_assistant_messages = [
+        message
+        for message in runner.execution.messages_by_id.values()
+        if message.role == models.Role.ASSISTANT and message.text == ""
+    ]
+    assert empty_assistant_messages == []
 
     fake_executor = runner._executors["node1"]
     assert isinstance(fake_executor, FakeExecutor)
@@ -705,7 +783,7 @@ async def test_loop_confirmation_mode_repeats_node_without_transition():
     node1_exec = node_execs_by_name["node1"]
     node1_output_steps = [
         s
-        for s in node1_exec.steps
+        for s in node1_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None
     ]
     assert any("run1-final" in s.message.text for s in node1_output_steps)
@@ -1075,16 +1153,21 @@ class ResumeRunExecutor(BaseExecutor):
         self.shutdown_called = True
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
-        execution = inp.execution
+        history = self.project.history
         msg = state.Message(
             role=models.Role.ASSISTANT,
             text="resumed-output",
         )
-        step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=msg,
-            is_complete=True,
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
         )
         yield step
 
@@ -1094,6 +1177,7 @@ ExecutorFactory.register("resume-run", ResumeRunExecutor)
 
 @pytest.mark.asyncio
 async def test_runner_resume_from_output_message_skips_executor_run():
+    history = HistoryManager()
     node = models.Node(
         name="node-output",
         type="resume-skip",
@@ -1109,35 +1193,47 @@ async def test_runner_resume_from_output_message_skips_executor_run():
         initial_message=None,
     )
 
-    execution = state.NodeExecution(
-        node="node-output",
-        input_messages=[],
-        steps=[],
-        status=state.RunStatus.RUNNING,
+    execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node-output",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    runner.execution.node_executions[execution.id] = execution
 
     msg = state.Message(
         role=models.Role.ASSISTANT,
         text="existing-output",
     )
-    output_step = state.Step(
-        execution=execution,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message=msg,
-        is_complete=True,
+    history.upsert_message(runner.execution, msg)
+    output_step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=msg.id,
+            is_complete=True,
+        ),
     )
-    execution.steps.append(output_step)
-    runner.execution.steps.append(output_step)
 
-    extra_step = state.Step(
-        execution=execution,
-        type=state.StepType.PROMPT,
-        message=None,
-        is_complete=True,
+    extra_step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.PROMPT,
+            is_complete=True,
+        ),
     )
-    execution.steps.append(extra_step)
-    runner.execution.steps.append(extra_step)
+    branch = history.create_branch(
+        runner.execution,
+        head_step_id=output_step.id,
+        base_step_id=output_step.id,
+        activate=True,
+    )
+    branch.head_step_id = output_step.id
 
     agen = runner.run()
 
@@ -1150,12 +1246,125 @@ async def test_runner_resume_from_output_message_skips_executor_run():
                 )
 
     assert runner.status == state.RunnerStatus.FINISHED
-    assert all(s.id != extra_step.id for s in runner.execution.steps)
-    assert all(s.id != extra_step.id for s in execution.steps)
+    assert extra_step.id in runner.execution.steps_by_id
+    assert all(s.id != extra_step.id for s in runner.execution.iter_steps())
+    assert any(s.id == extra_step.id for s in execution.iter_steps())
+
+
+@pytest.mark.asyncio
+async def test_runner_resume_uses_active_branch_projection() -> None:
+    history = HistoryManager()
+    node = models.Node(
+        name="node-input",
+        type="resume-run",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-resume-branch", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=None,
+    )
+
+    execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node-input",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_message = state.Message(role=models.Role.USER, text="old user input")
+    history.upsert_message(runner.execution, old_message)
+    old_input_step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_message.id,
+            is_complete=True,
+        ),
+    )
+    output_message = state.Message(role=models.Role.ASSISTANT, text="old output")
+    history.upsert_message(runner.execution, output_message)
+    history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=output_message.id,
+            is_complete=True,
+        ),
+    )
+
+    branched = history.create_branch(
+        runner.execution,
+        head_step_id=old_input_step.parent_step_id,
+        base_step_id=old_input_step.id,
+        activate=True,
+    )
+    branched_execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node=execution.node,
+            status=execution.status,
+            branch_id=branched.id,
+            input_message_ids=list(execution.input_message_ids),
+            previous_id=execution.previous_id,
+        ),
+    )
+    new_message = state.Message(role=models.Role.USER, text="new user input")
+    history.upsert_message(runner.execution, new_message)
+    new_input_step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=branched_execution.id,
+            parent_step_id=old_input_step.parent_step_id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=new_message.id,
+            is_complete=True,
+        ),
+    )
+
+    assert runner.execution.get_active_branch().id == branched.id
+    assert runner.execution.get_last_step() is new_input_step
+
+    agen = runner.run()
+    events: list[RunEvent] = []
+
+    def handler(event: RunEvent) -> RunEventResp:
+        if event.step is not None:
+            events.append(event)
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    await drive_runner(agen, handler, ignore_non_step=True)
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    complete_outputs = [
+        event.step
+        for event in events
+        if event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.is_complete
+    ]
+    assert complete_outputs
+    assert complete_outputs[-1].message is not None
+    assert complete_outputs[-1].message.text == "resumed-output"
 
 
 @pytest.mark.asyncio
 async def test_runner_resume_from_input_message_re_runs_executor():
+    history = HistoryManager()
     node = models.Node(
         name="node-input",
         type="resume-run",
@@ -1171,26 +1380,30 @@ async def test_runner_resume_from_input_message_re_runs_executor():
         initial_message=None,
     )
 
-    execution = state.NodeExecution(
-        node="node-input",
-        input_messages=[],
-        steps=[],
-        status=state.RunStatus.RUNNING,
+    execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node-input",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    runner.execution.node_executions[execution.id] = execution
 
     msg = state.Message(
         role=models.Role.USER,
         text="user input",
     )
-    input_step = state.Step(
-        execution=execution,
-        type=state.StepType.INPUT_MESSAGE,
-        message=msg,
-        is_complete=True,
+    history.upsert_message(runner.execution, msg)
+    history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=msg.id,
+            is_complete=True,
+        ),
     )
-    execution.steps.append(input_step)
-    runner.execution.steps.append(input_step)
 
     agen = runner.run()
     events: list[RunEvent] = []
@@ -1214,7 +1427,7 @@ async def test_runner_resume_from_input_message_re_runs_executor():
     node_exec = node_execs_by_name["node-input"]
     complete_outputs = [
         s
-        for s in node_exec.steps
+        for s in node_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs
@@ -1620,13 +1833,15 @@ async def test_input_node_prompts_and_returns_user_message_as_output():
     assert set(node_execs_by_name.keys()) == {"input-node"}
     input_exec = node_execs_by_name["input-node"]
 
-    prompt_steps = [s for s in input_exec.steps if s.type == state.StepType.PROMPT]
+    prompt_steps = [
+        s for s in input_exec.iter_steps() if s.type == state.StepType.PROMPT
+    ]
     input_steps = [
-        s for s in input_exec.steps if s.type == state.StepType.INPUT_MESSAGE
+        s for s in input_exec.iter_steps() if s.type == state.StepType.INPUT_MESSAGE
     ]
     output_steps = [
         s
-        for s in input_exec.steps
+        for s in input_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
 
@@ -1726,11 +1941,15 @@ async def test_runner_requires_initial_input_and_forwards_to_first_node():
     assert set(node_execs_by_name.keys()) == {"root"}
     root_exec = node_execs_by_name["root"]
 
-    prompt_steps = [s for s in root_exec.steps if s.type == state.StepType.PROMPT]
-    input_steps = [s for s in root_exec.steps if s.type == state.StepType.INPUT_MESSAGE]
+    prompt_steps = [
+        s for s in root_exec.iter_steps() if s.type == state.StepType.PROMPT
+    ]
+    input_steps = [
+        s for s in root_exec.iter_steps() if s.type == state.StepType.INPUT_MESSAGE
+    ]
     output_steps = [
         s
-        for s in root_exec.steps
+        for s in root_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
 
@@ -1766,6 +1985,7 @@ async def test_runner_requires_initial_input_and_forwards_to_first_node():
 
 @pytest.mark.asyncio
 async def test_runner_resume_from_tool_result_re_runs_executor():
+    history = HistoryManager()
     node = models.Node(
         name="node-tool",
         type="resume-run",
@@ -1781,13 +2001,14 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         initial_message=None,
     )
 
-    execution = state.NodeExecution(
-        node="node-tool",
-        input_messages=[],
-        steps=[],
-        status=state.RunStatus.RUNNING,
+    execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node-tool",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    runner.execution.node_executions[execution.id] = execution
 
     tool_resp = state.ToolCallResp(
         id="call-fn",
@@ -1800,14 +2021,17 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
         text="",
         tool_call_responses=[tool_resp],
     )
-    tool_step = state.Step(
-        execution=execution,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message=msg,
-        is_complete=True,
+    history.upsert_message(runner.execution, msg)
+    history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=msg.id,
+            is_complete=True,
+        ),
     )
-    execution.steps.append(tool_step)
-    runner.execution.steps.append(tool_step)
 
     agen = runner.run()
     events: list[RunEvent] = []
@@ -1831,7 +2055,7 @@ async def test_runner_resume_from_tool_result_re_runs_executor():
     node_exec = node_execs_by_name["node-tool"]
     complete_outputs = [
         s
-        for s in node_exec.steps
+        for s in node_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs
@@ -1980,7 +2204,71 @@ async def test_runner_start_after_stop_resumes_execution():
     assert node_exec.status == state.RunStatus.FINISHED
     complete_outputs = [
         s
-        for s in node_exec.steps
+        for s in node_exec.iter_steps()
         if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
     ]
     assert complete_outputs
+
+
+@pytest.mark.asyncio
+async def test_runner_continue_after_stop_does_not_create_new_steps_for_visible_history() -> (
+    None
+):
+    history = HistoryManager()
+    node = models.Node(
+        name="node-output",
+        type="resume-skip",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-continue-no-new-steps",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=None,
+    )
+
+    execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node-output",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
+    history.upsert_message(runner.execution, message)
+    output_step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
+    )
+
+    runner.status = state.RunnerStatus.STOPPED
+    before_visible_step_ids = list(runner.execution.step_ids)
+    before_all_step_ids = set(runner.execution.steps_by_id.keys())
+
+    agen = runner.run()
+    events = await drive_runner(
+        agen,
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert runner.execution.step_ids == before_visible_step_ids
+    assert set(runner.execution.steps_by_id.keys()) == before_all_step_ids
+    assert runner.execution.step_ids == [output_step.id]
+    assert events == []
