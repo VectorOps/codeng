@@ -40,6 +40,7 @@ class ApplyPatchExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
         execution = inp.execution
+        history = self.project.history
 
         fmt = (cfg.format or "v4a").lower()
         supported = set(get_supported_formats())
@@ -53,13 +54,18 @@ class ApplyPatchExecutor(BaseExecutor):
                     f"Supported formats: {supported_list}"
                 ),
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=message,
-                is_complete=True,
-                is_final=True,
-                outcome_name="fail",
+            history.upsert_message(inp.run, message)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=message.id,
+                    is_complete=True,
+                    is_final=True,
+                    outcome_name="fail",
+                ),
             )
             yield step
             return
@@ -74,13 +80,18 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text="No patch was provided. The patch application has failed.",
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=message,
-                is_complete=True,
-                is_final=True,
-                outcome_name="fail",
+            history.upsert_message(inp.run, message)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=message.id,
+                    is_complete=True,
+                    is_final=True,
+                    outcome_name="fail",
+                ),
             )
             yield step
             return
@@ -92,13 +103,18 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.SYSTEM,
                 text="ApplyPatchExecutor requires project.base_path",
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=message,
-                is_complete=True,
-                is_final=True,
-                outcome_name="fail",
+            history.upsert_message(inp.run, message)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=message.id,
+                    is_complete=True,
+                    is_final=True,
+                    outcome_name="fail",
+                ),
             )
             yield step
             return
@@ -132,13 +148,18 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=summary,
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=message,
-                is_complete=True,
-                is_final=True,
-                outcome_name=outcome_name,
+            history.upsert_message(inp.run, message)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=message.id,
+                    is_complete=True,
+                    is_final=True,
+                    outcome_name=outcome_name,
+                ),
             )
             yield step
         except Exception as e:
@@ -146,12 +167,17 @@ class ApplyPatchExecutor(BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=f"Error applying patch: {e}",
             )
-            step = state.Step(
-                execution=execution,
-                type=state.StepType.OUTPUT_MESSAGE,
-                message=message,
-                is_complete=True,
-                is_final=True,
-                outcome_name="fail",
+            history.upsert_message(inp.run, message)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.OUTPUT_MESSAGE,
+                    message_id=message.id,
+                    is_complete=True,
+                    is_final=True,
+                    outcome_name="fail",
+                ),
             )
             yield step

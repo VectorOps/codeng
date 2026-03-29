@@ -7,29 +7,38 @@ import pytest
 
 from vocode import models
 from vocode import state
+from vocode.history.manager import HistoryManager
 from vocode.persistence import codec as persistence_codec
 from vocode.persistence import state_manager as persistence_state_manager
 
 
 def _build_sample_execution() -> state.WorkflowExecution:
+    history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
-    ne1 = state.NodeExecution(
-        node="n1",
-        input_messages=[
-            state.Message(role=models.Role.USER, text="hi"),
-        ],
-        status=state.RunStatus.RUNNING,
+    input_message = state.Message(role=models.Role.USER, text="hi")
+    output_message = state.Message(role=models.Role.ASSISTANT, text="hello")
+    history.upsert_message(run, input_message)
+    history.upsert_message(run, output_message)
+    ne1 = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="n1",
+            input_message_ids=[input_message.id],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    run.node_executions[ne1.id] = ne1
-    s1 = state.Step(
-        execution=ne1,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message=state.Message(role=models.Role.ASSISTANT, text="hello"),
-        is_complete=True,
-        is_final=True,
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=ne1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=output_message.id,
+            is_complete=True,
+            is_final=True,
+        ),
     )
-    ne1.steps.append(s1)
-    run.steps.append(s1)
     run.touch()
     return run
 
@@ -48,14 +57,16 @@ def test_codec_roundtrip_is_acyclic_and_restores_links():
 
     assert restored.id == run.id
     assert restored.workflow_name == run.workflow_name
-    assert len(restored.steps) == 1
-    step = restored.steps[0]
-    assert step.execution.id in restored.node_executions
-    assert step.execution is restored.node_executions[step.execution.id]
+    restored_steps = tuple(restored.iter_steps())
+    assert len(restored_steps) == 1
+    step = restored_steps[0]
+    assert step.execution_id in restored.node_executions
+    assert step.execution is restored.node_executions[step.execution_id]
     assert restored.updated_at == run.updated_at
 
 
 def test_codec_roundtrip_allows_auto_approved_bool():
+    history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
     msg = state.Message(role=models.Role.USER, text="hi")
     msg.tool_call_requests.append(
@@ -66,18 +77,130 @@ def test_codec_roundtrip_allows_auto_approved_bool():
             auto_approved=True,
         )
     )
-    ne1 = state.NodeExecution(
-        node="n1",
-        input_messages=[msg],
-        status=state.RunStatus.RUNNING,
+    history.upsert_message(run, msg)
+    ne1 = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="n1",
+            input_message_ids=[msg.id],
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    run.node_executions[ne1.id] = ne1
     run.touch()
 
     blob = persistence_codec.dumps_gzip(run)
     restored = persistence_codec.loads_gzip(blob)
     restored_msg = restored.node_executions[ne1.id].input_messages[0]
     assert restored_msg.tool_call_requests[0].auto_approved is True
+
+
+def test_codec_roundtrip_loaded_state_supports_explicit_id_updates():
+    history = HistoryManager()
+    run = _build_sample_execution()
+    restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(run))
+
+    node_execution = next(iter(restored.node_executions.values()))
+    new_message = state.Message(role=models.Role.USER, text="follow-up")
+    history.upsert_message(restored, new_message)
+    node_execution.input_message_ids.append(new_message.id)
+
+    new_step_message = state.Message(
+        role=models.Role.ASSISTANT, text="follow-up-response"
+    )
+    history.upsert_message(restored, new_step_message)
+    new_step = history.upsert_step(
+        restored,
+        state.Step(
+            workflow_execution=restored,
+            execution_id=node_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=new_step_message.id,
+        ),
+    )
+
+    assert node_execution.input_message_ids[-1] == new_message.id
+    assert restored.step_ids[-1] == new_step.id
+    assert node_execution.step_ids[-1] == new_step.id
+
+
+def test_codec_roundtrip_restores_visible_step_ids_from_branch_projection():
+    history = HistoryManager()
+    execution = state.WorkflowExecution(workflow_name="wf")
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            workflow_execution=execution,
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    message1 = state.Message(role=models.Role.USER, text="one")
+    history.upsert_message(execution, message1)
+    step1 = history.upsert_step(
+        execution,
+        state.Step(
+            workflow_execution=execution,
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message1.id,
+            is_complete=True,
+        ),
+    )
+    message2 = state.Message(role=models.Role.USER, text="two")
+    history.upsert_message(execution, message2)
+    step2 = history.upsert_step(
+        execution,
+        state.Step(
+            workflow_execution=execution,
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message2.id,
+            is_complete=True,
+        ),
+    )
+    branch1_id = execution.get_active_branch().id
+    branch2 = history.create_branch(
+        execution,
+        head_step_id=step1.id,
+        base_step_id=step2.id,
+        activate=True,
+    )
+    branched_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            workflow_execution=execution,
+            node=node_execution.node,
+            status=state.RunStatus.RUNNING,
+            branch_id=branch2.id,
+            input_message_ids=list(node_execution.input_message_ids),
+            previous_id=node_execution.previous_id,
+        ),
+    )
+    message3 = state.Message(role=models.Role.USER, text="three")
+    history.upsert_message(execution, message3)
+    step3 = history.upsert_step(
+        execution,
+        state.Step(
+            workflow_execution=execution,
+            execution_id=branched_execution.id,
+            parent_step_id=step1.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message3.id,
+            is_complete=True,
+        ),
+    )
+
+    restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(execution))
+
+    assert restored.step_ids == [step1.id, step3.id]
+    assert restored.get_node_execution(node_execution.id).step_ids == [
+        step1.id,
+        step2.id,
+    ]
+    assert restored.get_node_execution(branched_execution.id).step_ids == [step3.id]
+    history.switch_branch(restored, branch1_id)
+    assert restored.step_ids == [step1.id, step2.id]
 
 
 @pytest.mark.asyncio
@@ -101,7 +224,7 @@ async def test_state_manager_flushes_to_expected_session_layout(tmp_path):
     assert expected.exists()
     loaded = persistence_codec.load_from_path(expected)
     assert loaded.id == run.id
- 
+
 
 @pytest.mark.asyncio
 async def test_state_manager_session_dir_sequence_number_increments(tmp_path):
@@ -120,9 +243,12 @@ async def test_state_manager_session_dir_sequence_number_increments(tmp_path):
     await mgr.start()
     assert mgr.session_dir.name == f"{date_prefix}_4_{session_id}"
     await mgr.shutdown()
- 
+
+
 @pytest.mark.asyncio
-async def test_state_manager_prunes_old_sessions_when_over_max_total_log_bytes(tmp_path):
+async def test_state_manager_prunes_old_sessions_when_over_max_total_log_bytes(
+    tmp_path,
+):
     sessions_root = tmp_path / ".vocode" / "sessions"
     old_dir = sessions_root / "2000_01_01_old"
     old_dir.mkdir(parents=True, exist_ok=True)

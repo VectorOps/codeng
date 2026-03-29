@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from vocode import settings as vocode_settings
 
 from .base import CommandManager, CommandHandler, CommandError
@@ -79,4 +81,47 @@ async def register_workflow_commands(manager: CommandManager) -> None:
         "reset",
         reset_workflow,
         description="Reset and restart the current workflow",
+    )
+
+    async def branch_command(server, args: list[str]) -> None:
+        if not args:
+            raise CommandError("Usage: /branch <list|switch> [args]")
+        subcommand = args[0]
+        runner = server.manager.current_runner
+        if runner is None:
+            raise CommandError("No active runner.")
+        execution = runner.execution
+        history = server.manager.project.history
+
+        if subcommand == "list":
+            if len(args) != 1:
+                raise CommandError("Usage: /branch list")
+            summaries = history.list_branch_summaries(execution)
+            lines = ["Branches:"]
+            for summary in summaries:
+                label = summary.label or str(summary.id)
+                active = " active" if summary.is_active else ""
+                lines.append(f"  - {summary.id}: {label}{active}")
+            await server.send_text_message("\n".join(lines))
+            return
+
+        if subcommand == "switch":
+            if len(args) != 2:
+                raise CommandError("Usage: /branch switch <branch-id>")
+            try:
+                branch_id = UUID(args[1])
+            except ValueError as exc:
+                raise CommandError("Invalid branch id.") from exc
+            result = history.switch_branch(execution, branch_id)
+            frame = server.manager.runner_stack[-1]
+            await server.emit_history_mutation(frame, result)
+            return
+
+        raise CommandError("Usage: /branch <list|switch> [args]")
+
+    await manager.register(
+        "branch",
+        branch_command,
+        description="Inspect and switch workflow branches",
+        params=["<list|switch>", "[branch-id]"],
     )

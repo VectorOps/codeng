@@ -93,6 +93,7 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
 
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
+        history = self.project.history
 
         queue = self.project.project_state.get(self._queue_key)
         if queue is None:
@@ -104,21 +105,31 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
             role=models.Role.ASSISTANT,
             text=waiting_text,
         )
-        waiting_step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=waiting_message,
-            is_complete=False,
-            status_hint=state.RunnerStatus.WAITING_INPUT,
+        history.upsert_message(inp.run, waiting_message)
+        waiting_step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=waiting_message.id,
+                is_complete=False,
+                status_hint=state.RunnerStatus.WAITING_INPUT,
+            ),
         )
         yield waiting_step
 
         message = await queue.get()
-        output_step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=message,
-            is_complete=True,
-            is_final=True,
+        history.upsert_message(inp.run, message)
+        output_step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                is_complete=True,
+                is_final=True,
+            ),
         )
         yield output_step

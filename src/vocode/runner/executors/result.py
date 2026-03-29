@@ -22,6 +22,7 @@ class ResultExecutor(BaseExecutor):
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
+        history = self.project.history
 
         texts = [m.text for m in execution.input_messages if m.text]
         combined = "\n".join(texts)
@@ -43,12 +44,17 @@ class ResultExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=combined,
         )
-        step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=message,
-            is_complete=True,
-            is_final=True,
-            outcome_name=outcome_name,
+        history.upsert_message(inp.run, message)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                is_complete=True,
+                is_final=True,
+                outcome_name=outcome_name,
+            ),
         )
         yield step

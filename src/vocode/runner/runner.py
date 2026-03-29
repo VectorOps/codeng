@@ -37,6 +37,7 @@ class Runner:
         self.graph = RuntimeGraph(workflow.graph)
         self.execution = state.WorkflowExecution(workflow_name=workflow.name)
         self._last_final_message: Optional[state.Message] = None
+        self._history = self.project.history
 
         self._executors: Dict[str, BaseExecutor] = {
             n.name: ExecutorFactory.create_for_node(n, project=self.project)
@@ -164,10 +165,12 @@ class Runner:
             text="",
             tool_call_requests=[req],
         )
+        self._history.upsert_message(self.execution, prompt_message)
         prompt_step = state.Step(
-            execution=execution,
+            workflow_execution=self.execution,
+            execution_id=execution.id,
             type=state.StepType.TOOL_REQUEST,
-            message=prompt_message,
+            message_id=prompt_message.id,
             is_complete=True,
             is_final=False,
         )
@@ -230,47 +233,24 @@ class Runner:
             role=models.Role.SYSTEM,
             text=text,
         )
+        self._history.upsert_message(self.execution, error_message)
         error_step = state.Step(
-            execution=execution,
+            workflow_execution=self.execution,
+            execution_id=execution.id,
             type=state.StepType.REJECTION,
-            message=error_message,
+            message_id=error_message.id,
         )
-        persisted_error = self._persist_step(error_step)
         return RunEventReq(
             kind=runner_proto.RunEventReqKind.STEP,
             execution=self.execution,
-            step=persisted_error,
+            step=self._persist_step(error_step),
         )
 
     # History management
     def _persist_step(self, step: state.Step) -> state.Step:
-        execution = step.execution
-        if execution.id not in self.execution.node_executions:
-            self.execution.node_executions[execution.id] = execution
-
-        node_execution = self.execution.node_executions[execution.id]
-
-        node_steps = node_execution.steps
-        existing_index = None
-        for i in range(len(node_steps) - 1, -1, -1):
-            if node_steps[i].id == step.id:
-                existing_index = i
-                break
-        if existing_index is not None:
-            node_steps[existing_index] = step
-        else:
-            node_steps.append(step)
-
-        run_steps = self.execution.steps
-        existing_run_index = None
-        for i in range(len(run_steps) - 1, -1, -1):
-            if run_steps[i].id == step.id:
-                existing_run_index = i
-                break
-        if existing_run_index is not None:
-            run_steps[existing_run_index] = step
-        else:
-            run_steps.append(step)
+        if step.execution_id not in self.execution.node_executions:
+            raise KeyError(f"Unknown node execution id: {step.execution_id}")
+        self._history.upsert_step(self.execution, step)
         if (
             step.type == state.StepType.INPUT_MESSAGE
             and step.message is not None
@@ -290,7 +270,7 @@ class Runner:
         if mode == models.ResultMode.ALL_MESSAGES:
             messages: list[state.Message] = []
             messages.extend(execution.input_messages)
-            for s in execution.steps:
+            for s in execution.iter_steps():
                 if s.message is None:
                     continue
                 if s.type not in (
@@ -302,7 +282,7 @@ class Runner:
             return messages
 
         final_message: Optional[state.Message] = None
-        for s in reversed(execution.steps):
+        for s in execution.iter_steps_reversed():
             if s.type == state.StepType.OUTPUT_MESSAGE and s.message is not None:
                 final_message = s.message
                 break
@@ -323,7 +303,7 @@ class Runner:
                     initial_user_message = m
                     break
             if initial_user_message is None:
-                for s in execution.steps:
+                for s in execution.iter_steps():
                     if s.type != state.StepType.INPUT_MESSAGE:
                         continue
                     if s.message is None:
@@ -357,13 +337,7 @@ class Runner:
         self,
         node_name: str,
     ) -> Optional[state.NodeExecution]:
-        latest: Optional[state.NodeExecution] = None
-        for execution in self.execution.node_executions.values():
-            if execution.node != node_name:
-                continue
-            if latest is None or execution.created_at > latest.created_at:
-                latest = execution
-        return latest
+        return self._history.find_node_execution(self.execution, node_name)
 
     def _create_node_execution(
         self,
@@ -371,16 +345,21 @@ class Runner:
         input_messages: Optional[list[state.Message]] = None,
         previous_execution: Optional[state.NodeExecution] = None,
     ) -> state.NodeExecution:
-        effective_input_messages: list[state.Message] = []
+        input_message_ids = []
         if input_messages is not None:
-            effective_input_messages.extend(input_messages)
+            for message in input_messages:
+                self._history.upsert_message(self.execution, message)
+                input_message_ids.append(message.id)
         execution = state.NodeExecution(
+            workflow_execution=self.execution,
             node=node_name,
-            input_messages=effective_input_messages,
-            previous=previous_execution,
+            input_message_ids=input_message_ids,
             status=state.RunStatus.RUNNING,
+            previous_id=(
+                previous_execution.id if previous_execution is not None else None
+            ),
         )
-        self.execution.node_executions[execution.id] = execution
+        execution = self._history.upsert_node_execution(self.execution, execution)
         self._touch_execution()
         return execution
 
@@ -394,11 +373,11 @@ class Runner:
     ]:
         resume_step: Optional[state.Step] = None
         skip_executor = False
-        changed = False
-        if self.execution.steps:
+        if self.execution.step_ids:
             anchor_index: Optional[int] = None
-            for i in range(len(self.execution.steps) - 1, -1, -1):
-                step = self.execution.steps[i]
+            steps = list(self.execution.iter_steps())
+            for i in range(len(steps) - 1, -1, -1):
+                step = steps[i]
                 if not step.is_complete:
                     continue
                 if step.type not in (
@@ -410,26 +389,15 @@ class Runner:
                 resume_step = step
                 break
             if anchor_index is None:
-                ids = [s.id for s in self.execution.steps]
-                if ids:
-                    self.execution.delete_steps(ids)
-                    changed = True
                 resume_step = None
             else:
-                tail_ids = [s.id for s in self.execution.steps[anchor_index + 1 :]]
-                if tail_ids:
-                    self.execution.delete_steps(tail_ids)
-                    changed = True
                 if (
                     resume_step is not None
                     and resume_step.type == state.StepType.OUTPUT_MESSAGE
                 ):
                     skip_executor = True
-            self.execution.trim_empty_node_executions()
-            if changed:
-                self._touch_execution()
 
-        if not self.execution.steps:
+        if not self.execution.step_ids:
             runtime_node = self.graph.root
             current_execution: Optional[state.NodeExecution] = None
             if runtime_node is not None:
@@ -449,7 +417,9 @@ class Runner:
                     )
             return runtime_node, current_execution, None, False
 
-        last_step = self.execution.steps[-1]
+        last_step = self.execution.get_last_step()
+        if last_step is None:
+            raise RuntimeError("Expected a visible step when resuming execution")
         execution_id = last_step.execution.id
         execution = self.execution.node_executions.get(
             execution_id, last_step.execution
@@ -476,10 +446,13 @@ class Runner:
             step_type = state.StepType.INPUT_MESSAGE
         else:
             return None
+        if message is not None:
+            self._history.upsert_message(self.execution, message)
         step = state.Step(
-            execution=base_execution,
+            workflow_execution=self.execution,
+            execution_id=base_execution.id,
             type=step_type,
-            message=message,
+            message_id=(message.id if message is not None else None),
         )
         persisted = self._persist_step(step)
         return persisted
@@ -532,7 +505,7 @@ class Runner:
             if (
                 self.need_input
                 and self.initial_message is None
-                and not self.execution.steps
+                and not self.execution.step_ids
                 and current_execution is not None
             ):
                 waiting_event = self.set_status(
@@ -546,10 +519,12 @@ class Runner:
                     role=models.Role.ASSISTANT,
                     text=prompt_text,
                 )
+                self._history.upsert_message(self.execution, prompt_message)
                 prompt_step = state.Step(
-                    execution=current_execution,
+                    workflow_execution=self.execution,
+                    execution_id=current_execution.id,
                     type=state.StepType.PROMPT,
-                    message=prompt_message,
+                    message_id=prompt_message.id,
                     is_complete=True,
                 )
                 persisted_prompt = self._persist_step(prompt_step)
@@ -699,10 +674,12 @@ class Runner:
                             ),
                         )
 
+                    self._history.upsert_message(self.execution, result_message)
                     result_step = state.Step(
-                        execution=current_execution,
+                        workflow_execution=self.execution,
+                        execution_id=current_execution.id,
                         type=state.StepType.WORKFLOW_RESULT,
-                        message=result_message,
+                        message_id=result_message.id,
                         is_complete=True,
                     )
                     self._persist_step(result_step)
@@ -896,7 +873,7 @@ class Runner:
                             if tool_message is None:
                                 continue
                             tool_message.tool_call_responses = list(per_req)
-                            tool_step.message = tool_message
+                            self._history.upsert_message(self.execution, tool_message)
                             persisted_tool_step = self._persist_step(tool_step)
                             tool_event = RunEventReq(
                                 kind=runner_proto.RunEventReqKind.STEP,
@@ -905,7 +882,7 @@ class Runner:
                             )
                             _ = yield tool_event
 
-                        last_complete_step.message = msg
+                        self._history.upsert_message(self.execution, msg)
                         persisted_step = self._persist_step(last_complete_step)
                         event = RunEventReq(
                             kind=runner_proto.RunEventReqKind.STEP,
@@ -924,17 +901,13 @@ class Runner:
                     models.Confirmation.LOOP,
                 ):
                     while True:
-                        prompt_message = state.Message(
-                            role=models.Role.ASSISTANT,
-                            text="",
-                        )
                         prompt_type = state.StepType.PROMPT_CONFIRM
                         if confirmation_mode == models.Confirmation.LOOP:
                             prompt_type = state.StepType.PROMPT
                         prompt_step = state.Step(
-                            execution=current_execution,
+                            workflow_execution=self.execution,
+                            execution_id=current_execution.id,
                             type=prompt_type,
-                            message=prompt_message,
                         )
                         persisted_prompt = self._persist_step(prompt_step)
 

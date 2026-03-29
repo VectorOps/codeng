@@ -70,6 +70,8 @@
 *** [ ] Do client-side validation or hide auto-complete if user keeps typing
 ** [ ] Continue after stop needs explicit separator.
 ** [ ] Show node transitions in the UI?
+** [ ] Simplify UI history protocol semantics
+- Replace compatibility-style step deletion semantics with explicit visible-history diff and capability-negotiated branch-aware packets
 ** [X] Gemini 3 support
 *** [X] Temperature control
 ** [X] Add ctrl+r history search

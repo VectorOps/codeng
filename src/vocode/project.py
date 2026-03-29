@@ -18,6 +18,7 @@ from .proc.base import EnvPolicy
 from .proc.shell import ShellManager
 from .skills import Skill, discover_skills
 from .project_state import FileChangeModel, ProjectState
+from .history.manager import HistoryManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 
@@ -35,6 +36,7 @@ class Project:
         self.tools: Dict[str, "BaseTool"] = {}
         self.know: KnowProject = KnowProject()
         self.project_state: ProjectState = ProjectState()
+        self.history: HistoryManager = HistoryManager()
         self.llm_usage: LLMUsageStats = LLMUsageStats()
         self.processes: Optional[ProcessManager] = None
         self.shells: Optional[ShellManager] = None

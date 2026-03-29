@@ -132,6 +132,8 @@ class ExecTool(tools_base.BaseTool):
             with contextlib.suppress(Exception):
                 if handle.alive():
                     await handle.kill()
+            with contextlib.suppress(Exception):
+                await handle.wait()
             for reader in readers:
                 reader.cancel()
             await asyncio.gather(*readers, return_exceptions=True)

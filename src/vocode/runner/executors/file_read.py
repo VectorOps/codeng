@@ -75,6 +75,7 @@ class FileReadExecutor(BaseExecutor):
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
+        history = self.project.history
         contents: list[str] = []
 
         for rel in cfg.files:
@@ -106,12 +107,17 @@ class FileReadExecutor(BaseExecutor):
             role=models.Role.ASSISTANT,
             text=combined,
         )
-        step = state.Step(
-            execution=inp.execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=message,
-            is_complete=True,
-            is_final=True,
-            outcome_name=outcome_name,
+        history.upsert_message(inp.run, message)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                is_complete=True,
+                is_final=True,
+                outcome_name=outcome_name,
+            ),
         )
         yield step
