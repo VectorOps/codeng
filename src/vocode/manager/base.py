@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 from collections.abc import Awaitable, Callable, AsyncIterator
 
 from vocode import models, state
+from vocode.history import models as history_models
 from vocode.logger import logger
 from vocode.project import Project
 from vocode.runner.runner import Runner, RunnerStopped
@@ -36,13 +37,6 @@ class RunnerFrame:
     last_stats: Optional[runner_proto.RunStats] = None
 
 
-@dataclass
-class HistoryEditResult:
-    is_edited: bool
-    step: Optional[state.Step] = None
-    deleted_step_ids: list[str] = field(default_factory=list)
-
-
 RunnerEventListener = Callable[
     [RunnerFrame, RunEventReq],
     Awaitable[Optional[RunEventResp]],
@@ -60,6 +54,7 @@ class BaseManager:
         self._started = False
         self._run_event_listener = run_event_listener
         self._driver_task: Optional[asyncio.Task[None]] = None
+        self._history = self.project.history
 
     def _ensure_driver_task(self) -> None:
         if self._driver_task is not None and not self._driver_task.done():
@@ -199,9 +194,9 @@ class BaseManager:
 
     async def edit_history_with_text(
         self, text: str, *, resume: bool = True
-    ) -> HistoryEditResult:
+    ) -> history_models.HistoryMutationResult:
         if not self._runner_stack:
-            return HistoryEditResult(is_edited=False)
+            return history_models.HistoryMutationResult(changed=False)
 
         target_index: Optional[int] = None
         target_step: Optional[state.Step] = None
@@ -209,7 +204,7 @@ class BaseManager:
         for frame_index in range(len(self._runner_stack) - 1, -1, -1):
             frame = self._runner_stack[frame_index]
             runner = frame.runner
-            for step in reversed(runner.execution.steps):
+            for step in runner.execution.iter_steps_reversed():
                 message = step.message
                 if (
                     step.type == state.StepType.INPUT_MESSAGE
@@ -223,7 +218,7 @@ class BaseManager:
                 break
 
         if target_index is None or target_step is None:
-            return HistoryEditResult(is_edited=False)
+            return history_models.HistoryMutationResult(changed=False)
 
         if target_index + 1 < len(self._runner_stack):
             tail_frames = self._runner_stack[target_index + 1 :]
@@ -237,36 +232,16 @@ class BaseManager:
         runner = frame.runner
         execution = runner.execution
 
-        cut_index: Optional[int] = None
-        for i, step in enumerate(execution.steps):
-            if step.id == target_step.id:
-                cut_index = i
-                break
+        result = self._history.edit_user_input(execution, target_step.id, text)
+        if not result.changed:
+            return history_models.HistoryMutationResult(changed=False)
 
-        if cut_index is None:
-            return HistoryEditResult(is_edited=False)
-
-        delete_ids = [step.id for step in execution.steps[cut_index + 1 :]]
-        deleted_step_ids = [str(step_id) for step_id in delete_ids]
-        if delete_ids:
-            execution.delete_steps(delete_ids)
-            execution.trim_empty_node_executions()
-
-        message = target_step.message
-        if message is None:
-            return HistoryEditResult(is_edited=False)
-
-        message.text = text
         execution.touch()
         self.project.state_manager.notify_changed(execution)
 
         if resume:
             await self.continue_current_runner()
-        return HistoryEditResult(
-            is_edited=True,
-            step=target_step,
-            deleted_step_ids=deleted_step_ids,
-        )
+        return result
 
     async def _emit_run_event(
         self,

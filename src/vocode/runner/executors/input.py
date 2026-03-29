@@ -28,6 +28,7 @@ class InputExecutor(runner_base.BaseExecutor):
 
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
+        history = self.project.history
 
         input_message: Optional[state.Message] = None
         for msg, step in runner_base.iter_execution_messages(execution):
@@ -40,20 +41,29 @@ class InputExecutor(runner_base.BaseExecutor):
                 role=models.Role.ASSISTANT,
                 text=prompt_text,
             )
-            prompt_step = state.Step(
-                execution=execution,
-                type=state.StepType.PROMPT,
-                message=prompt_message,
-                is_complete=True,
+            history.upsert_message(inp.run, prompt_message)
+            prompt_step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=execution.id,
+                    type=state.StepType.PROMPT,
+                    message_id=prompt_message.id,
+                    is_complete=True,
+                ),
             )
             yield prompt_step
             return
 
-        output_step = state.Step(
-            execution=execution,
-            type=state.StepType.OUTPUT_MESSAGE,
-            message=input_message,
-            is_complete=True,
-            is_final=True,
+        output_step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=input_message.id,
+                is_complete=True,
+                is_final=True,
+            ),
         )
         yield output_step

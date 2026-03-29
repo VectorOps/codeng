@@ -1,12 +1,13 @@
 from enum import Enum
-from typing import List, Optional, Annotated, Dict, Any, Union
-from pydantic import BaseModel, Field, StringConstraints
-from pydantic import model_validator
+from typing import Any, Dict, List, Optional, Union
+
 from datetime import datetime
-from .lib.date import utcnow
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from uuid import UUID, uuid4
-from .settings import ToolSpec  # type: ignore
+
+from .lib.date import utcnow
 from .models import OutputMode, Role, StepContentType
+from .settings import ToolSpec  # type: ignore
 
 
 class OpaqueState(BaseModel):
@@ -143,7 +144,6 @@ class Message(BaseModel):
         default=None,
         description="Optional model reasoning/thinking content (not shown as user-visible text).",
     )
-
     tool_call_requests: List[ToolCallReq] = Field(
         default_factory=list,
         description="Tool call requests",
@@ -152,6 +152,31 @@ class Message(BaseModel):
         default_factory=list,
         description="Tool call responses",
     )
+    created_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def tool_call_request_ids(self) -> List[str]:
+        return [tool_call.id for tool_call in self.tool_call_requests]
+
+    @property
+    def tool_call_response_ids(self) -> List[str]:
+        return [tool_call.id for tool_call in self.tool_call_responses]
+
+
+class BranchRecord(BaseModel):
+    id: UUID = Field(
+        default_factory=uuid4,
+        description="Unique identifier for this branch",
+    )
+    head_step_id: Optional[UUID] = Field(
+        default=None,
+        description="Current head step id for this branch, if any.",
+    )
+    base_step_id: Optional[UUID] = Field(
+        default=None,
+        description="Base step id where this branch diverged, if any.",
+    )
+    label: Optional[str] = Field(default=None, description="Optional branch label")
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -164,21 +189,75 @@ class NodeExecution(BaseModel):
         default_factory=uuid4, description="Unique identifier for this node execution"
     )
     node: str = Field(..., description="Node name this execution pertains to")
-    previous: Optional["NodeExecution"] = Field(
+    previous_id: Optional[UUID] = Field(
         default=None,
-        description="Previous execution for the same node, if any.",
+        description="Previous execution id for the same node, if any.",
     )
-    input_messages: List[Message] = Field(
+    branch_id: Optional[UUID] = Field(
+        default=None,
+        description="Branch id this node execution belongs to.",
+    )
+    input_message_ids: List[UUID] = Field(
         default_factory=list,
-        description="Initial input messages for this node",
+        description="Initial input message ids for this node",
     )
-    steps: List["Step"] = Field(default_factory=list, description="A list of steps")
+    step_ids: List[UUID] = Field(
+        default_factory=list,
+        description="Step ids visible on the active branch.",
+    )
     status: RunStatus = Field(..., description="Node execution status")
     state: Optional[BaseModel] = Field(
         default=None,
         description="Any internal state that is maintained by the corresponding step runner.",
     )
     created_at: datetime = Field(default_factory=utcnow)
+    _workflow_execution: Optional["WorkflowExecution"] = PrivateAttr(default=None)
+
+    def __init__(
+        self,
+        workflow_execution: Optional["WorkflowExecution"] = None,
+        **data: Any,
+    ) -> None:
+        super().__init__(**data)
+        self._workflow_execution = workflow_execution
+
+    def model_copy(
+        self, *, update: Optional[Dict[str, Any]] = None, deep: bool = False
+    ) -> "NodeExecution":
+        copied = super().model_copy(update=update, deep=deep)
+        copied._workflow_execution = self._workflow_execution
+        return copied
+
+    @property
+    def workflow_execution_id(self) -> UUID:
+        return self._workflow_execution.id
+
+    @property
+    def previous(self) -> Optional["NodeExecution"]:
+        if self.previous_id is None:
+            return None
+        if self._workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        return self._workflow_execution.get_node_execution(self.previous_id)
+
+    @property
+    def input_messages(self) -> tuple[Message, ...]:
+        if self._workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        return tuple(
+            self._workflow_execution.get_message(message_id)
+            for message_id in self.input_message_ids
+        )
+
+    def iter_steps(self):
+        if self._workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        return self._workflow_execution.iter_node_steps(self.id)
+
+    def iter_steps_reversed(self):
+        if self._workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        return self._workflow_execution.iter_node_steps_reversed(self.id)
 
 
 class Step(BaseModel):
@@ -190,10 +269,18 @@ class Step(BaseModel):
     id: UUID = Field(
         default_factory=uuid4, description="Unique identifier for this step"
     )
-    execution: NodeExecution = Field(..., description="Node execution for this step")
+    execution_id: UUID = Field(..., description="Node execution id for this step")
+    parent_step_id: Optional[UUID] = Field(
+        default=None,
+        description="Parent step id for active-path tree navigation.",
+    )
+    child_step_ids: List[UUID] = Field(
+        default_factory=list,
+        description="Child step ids for active-path tree navigation.",
+    )
     type: StepType = Field(..., description="Step Type")
-    message: Optional[Message] = Field(
-        default=None, description="Message carried by this step, if any."
+    message_id: Optional[UUID] = Field(
+        default=None, description="Message id carried by this step, if any."
     )
     content_type: StepContentType = Field(
         default=StepContentType.MARKDOWN,
@@ -234,6 +321,57 @@ class Step(BaseModel):
         ),
     )
     created_at: datetime = Field(default_factory=utcnow)
+    _workflow_execution: Optional["WorkflowExecution"] = PrivateAttr(default=None)
+
+    def __init__(
+        self,
+        workflow_execution: Optional["WorkflowExecution"] = None,
+        **data: Any,
+    ) -> None:
+        super().__init__(**data)
+        self._workflow_execution = workflow_execution
+
+    def model_copy(
+        self, *, update: Optional[Dict[str, Any]] = None, deep: bool = False
+    ) -> "Step":
+        copied = super().model_copy(update=update, deep=deep)
+        copied._workflow_execution = self._workflow_execution
+        return copied
+
+    @property
+    def workflow_execution_id(self) -> UUID:
+        return self._workflow_execution.id
+
+    @property
+    def execution(self) -> NodeExecution:
+        if self._workflow_execution is None:
+            raise ValueError("Step is not attached to a workflow execution")
+        return self._workflow_execution.get_node_execution(self.execution_id)
+
+    @property
+    def message(self) -> Optional[Message]:
+        if self.message_id is None:
+            return None
+        if self._workflow_execution is None:
+            raise ValueError("Step is not attached to a workflow execution")
+        return self._workflow_execution.get_message(self.message_id)
+
+    @property
+    def parent(self) -> Optional["Step"]:
+        if self.parent_step_id is None:
+            return None
+        if self._workflow_execution is None:
+            raise ValueError("Step is not attached to a workflow execution")
+        return self._workflow_execution.get_step(self.parent_step_id)
+
+    @property
+    def children(self) -> tuple["Step", ...]:
+        if self._workflow_execution is None:
+            raise ValueError("Step is not attached to a workflow execution")
+        return tuple(
+            self._workflow_execution.get_step(step_id)
+            for step_id in self.child_step_ids
+        )
 
 
 class WorkflowExecution(BaseModel):
@@ -247,7 +385,14 @@ class WorkflowExecution(BaseModel):
     )
     workflow_name: str = Field()
     node_executions: Dict[UUID, NodeExecution] = Field(default_factory=dict)
-    steps: List[Step] = Field(default_factory=list)
+    steps_by_id: Dict[UUID, Step] = Field(default_factory=dict)
+    messages_by_id: Dict[UUID, Message] = Field(default_factory=dict)
+    branches_by_id: Dict[UUID, BranchRecord] = Field(default_factory=dict)
+    active_branch_id: Optional[UUID] = Field(default=None)
+    step_ids: List[UUID] = Field(
+        default_factory=list,
+        description="Step ids visible on the active branch.",
+    )
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this workflow execution, if any."
     )
@@ -263,53 +408,103 @@ class WorkflowExecution(BaseModel):
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
-    def touch(self) -> None:
-        self.updated_at = utcnow()
+    @model_validator(mode="after")
+    def _attach_runtime_refs_after_validation(self) -> "WorkflowExecution":
+        return self.attach_runtime_refs()
 
-    def delete_step(self, step_id: UUID) -> None:
-        self.delete_steps([step_id])
+    def iter_steps(self):
+        for step_id in self.step_ids:
+            yield self.get_step(step_id)
 
-    def delete_steps(self, step_ids: List[UUID]) -> None:
-        """
-        Delete one or more steps from the execution state.
-        """
-        if not step_ids:
-            return
-        step_ids_set = set(step_ids)
-        executions_step_ids: Dict[UUID, List[UUID]] = {}
-        remaining_steps: List[Step] = []
-        for step in self.steps:
-            if step.id in step_ids_set:
-                execution_id = step.execution.id
-                if execution_id in self.node_executions:
-                    if execution_id not in executions_step_ids:
-                        executions_step_ids[execution_id] = []
-                    executions_step_ids[execution_id].append(step.id)
-            else:
-                remaining_steps.append(step)
-        self.steps = remaining_steps
-        for execution_id, removed_ids in executions_step_ids.items():
-            execution = self.node_executions.get(execution_id)
-            if execution is not None:
-                removed_set = set(removed_ids)
-                execution.steps = [
-                    step for step in execution.steps if step.id not in removed_set
-                ]
+    def iter_steps_reversed(self):
+        for step_id in reversed(self.step_ids):
+            yield self.get_step(step_id)
 
-    def delete_node_execution(self, execution_id: UUID) -> None:
+    def iter_node_steps(self, execution_id: UUID):
+        execution = self.get_node_execution(execution_id)
+        for step_id in execution.step_ids:
+            yield self.get_step(step_id)
+
+    def iter_node_steps_reversed(self, execution_id: UUID):
+        execution = self.get_node_execution(execution_id)
+        for step_id in reversed(execution.step_ids):
+            yield self.get_step(step_id)
+
+    def iter_all_steps(self):
+        yield from self.steps_by_id.values()
+
+    def iter_all_steps_reversed(self):
+        yield from reversed(tuple(self.steps_by_id.values()))
+
+    def get_step(self, step_id: UUID) -> Step:
+        step = self.steps_by_id.get(step_id)
+        if step is None:
+            raise KeyError(f"Unknown step id: {step_id}")
+        return step
+
+    def get_message(self, message_id: UUID) -> Message:
+        message = self.messages_by_id.get(message_id)
+        if message is None:
+            raise KeyError(f"Unknown message id: {message_id}")
+        return message
+
+    def get_node_execution(self, execution_id: UUID) -> NodeExecution:
         execution = self.node_executions.get(execution_id)
         if execution is None:
-            return
-        step_ids = [step.id for step in execution.steps]
-        if step_ids:
-            self.delete_steps(step_ids)
-        if execution_id in self.node_executions:
-            del self.node_executions[execution_id]
+            raise KeyError(f"Unknown node execution id: {execution_id}")
+        return execution
 
-    def trim_empty_node_executions(self) -> None:
-        empty_execution_ids: List[UUID] = []
-        for execution_id, execution in self.node_executions.items():
-            if not execution.steps:
-                empty_execution_ids.append(execution_id)
-        for execution_id in empty_execution_ids:
-            self.delete_node_execution(execution_id)
+    def get_branch(self, branch_id: UUID) -> BranchRecord:
+        branch = self.branches_by_id.get(branch_id)
+        if branch is None:
+            raise KeyError(f"Unknown branch id: {branch_id}")
+        return branch
+
+    def get_step_ids(self) -> List[UUID]:
+        return list(self.step_ids)
+
+    def get_steps(self) -> tuple[Step, ...]:
+        return tuple(self.get_step(step_id) for step_id in self.step_ids)
+
+    def get_step_id_set(self) -> set[UUID]:
+        return set(self.step_ids)
+
+    def get_first_step(self) -> Optional[Step]:
+        if not self.step_ids:
+            return None
+        return self.get_step(self.step_ids[0])
+
+    def get_last_step(self) -> Optional[Step]:
+        if not self.step_ids:
+            return None
+        return self.get_step(self.step_ids[-1])
+
+    def get_step_index(self, step_id: UUID) -> int:
+        return self.step_ids.index(step_id)
+
+    def get_previous_step(self, step_id: UUID) -> Optional[Step]:
+        index = self.get_step_index(step_id)
+        if index == 0:
+            return None
+        return self.get_step(self.step_ids[index - 1])
+
+    def get_next_step(self, step_id: UUID) -> Optional[Step]:
+        index = self.get_step_index(step_id)
+        if index + 1 >= len(self.step_ids):
+            return None
+        return self.get_step(self.step_ids[index + 1])
+
+    def get_active_branch(self) -> BranchRecord:
+        if self.active_branch_id is None:
+            raise KeyError("No active branch id is set")
+        return self.get_branch(self.active_branch_id)
+
+    def attach_runtime_refs(self) -> "WorkflowExecution":
+        for execution in self.node_executions.values():
+            execution._workflow_execution = self
+        for step in self.steps_by_id.values():
+            step._workflow_execution = self
+        return self
+
+    def touch(self) -> None:
+        self.updated_at = utcnow()

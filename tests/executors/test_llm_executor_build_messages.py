@@ -1,30 +1,88 @@
-from vocode import state, models
-from tests.stub_project import StubProject
+import pytest
+
+from vocode import models, state
+from vocode.history.manager import HistoryManager
 from vocode.runner.base import ExecutorInput
 from vocode.runner.executors.llm.llm import (
     LLMExecutor,
-    ToolCallProviderState,
     LLMStepState,
+    ToolCallProviderState,
 )
 from vocode.runner.executors.llm.models import LLMNode
+from tests.stub_project import StubProject
+
+
+class _FakeDelta:
+    def __init__(self, content: str | None) -> None:
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content: str | None) -> None:
+        self.delta = _FakeDelta(content)
+
+
+class _FakeChunk:
+    def __init__(self, content: str | None) -> None:
+        self.choices = [_FakeChoice(content)]
+
+
+class _FakeMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.tool_calls = []
+
+
+class _FakeResponseChoice:
+    def __init__(self, content: str) -> None:
+        self.message = _FakeMessage(content)
+
+
+class _FakeUsage:
+    def __init__(self) -> None:
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+
+
+class _FakeResponse:
+    def __init__(self, content: str) -> None:
+        self.choices = [_FakeResponseChoice(content)]
+        self.usage = _FakeUsage()
+
+
+class _FakeStream:
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self):
+        self._index = 0
+        return self
+
+    async def __anext__(self):
+        if self._index >= len(self._chunks):
+            raise StopAsyncIteration
+        chunk = _FakeChunk(self._chunks[self._index])
+        self._index += 1
+        return chunk
 
 
 def test_build_messages_with_tool_call_and_tool_result() -> None:
+    history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
         model="test-model",
         confirmation=models.Confirmation.AUTO,
     )
 
-    execution = state.NodeExecution(
-        node="llm-node",
-        input_messages=[],
-        steps=[],
-        status=state.RunStatus.RUNNING,
-    )
-
     run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
 
     tool_req = state.ToolCallReq(
         id="call-test-tool-req",
@@ -44,14 +102,17 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         tool_call_requests=[tool_req],
         tool_call_responses=[tool_resp],
     )
-    assistant_step = state.Step(
-        execution=execution,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message=assistant_msg,
-        is_complete=True,
+    history.upsert_message(run, assistant_msg)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_msg.id,
+            is_complete=True,
+        ),
     )
-    execution.steps.append(assistant_step)
-    run.steps.append(assistant_step)
 
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
@@ -77,6 +138,7 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
 
 
 def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
+    history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
         model="test-model",
@@ -92,15 +154,15 @@ def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
         ],
     )
 
-    execution = state.NodeExecution(
-        node="llm-node",
-        input_messages=[],
-        steps=[],
-        status=state.RunStatus.RUNNING,
-    )
-
     run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
 
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
@@ -116,32 +178,36 @@ def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
 
 
 def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> None:
+    history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
         model="test-model",
         confirmation=models.Confirmation.AUTO,
     )
 
-    execution = state.NodeExecution(
-        node="llm-node",
-        input_messages=[],
-        steps=[],
-        status=state.RunStatus.RUNNING,
-    )
-
     run = state.WorkflowExecution(workflow_name="wf")
-    run.node_executions[execution.id] = execution
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
 
     assistant_msg = state.Message(role=models.Role.ASSISTANT, text="hello")
-    assistant_step = state.Step(
-        execution=execution,
-        type=state.StepType.OUTPUT_MESSAGE,
-        message=assistant_msg,
-        state=LLMStepState(provider_state={"cache_control": {"type": "ephemeral"}}),
-        is_complete=True,
+    history.upsert_message(run, assistant_msg)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_msg.id,
+            state=LLMStepState(provider_state={"cache_control": {"type": "ephemeral"}}),
+            is_complete=True,
+        ),
     )
-    execution.steps.append(assistant_step)
-    run.steps.append(assistant_step)
 
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
@@ -153,3 +219,168 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
     assert first["role"] == "assistant"
     assert first["content"] == "hello"
     assert first["provider_specific_fields"] == {"cache_control": {"type": "ephemeral"}}
+
+
+def test_build_messages_uses_active_history_view_after_user_input_edit() -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    initial_message = state.Message(role=models.Role.USER, text="initial input")
+    history.upsert_message(run, initial_message)
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[initial_message.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    prompt_message = state.Message(role=models.Role.ASSISTANT, text="prompt")
+    old_user_message = state.Message(role=models.Role.USER, text="old user input")
+    old_output_message = state.Message(role=models.Role.ASSISTANT, text="old output")
+    for message in [prompt_message, old_user_message, old_output_message]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=prompt_message.id,
+            is_complete=True,
+        ),
+    )
+    old_input_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user_message.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=old_output_message.id,
+            is_complete=True,
+        ),
+    )
+
+    history.edit_user_input(run, old_input_step.id, "new user input")
+    active_execution = run.get_last_step().execution
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    inp = ExecutorInput(execution=active_execution, run=run)
+
+    conv = executor.build_messages(inp)
+
+    assert [message["content"] for message in conv] == ["prompt", "new user input"]
+
+
+def test_build_step_from_message_reuses_existing_message_id_for_updates() -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    base_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+
+    interim_step = executor._build_step_from_message(
+        base_step,
+        role=models.Role.ASSISTANT,
+        step_type=state.StepType.OUTPUT_MESSAGE,
+        text="first",
+    )
+    final_step = executor._build_step_from_message(
+        interim_step,
+        role=models.Role.ASSISTANT,
+        step_type=state.StepType.OUTPUT_MESSAGE,
+        text="second",
+        is_complete=True,
+    )
+
+    assert interim_step.message_id is not None
+    assert final_step.message_id == interim_step.message_id
+    assert final_step.message is not None
+    assert final_step.message.text == "second"
+    assert len(run.messages_by_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    inp = ExecutorInput(execution=execution, run=run)
+
+    async def fake_acompletion(**_: object):
+        return _FakeStream(["Why", " do"])
+
+    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
+    monkeypatch.setattr(
+        "litellm.stream_chunk_builder",
+        lambda chunks, messages=None: _FakeResponse("Why do"),
+    )
+    monkeypatch.setattr("litellm.completion_cost", lambda **_: 0.0)
+
+    steps = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(steps) == 3
+    assert steps[0].message_id is not None
+    assert steps[1].message_id == steps[0].message_id
+    assert steps[2].message_id == steps[0].message_id
+    assert len(run.messages_by_id) == 1
+    message = next(iter(run.messages_by_id.values()))
+    assert message.text == "Why do"

@@ -2,21 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Optional
+from uuid import uuid4
 
 import pytest
 
+from tests.manager.runner_stubs import DummyRunnerWithWorkflow
+from tests.stub_project import StubProject
 from vocode import models, state
-from typing import Optional
-
+from vocode.history.manager import HistoryManager
+from vocode.history.models import HistoryMutationResult
 from vocode import settings as vocode_settings
-from vocode.manager.base import BaseManager, HistoryEditResult, RunnerFrame
+from vocode.manager import autocomplete_providers as autocomplete_providers
+from vocode.manager import proto as manager_proto
+from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.manager.helpers import InMemoryEndpoint
 from vocode.manager.server import UIServer
-from vocode.manager import proto as manager_proto
 from vocode.runner import proto as runner_proto
-from tests.stub_project import StubProject
-from vocode.manager import autocomplete_providers as autocomplete_providers
-from tests.manager.runner_stubs import DummyRunnerWithWorkflow
 
 
 @pytest.mark.asyncio
@@ -53,21 +55,26 @@ async def test_uiserver_applies_logging_settings() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_on_runner_event_roundtrip() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
-    node_execution = state.NodeExecution(
-        node="node1",
-        status=state.RunStatus.RUNNING,
-    )
     execution = state.WorkflowExecution(workflow_name="wf-ui-server")
-    execution.node_executions[node_execution.id] = node_execution
-    step = state.Step(
-        execution=node_execution,
-        type=state.StepType.OUTPUT_MESSAGE,
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    execution.steps.append(step)
+    step = history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STEP,
         execution=execution,
@@ -112,17 +119,20 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
     await server.start()
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-node-start-time")
-    node_execution = state.NodeExecution(
-        node="node-start",
-        status=state.RunStatus.RUNNING,
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node-start",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    execution.node_executions[node_execution.id] = node_execution
 
     stats = runner_proto.RunStats(
         status=state.RunnerStatus.RUNNING,
@@ -162,15 +172,16 @@ async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
     assert isinstance(payload, manager_proto.UIServerStatePacket)
     assert payload.active_node_started_at is None
 
-    step = state.Step(
-        execution=node_execution,
-        type=state.StepType.INPUT_MESSAGE,
-        message=state.Message(
-            role=models.Role.USER,
-            text="hello",
+    message = state.Message(role=models.Role.USER, text="hello")
+    history.upsert_message(execution, message)
+    step = history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
         ),
     )
-    node_execution.steps.append(step)
 
     resp2 = await server.on_runner_event(frame, event)
     assert resp2 is not None
@@ -188,17 +199,20 @@ async def test_uiserver_active_node_started_at_uses_first_step_time() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
     await server.start()
 
     execution = state.WorkflowExecution(workflow_name="wf-ui-stop-input")
-    node_execution = state.NodeExecution(
-        node="node-stop",
-        status=state.RunStatus.RUNNING,
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node-stop",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    execution.node_executions[node_execution.id] = node_execution
     stats = runner_proto.RunStats(
         status=state.RunnerStatus.STOPPED,
         current_node_name=node_execution.node,
@@ -222,8 +236,6 @@ async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
         last_stats=stats,
     )
     server.manager._runner_stack.append(frame)
-
-    # Simulate that a prompt was shown and an input waiter is pending.
     server._push_input_waiter()
 
     event = runner_proto.RunEventReq(
@@ -234,7 +246,6 @@ async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
 
     await server.on_runner_event(frame, event)
 
-    # First packet is an INPUT_PROMPT clearing the prompt, followed by UI_STATE.
     envelope_prompt = await client_endpoint.recv()
     prompt_payload = envelope_prompt.payload
     assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
@@ -316,21 +327,26 @@ async def test_run_autocomplete_provider_does_not_suggest_exact_match() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_on_runner_event_user_input_message() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
-    node_execution = state.NodeExecution(
-        node="node1",
-        status=state.RunStatus.RUNNING,
-    )
     execution = state.WorkflowExecution(workflow_name="wf-ui-server-user-input")
-    execution.node_executions[node_execution.id] = node_execution
-    step = state.Step(
-        execution=node_execution,
-        type=state.StepType.PROMPT,
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    execution.steps.append(step)
+    step = history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.PROMPT,
+        ),
+    )
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STEP,
         execution=execution,
@@ -365,13 +381,8 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     initial_prompt_payload = initial_prompt_envelope.payload
     assert initial_prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
     assert isinstance(initial_prompt_payload, manager_proto.InputPromptPacket)
-    user_message = state.Message(
-        role=models.Role.USER,
-        text="user input message",
-    )
-    user_input_packet = manager_proto.UserInputPacket(
-        message=user_message,
-    )
+    user_message = state.Message(role=models.Role.USER, text="user input message")
+    user_input_packet = manager_proto.UserInputPacket(message=user_message)
     response_envelope = manager_proto.BasePacketEnvelope(
         msg_id=request_envelope.msg_id + 1,
         payload=user_input_packet,
@@ -391,7 +402,6 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     prompt_payload = prompt_envelope.payload
     assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
     assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
-    # After user input, UIServer clears the prompt.
     assert prompt_payload.title is None
     assert prompt_payload.subtitle is None
 
@@ -402,21 +412,26 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
 
 @pytest.mark.asyncio
 async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
-    node_execution = state.NodeExecution(
-        node="node1",
-        status=state.RunStatus.RUNNING,
-    )
     execution = state.WorkflowExecution(workflow_name="wf-ui-server-user-input-confirm")
-    execution.node_executions[node_execution.id] = node_execution
-    step = state.Step(
-        execution=node_execution,
-        type=state.StepType.PROMPT_CONFIRM,
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    execution.steps.append(step)
+    step = history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.PROMPT_CONFIRM,
+        ),
+    )
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STEP,
         execution=execution,
@@ -444,13 +459,8 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
     assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
     assert prompt_payload.title == "Press enter to confirm or provide a reply"
 
-    user_message = state.Message(
-        role=models.Role.USER,
-        text="",
-    )
-    user_input_packet = manager_proto.UserInputPacket(
-        message=user_message,
-    )
+    user_message = state.Message(role=models.Role.USER, text="")
+    user_input_packet = manager_proto.UserInputPacket(message=user_message)
     response_envelope = manager_proto.BasePacketEnvelope(
         msg_id=prompt_envelope.msg_id + 1,
         payload=user_input_packet,
@@ -504,6 +514,7 @@ async def test_uiserver_autostarts_default_workflow(
 
 @pytest.mark.asyncio
 async def test_uiserver_status_event_emits_ui_state_packet() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
@@ -522,11 +533,13 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
         input_token_limit=1000,
     )
 
-    node_execution = state.NodeExecution(
-        node="node-status",
-        status=state.RunStatus.RUNNING,
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node-status",
+            status=state.RunStatus.RUNNING,
+        ),
     )
-    execution.node_executions[node_execution.id] = node_execution
     stats = runner_proto.RunStats(
         status=state.RunnerStatus.RUNNING,
         current_node_name=node_execution.node,
@@ -617,6 +630,7 @@ async def test_uiserver_handles_stop_request_packet(
 async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
@@ -627,21 +641,24 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
             self.execution = state.WorkflowExecution(workflow_name="wf-edit")
 
     runner = DummyRunner()
-    node_execution = state.NodeExecution(
-        node="node",
-        status=state.RunStatus.RUNNING,
-    )
-    runner.execution.node_executions[node_execution.id] = node_execution
-    step = state.Step(
-        execution=node_execution,
-        type=state.StepType.INPUT_MESSAGE,
-        message=state.Message(
-            role=models.Role.USER,
-            text="old",
+    node_execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
         ),
-        is_complete=True,
     )
-    runner.execution.steps.append(step)
+    message = state.Message(role=models.Role.USER, text="old")
+    history.upsert_message(runner.execution, message)
+    step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
+    )
     frame = RunnerFrame(
         workflow_name="wf-user-input-edit",
         runner=runner,  # type: ignore[arg-type]
@@ -657,24 +674,20 @@ async def test_uiserver_user_input_triggers_history_edit_when_no_waiter(
         text: str,
         *,
         resume: bool = True,
-    ) -> HistoryEditResult:
+    ) -> HistoryMutationResult:
         _ = resume
         called.append(text)
-        step.message.text = text
-        return HistoryEditResult(
-            is_edited=True,
-            step=step,
-            deleted_step_ids=[],
+        message.text = text
+        return HistoryMutationResult(
+            changed=True,
+            upserted_steps=[step],
         )
 
     monkeypatch.setattr(
         BaseManager, "edit_history_with_text", fake_edit_history_with_text
     )
 
-    user_message = state.Message(
-        role=models.Role.USER,
-        text="new input text",
-    )
+    user_message = state.Message(role=models.Role.USER, text="new input text")
     packet = manager_proto.UserInputPacket(message=user_message)
     envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
     await client_endpoint.send(envelope)
@@ -720,10 +733,10 @@ async def test_uiserver_user_input_sends_error_when_edit_fails(
         text: str,
         *,
         resume: bool = True,
-    ) -> HistoryEditResult:
+    ) -> HistoryMutationResult:
         _ = text
         _ = resume
-        return HistoryEditResult(is_edited=False)
+        return HistoryMutationResult(changed=False)
 
     monkeypatch.setattr(
         BaseManager, "edit_history_with_text", fake_edit_history_with_text
@@ -740,10 +753,7 @@ async def test_uiserver_user_input_sends_error_when_edit_fails(
 
     monkeypatch.setattr(server, "send_text_message", fake_send_text_message)
 
-    user_message = state.Message(
-        role=models.Role.USER,
-        text="new input text",
-    )
+    user_message = state.Message(role=models.Role.USER, text="new input text")
     packet = manager_proto.UserInputPacket(message=user_message)
     envelope = manager_proto.BasePacketEnvelope(msg_id=2, payload=packet)
     await client_endpoint.send(envelope)
@@ -760,6 +770,7 @@ async def test_uiserver_user_input_sends_error_when_edit_fails(
 async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
@@ -770,21 +781,24 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
             self.execution = state.WorkflowExecution(workflow_name="wf-edit")
 
     runner = DummyRunner()
-    node_execution = state.NodeExecution(
-        node="node",
-        status=state.RunStatus.RUNNING,
-    )
-    runner.execution.node_executions[node_execution.id] = node_execution
-    step = state.Step(
-        execution=node_execution,
-        type=state.StepType.INPUT_MESSAGE,
-        message=state.Message(
-            role=models.Role.USER,
-            text="old",
+    node_execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
         ),
-        is_complete=True,
     )
-    runner.execution.steps.append(step)
+    message = state.Message(role=models.Role.USER, text="old")
+    history.upsert_message(runner.execution, message)
+    step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
+    )
     frame = RunnerFrame(
         workflow_name="wf-user-input-edit-delete",
         runner=runner,  # type: ignore[arg-type]
@@ -798,14 +812,15 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
         text: str,
         *,
         resume: bool = True,
-    ) -> HistoryEditResult:
+    ) -> HistoryMutationResult:
         assert text == "new input text"
         assert resume is False
-        step.message.text = text
-        return HistoryEditResult(
-            is_edited=True,
-            step=step,
-            deleted_step_ids=["s1", "s2"],
+        message.text = text
+        removed_step_ids = [uuid4(), uuid4()]
+        return HistoryMutationResult(
+            changed=True,
+            removed_step_ids=removed_step_ids,
+            upserted_steps=[step],
         )
 
     called_continue: list[object] = []
@@ -821,10 +836,7 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
         BaseManager, "continue_current_runner", fake_continue_current_runner
     )
 
-    user_message = state.Message(
-        role=models.Role.USER,
-        text="new input text",
-    )
+    user_message = state.Message(role=models.Role.USER, text="new input text")
     packet = manager_proto.UserInputPacket(message=user_message)
     envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
     await client_endpoint.send(envelope)
@@ -838,7 +850,7 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
     assert deleted_envelope.payload.kind == manager_proto.BasePacketKind.STEP_DELETED
     deleted_payload = deleted_envelope.payload
     assert isinstance(deleted_payload, manager_proto.StepDeletedPacket)
-    assert deleted_payload.step_ids == ["s1", "s2"]
+    assert len(deleted_payload.step_ids) == 2
 
     upsert_envelope = await client_endpoint.recv()
     upsert_payload = upsert_envelope.payload
@@ -851,17 +863,122 @@ async def test_uiserver_user_input_emits_step_deleted_packet_on_history_edit(
 
 
 @pytest.mark.asyncio
+async def test_uiserver_emits_branch_packets_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = HistoryManager()
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    server.enable_branch_packets()
+
+    class DummyRunner:
+        def __init__(self) -> None:
+            self.status = state.RunnerStatus.STOPPED
+            self.execution = state.WorkflowExecution(workflow_name="wf-edit")
+
+    runner = DummyRunner()
+    node_execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    message = state.Message(role=models.Role.USER, text="old")
+    history.upsert_message(runner.execution, message)
+    step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
+    )
+    frame = RunnerFrame(
+        workflow_name="wf-user-input-edit-branch-packets",
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    branch_id = uuid4()
+    created_branch_id = uuid4()
+
+    async def fake_edit_history_with_text(
+        self: BaseManager,
+        text: str,
+        *,
+        resume: bool = True,
+    ) -> HistoryMutationResult:
+        assert text == "new input text"
+        assert resume is False
+        message.text = text
+        return HistoryMutationResult(
+            changed=True,
+            active_branch_id=branch_id,
+            created_branch_id=created_branch_id,
+            removed_step_ids=[uuid4()],
+            upserted_step_ids=[step.id],
+            upserted_steps=[step],
+            branch_summaries=[],
+        )
+
+    async def fake_continue_current_runner(self: BaseManager) -> object:
+        return object()
+
+    monkeypatch.setattr(
+        BaseManager, "edit_history_with_text", fake_edit_history_with_text
+    )
+    monkeypatch.setattr(
+        BaseManager, "continue_current_runner", fake_continue_current_runner
+    )
+
+    user_message = state.Message(role=models.Role.USER, text="new input text")
+    packet = manager_proto.UserInputPacket(message=user_message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    deleted_envelope = await client_endpoint.recv()
+    assert isinstance(deleted_envelope.payload, manager_proto.StepDeletedPacket)
+
+    upsert_envelope = await client_endpoint.recv()
+    assert isinstance(upsert_envelope.payload, manager_proto.RunnerReqPacket)
+
+    branch_changed_envelope = await client_endpoint.recv()
+    assert isinstance(
+        branch_changed_envelope.payload, manager_proto.BranchChangedPacket
+    )
+    assert branch_changed_envelope.payload.active_branch_id == str(branch_id)
+    assert branch_changed_envelope.payload.created_branch_id == str(created_branch_id)
+
+    diff_envelope = await client_endpoint.recv()
+    assert isinstance(diff_envelope.payload, manager_proto.HistoryViewDiffPacket)
+    assert diff_envelope.payload.upserted_step_ids == [str(step.id)]
+    assert diff_envelope.payload.removed_step_ids
+
+
+@pytest.mark.asyncio
 async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None:
+    history = HistoryManager()
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
-    node_execution = state.NodeExecution(
-        node="node1",
-        status=state.RunStatus.RUNNING,
-    )
     execution = state.WorkflowExecution(workflow_name="wf-ui-aa")
-    execution.node_executions[node_execution.id] = node_execution
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
 
     tool_req = state.ToolCallReq(
         id="call-1",
@@ -869,17 +986,21 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
         arguments={"x": 1},
         status=state.ToolCallReqStatus.REQUIRES_CONFIRMATION,
     )
-    step = state.Step(
-        execution=node_execution,
-        type=state.StepType.TOOL_REQUEST,
-        message=state.Message(
-            role=models.Role.ASSISTANT,
-            text="",
-            tool_call_requests=[tool_req],
-        ),
-        is_complete=True,
+    message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="",
+        tool_call_requests=[tool_req],
     )
-    execution.steps.append(step)
+    history.upsert_message(execution, message)
+    step = history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.TOOL_REQUEST,
+            message_id=message.id,
+            is_complete=True,
+        ),
+    )
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STEP,
         execution=execution,
@@ -906,13 +1027,8 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
     assert prompt_payload.subtitle is not None
     assert "/aa" in prompt_payload.subtitle
 
-    user_message = state.Message(
-        role=models.Role.USER,
-        text="/aa",
-    )
-    user_input_packet = manager_proto.UserInputPacket(
-        message=user_message,
-    )
+    user_message = state.Message(role=models.Role.USER, text="/aa")
+    user_input_packet = manager_proto.UserInputPacket(message=user_message)
     response_envelope = manager_proto.BasePacketEnvelope(
         msg_id=prompt_envelope.msg_id + 1,
         payload=user_input_packet,

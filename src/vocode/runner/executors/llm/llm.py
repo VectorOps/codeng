@@ -41,6 +41,24 @@ class LLMExecutor(runner_base.BaseExecutor):
         litellm.suppress_debug_info = True
         litellm.set_verbose = False
 
+    def _iter_prompt_messages(
+        self,
+        inp: runner_base.ExecutorInput,
+    ) -> List[tuple[state.Message, Optional[state.Step]]]:
+        run = inp.run
+        execution = inp.execution
+        active_execution_ids = {
+            step.execution_id for step in run.iter_steps() if step.message is not None
+        }
+        if execution.id in active_execution_ids:
+            return [
+                (step.message, step)
+                for step in run.iter_steps()
+                if step.message is not None
+                and step.execution_id in active_execution_ids
+            ]
+        return list(runner_base.iter_execution_messages(execution))
+
     def build_messages(self, inp: runner_base.ExecutorInput) -> List[Dict]:
         """
         Generate an OpenAI-compatible conversation from execution state.
@@ -132,7 +150,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 for resp in msg.tool_call_responses:
                     _append_tool_response(resp)
 
-        for msg, step in runner_base.iter_execution_messages(execution):
+        for msg, step in self._iter_prompt_messages(inp):
             if step is not None and step.type not in INCLUDED_STEP_TYPES:
                 continue
             collected_messages.append(msg)
@@ -166,16 +184,29 @@ class LLMExecutor(runner_base.BaseExecutor):
         is_complete: bool = False,
         outcome_name: Optional[str] = None,
     ) -> state.Step:
-        message = state.Message(
-            role=role,
-            text=text,
-            tool_call_requests=tool_call_requests or [],
-            tool_call_responses=tool_call_responses or [],
-        )
+        workflow_execution = base_step._workflow_execution
+        history = self.project.history
+        message = base_step.message
+        if message is None:
+            message = state.Message(
+                role=role,
+                text=text,
+                tool_call_requests=tool_call_requests or [],
+                tool_call_responses=tool_call_responses or [],
+            )
+            if workflow_execution is not None:
+                history.upsert_message(workflow_execution, message)
+        else:
+            message.role = role
+            message.text = text
+            message.tool_call_requests = tool_call_requests or []
+            message.tool_call_responses = tool_call_responses or []
+            if workflow_execution is not None:
+                history.upsert_message(workflow_execution, message)
 
         update: Dict[str, Any] = {
             "type": step_type,
-            "message": message,
+            "message_id": message.id,
             "is_complete": is_complete,
         }
         if usage is not None:
@@ -235,9 +266,12 @@ class LLMExecutor(runner_base.BaseExecutor):
                 tools = []
             tools.append(choose_tool)
 
-        step = state.Step(
-            execution=inp.execution,
-            type=state.StepType.OUTPUT_MESSAGE,
+        step = self.project.history.upsert_step(
+            inp.run,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+            ),
         )
 
         extra_args = dict(cfg.extra or {})
@@ -338,6 +372,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                             step_type=state.StepType.OUTPUT_MESSAGE,
                             text=assistant_partial,
                         )
+                        step = interim_step
                         yield interim_step
 
                 break

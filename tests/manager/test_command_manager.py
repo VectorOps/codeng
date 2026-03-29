@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+from uuid import uuid4
 
 import pytest
 
 from vocode import models, state
 from vocode import settings as vocode_settings
+from vocode.history.manager import HistoryManager
+from vocode.history.models import HistoryMutationResult
 from vocode.manager import helpers as manager_helpers
 from vocode.manager import proto as manager_proto
 from vocode.manager.commands import CommandManager, command, option
 from vocode.manager.server import UIServer
 from vocode.manager.commands import workflows as workflow_commands
 from vocode.manager import base as manager_base
+from vocode.runner import base as runner_base
 from tests.stub_project import StubProject
 
 
@@ -96,6 +100,24 @@ class _FakeKnowProject:
                 elapsed_seconds = 2.5
 
             progress_callback(_Evt())
+
+
+@runner_base.ExecutorFactory.register("resume-skip")
+class _ResumeSkipExecutor(runner_base.BaseExecutor):
+    async def run(
+        self, inp: runner_base.ExecutorInput
+    ) -> runner_base.AsyncIterator[state.Step]:
+        message = state.Message(role=models.Role.ASSISTANT, text="resumed")
+        self.project.history.upsert_message(inp.run, message)
+        yield self.project.history.upsert_step(
+            inp.run,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                is_complete=True,
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -528,6 +550,106 @@ async def test_run_command_stops_all_and_starts_workflow(
 
 
 @pytest.mark.asyncio
+async def test_branch_list_command_outputs_branches() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    execution = state.WorkflowExecution(workflow_name="wf-branches")
+    branch = project.history.create_branch(execution, activate=True, label="main")
+
+    runner = type(
+        "_Runner",
+        (),
+        {
+            "execution": execution,
+        },
+    )()
+    server.manager._runner_stack.append(
+        manager_base.RunnerFrame(
+            workflow_name="wf-branches",
+            runner=runner,
+            initial_message=None,
+        )
+    )
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    message = state.Message(role=models.Role.USER, text="/branch list")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert str(branch.id) in payload.text
+    assert "main" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_branch_switch_command_emits_history_mutation_packets() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    server.enable_branch_packets()
+
+    execution = state.WorkflowExecution(workflow_name="wf-branches")
+    runner = type(
+        "_Runner",
+        (),
+        {
+            "execution": execution,
+        },
+    )()
+    frame = manager_base.RunnerFrame(
+        workflow_name="wf-branches",
+        runner=runner,
+        initial_message=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    branch_id = uuid4()
+
+    async def fake_emit_history_mutation(
+        frame_arg,
+        result,
+    ) -> None:
+        assert frame_arg is frame
+        assert result.active_branch_id == branch_id
+
+    def fake_switch_branch(execution_arg, branch_id_arg):
+        assert execution_arg is execution
+        assert branch_id_arg == branch_id
+        return HistoryMutationResult(
+            changed=True,
+            active_branch_id=branch_id,
+            upserted_step_ids=[],
+        )
+
+    server.manager.project.history.switch_branch = fake_switch_branch
+    server.emit_history_mutation = fake_emit_history_mutation
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    message = state.Message(
+        role=models.Role.USER,
+        text=f"/branch switch {branch_id}",
+    )
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+
+@pytest.mark.asyncio
 async def test_reset_command_uses_root_workflow_when_nested_runners_exist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -612,6 +734,89 @@ async def test_continue_command_calls_manager_continue(
     assert handled is True
 
     assert called
+
+
+@pytest.mark.asyncio
+async def test_continue_command_preserves_existing_visible_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = HistoryManager()
+    project = StubProject()
+    server_endpoint, _ = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    node = models.Node(
+        name="node-output",
+        type="resume-skip",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = type(
+        "_Workflow",
+        (),
+        {
+            "name": "wf-continue-visible-history",
+            "graph": models.Graph(nodes=[node], edges=[]),
+            "need_input": False,
+            "need_input_prompt": None,
+        },
+    )()
+    runner = manager_base.Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+    execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            node="node-output",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    message = state.Message(role=models.Role.ASSISTANT, text="existing-output")
+    history.upsert_message(runner.execution, message)
+    output_step = history.upsert_step(
+        runner.execution,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message.id,
+            is_complete=True,
+        ),
+    )
+    runner.status = state.RunnerStatus.STOPPED
+
+    frame = manager_base.RunnerFrame(
+        workflow_name="wf-continue-visible-history",
+        runner=runner,
+        initial_message=None,
+        agen=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    before_visible_step_ids = list(runner.execution.step_ids)
+    before_all_step_ids = set(runner.execution.steps_by_id.keys())
+
+    message_packet = state.Message(role=models.Role.USER, text="/continue")
+    user_packet = manager_proto.UserInputPacket(message=message_packet)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+
+    async def wait_for_driver() -> None:
+        while True:
+            task = server.manager._driver_task
+            if task is not None:
+                await task
+                return
+            await asyncio.sleep(0)
+
+    await server.on_ui_packet(envelope)
+    await wait_for_driver()
+
+    assert runner.execution.step_ids == before_visible_step_ids
+    assert set(runner.execution.steps_by_id.keys()) == before_all_step_ids
+    assert runner.execution.step_ids == [output_step.id]
 
 
 @pytest.mark.asyncio
