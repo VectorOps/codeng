@@ -548,7 +548,7 @@ class Runner:
             use_resume_step = resume_step
             skip_executor_for_current = skip_executor
 
-            tool_request_steps: dict[int, state.Step] = {}
+            tool_request_steps: dict[str, state.Step] = {}
 
             while True:
                 executor = self._executors[current_runtime_node.name]
@@ -714,7 +714,7 @@ class Runner:
                                     else None
                                 ),
                             )
-                            tool_request_steps[id(req)] = persisted_prompt
+                            tool_request_steps[req.id] = persisted_prompt
 
                             if not is_auto_approved:
                                 waiting_event = self.set_status(
@@ -762,7 +762,7 @@ class Runner:
 
                     if approved:
                         for req in approved:
-                            tool_step = tool_request_steps.get(id(req))
+                            tool_step = tool_request_steps.get(req.id)
                             if tool_step is None:
                                 continue
                             req.status = state.ToolCallReqStatus.EXECUTING
@@ -838,7 +838,7 @@ class Runner:
                                 continue
 
                         for req in approved:
-                            tool_step = tool_request_steps.get(id(req))
+                            tool_step = tool_request_steps.get(req.id)
                             if tool_step is None:
                                 continue
                             req.status = state.ToolCallReqStatus.COMPLETE
@@ -866,7 +866,7 @@ class Runner:
                             per_req = resp_by_id.get(req.id)
                             if per_req is None:
                                 continue
-                            tool_step = tool_request_steps.get(id(req))
+                            tool_step = tool_request_steps.get(req.id)
                             if tool_step is None:
                                 continue
                             tool_message = tool_step.message
