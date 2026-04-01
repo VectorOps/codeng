@@ -9,6 +9,7 @@ from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
 from vocode.runner.proto import RunEventResp, RunEventResponseType
+from vocode.runner import proto as runner_proto
 from vocode.runner.runner import RunEvent, Runner, RunnerStopped
 from vocode.tools import base as tools_base
 from tests.stub_project import StubProject
@@ -1601,6 +1602,73 @@ async def test_runner_tool_round_carries_llm_usage_on_tool_request():
     assert project.llm_usage.prompt_tokens == 10
     assert project.llm_usage.completion_tokens == 5
     assert project.llm_usage.cost_dollars == 1.0
+
+
+@pytest.mark.asyncio
+async def test_runner_tool_request_status_updates_do_not_depend_on_object_identity():
+    node = models.Node(
+        name="tool-node",
+        type="tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-tool-status-identity", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    original_execute = runner._execute_approved_tool_calls
+
+    async def execute_with_copied_requests(
+        approved: list[state.ToolCallReq],
+    ) -> list[runner_proto.ToolExecResult]:
+        copied = [req.model_copy(deep=True) for req in approved]
+        return await original_execute(copied)
+
+    runner._execute_approved_tool_calls = execute_with_copied_requests
+
+    def handler(event: RunEvent) -> RunEventResp:
+        step = event.step
+        if (
+            step is not None
+            and step.type == state.StepType.TOOL_REQUEST
+            and step.message is not None
+            and step.message.tool_call_requests
+        ):
+            return RunEventResp(
+                resp_type=RunEventResponseType.APPROVE,
+                message=None,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(runner.run(), handler, ignore_non_step=False)
+
+    tool_events = [
+        event
+        for event in events
+        if event.step is not None
+        and event.step.type == state.StepType.TOOL_REQUEST
+        and event.step.message is not None
+        and event.step.message.tool_call_requests
+    ]
+    assert tool_events
+    assert any(
+        event.step is not None
+        and event.step.message is not None
+        and event.step.message.tool_call_requests[0].status
+        == state.ToolCallReqStatus.COMPLETE
+        for event in tool_events
+    )
 
 
 @pytest.mark.asyncio
