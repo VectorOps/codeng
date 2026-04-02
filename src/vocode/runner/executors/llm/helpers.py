@@ -5,7 +5,7 @@ import re
 import contextlib
 import json
 
-import litellm
+import connect
 
 from vocode.state import Message
 from vocode.logger import logger
@@ -18,6 +18,150 @@ CHOOSE_OUTCOME_TOOL_NAME: Final[str] = "__choose_outcome__"
 OUTCOME_TAG_RE = re.compile(r"^\s*OUTCOME\s*:\s*([A-Za-z0-9_\-]+)\s*$")
 OUTCOME_LINE_PREFIX_RE = re.compile(r"^\s*OUTCOME\s*:\s*")
 MAX_ROUNDS: Final[int] = 32
+
+
+def build_system_prompt(cfg: LLMNode) -> Optional[str]:
+    system_parts: List[str] = []
+    if cfg.system:
+        system_parts.append(cfg.system)
+    if cfg.system_append:
+        system_parts.append(cfg.system_append)
+    outcome_names = get_outcome_names(cfg)
+    if len(outcome_names) > 1 and cfg.outcome_strategy == "tag":
+        outcome_desc_bullets = get_outcome_desc_bullets(cfg)
+        tag_instruction = build_tag_system_instruction(
+            outcome_names,
+            outcome_desc_bullets,
+        )
+        system_parts.append(tag_instruction)
+    system_prompt = "\n\n".join(part for part in system_parts if part).strip()
+    return system_prompt or None
+
+
+def serialize_connect_messages(
+    system_prompt: Optional[str],
+    messages: List[connect.Message],
+) -> List[Dict[str, Any]]:
+    serialized_messages: List[Dict[str, Any]] = []
+
+    if system_prompt:
+        serialized_messages.append(
+            {
+                "role": "system",
+                "content": system_prompt,
+            }
+        )
+
+    for message in messages:
+        if message.role == "user":
+            content = message.content
+            if isinstance(content, str):
+                text = content
+            else:
+                text = "".join(
+                    block.text for block in content if block.type == "text"
+                )
+            serialized_messages.append(
+                {
+                    "role": "user",
+                    "content": text,
+                }
+            )
+            continue
+
+        if message.role == "assistant":
+            base: Dict[str, Any] = {
+                "role": "assistant",
+                "content": "".join(
+                    block.text for block in message.content if block.type == "text"
+                ),
+            }
+
+            provider_specific_fields = _metadata_to_provider_specific_fields(
+                provider_meta=message.provider_meta,
+                protocol_state=message.protocol_meta,
+                reasoning_signature=_assistant_reasoning_signature(message),
+            )
+            if provider_specific_fields is not None:
+                base["provider_specific_fields"] = provider_specific_fields
+
+            tool_calls: List[Dict[str, Any]] = []
+            for block in message.content:
+                if block.type != "tool_call":
+                    continue
+                tool_call: Dict[str, Any] = {
+                    "id": block.id,
+                    "type": "function",
+                    "function": {
+                        "name": block.name,
+                        "arguments": json.dumps(block.arguments),
+                    },
+                }
+                provider_specific_fields = _metadata_to_provider_specific_fields(
+                    provider_meta=block.provider_meta,
+                    protocol_state=block.protocol_meta,
+                    reasoning_signature=_annotation_reasoning_signature(
+                        block.annotations
+                    ),
+                )
+                if provider_specific_fields is not None:
+                    tool_call["provider_specific_fields"] = provider_specific_fields
+                tool_calls.append(tool_call)
+
+            if tool_calls:
+                base["tool_calls"] = tool_calls
+
+            serialized_messages.append(base)
+            continue
+
+        serialized_messages.append(
+            {
+                "role": "tool",
+                "type": "function_call",
+                "tool_call_id": message.tool_call_id,
+                "name": message.tool_name,
+                "content": "".join(
+                    block.text for block in message.content if block.type == "text"
+                ),
+            }
+        )
+
+    return serialized_messages
+
+
+def _assistant_reasoning_signature(
+    message: connect.AssistantMessage,
+) -> Optional[str]:
+    for block in message.content:
+        if block.type == "reasoning" and block.signature:
+            return block.signature
+    return None
+
+
+def _annotation_reasoning_signature(
+    annotations: Any,
+) -> Optional[str]:
+    if isinstance(annotations, dict):
+        value = annotations.get("reasoning_signature")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _metadata_to_provider_specific_fields(
+    *,
+    provider_meta: Dict[str, Any],
+    protocol_state: Dict[str, Any],
+    reasoning_signature: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    payload: Dict[str, Any] = {}
+    if provider_meta:
+        payload["provider_meta"] = dict(provider_meta)
+    if protocol_state:
+        payload["protocol_state"] = dict(protocol_state)
+    if reasoning_signature:
+        payload["reasoning_signature"] = reasoning_signature
+    return payload or None
 
 
 # Message mapping and prompt building
@@ -170,22 +314,20 @@ def resolve_model_token_limit(cfg: LLMNode) -> Optional[int]:
     """Resolve the model input context window (prompt token limit).
 
     Fallback order:
-    1) litellm.get_model_info(cfg.model).max_input_tokens
+    1) Connect model registry context_window
     2) cfg.extra['model_max_tokens']
-    3) litellm.get_model_info(cfg.model).max_tokens
+    3) Connect model registry max_output_tokens
     """
     with contextlib.suppress(Exception):
-        mi = litellm.get_model_info(cfg.model)
-        v = mi.get("max_input_tokens")
-        if v:
-            return v
+        model = connect.default_model_registry.resolve(cfg.model)
+        if model.context_window is not None and model.context_window > 0:
+            return int(model.context_window)
     with contextlib.suppress(Exception):
         v = int((cfg.extra or {}).get("model_max_tokens") or 0)
         if v > 0:
             return v
     with contextlib.suppress(Exception):
-        mi = litellm.get_model_info(cfg.model)
-        v = int(mi.get("max_tokens", 0))
-        if v > 0:
-            return v
+        model = connect.default_model_registry.resolve(cfg.model)
+        if model.max_output_tokens is not None and model.max_output_tokens > 0:
+            return int(model.max_output_tokens)
     return None
