@@ -122,7 +122,38 @@ def _empty_then_timeout_stream() -> FakeStreamHandle:
     return _EmptyTimeoutStreamHandle()
 
 
-def _build_execution_with_input(node_name: str, text: str) -> tuple[state.WorkflowExecution, state.NodeExecution]:
+def _partial_then_timeout_stream(text: str) -> FakeStreamHandle:
+    class _PartialTimeoutStreamHandle(FakeStreamHandle):
+        def __init__(self, partial_text: str) -> None:
+            self._partial_text = partial_text
+            self._index = 0
+
+        def __aiter__(self):
+            self._index = 0
+            return self
+
+        async def __anext__(self):
+            if self._index == 0:
+                self._index += 1
+                return connect.TextDeltaEvent(index=0, delta=self._partial_text)
+            await asyncio.sleep(3600)
+            raise StopAsyncIteration
+
+    return _PartialTimeoutStreamHandle(text)
+
+
+def _tool_call_response(tool_call_id: str) -> connect.AssistantResponse:
+    tool_call = connect.ToolCallBlock(
+        id=tool_call_id,
+        name="echo",
+        arguments={"x": 1},
+    )
+    return _assistant_response("Tool answer", tool_calls=[tool_call])
+
+
+def _build_execution_with_input(
+    node_name: str, text: str
+) -> tuple[state.WorkflowExecution, state.NodeExecution]:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
     user_msg = state.Message(role=models.Role.USER, text=text)
@@ -191,6 +222,62 @@ async def test_llm_executor_with_connect_mock_response(
 
 
 @pytest.mark.asyncio
+async def test_llm_executor_counts_cached_tokens_toward_round_prompt_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = connect.AssistantResponse(
+        provider="openai",
+        model="gpt-3.5-turbo",
+        api_family="openai-responses",
+        content=[connect.TextBlock(text="cached usage response")],
+        finish_reason="stop",
+        usage=connect.Usage(
+            input_tokens=5,
+            output_tokens=3,
+            cache_read_tokens=7,
+            total_tokens=15,
+            completeness="final",
+        ),
+    )
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda: FakeAsyncLLMClient(
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="cached usage response"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            )
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-cached-usage",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-cached-usage", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    final_message_step = output_steps[-1]
+    assert final_message_step.llm_usage is not None
+    assert final_message_step.llm_usage.prompt_tokens == 12
+    assert final_message_step.llm_usage.completion_tokens == 3
+
+
+@pytest.mark.asyncio
 async def test_llm_executor_timeouts_retry_and_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -225,6 +312,110 @@ async def test_llm_executor_timeouts_retry_and_fail(
     final_step = steps[-1]
     assert final_step.type == state.StepType.REJECTION
     assert final_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_retry_clears_partial_streamed_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"n": 0}
+
+    def fake_client_factory() -> FakeAsyncLLMClient:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return FakeAsyncLLMClient(
+                _partial_then_timeout_stream("Applying stale partial. ")
+            )
+        return FakeAsyncLLMClient(_stream_with_text("Final retry answer"))
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-retry-partial-reset",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        response_timeout=0.01,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-retry-partial-reset", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert call_count["n"] == 2
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    final_message_step = output_steps[-1]
+    assert final_message_step.message is not None
+    assert final_message_step.message.text == "Final retry answer"
+    assert "Applying stale partial." not in final_message_step.message.text
+    assert final_message_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_rejects_when_max_rounds_reached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _tool_call_response("call-prior")
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda: FakeAsyncLLMClient(
+            FakeStreamHandle(
+                [connect.ResponseEndEvent(response=response)],
+                final_response=response,
+            )
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-max-rounds",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        max_rounds=1,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-max-rounds", "Hi")
+    prior_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="Tool answer",
+        tool_call_requests=[
+            state.ToolCallReq(
+                id="call-prior",
+                name="echo",
+                arguments={"x": 1},
+            )
+        ],
+    )
+    project.history.upsert_message(run, prior_message)
+    project.history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=prior_message.id,
+            is_complete=True,
+        ),
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(steps) == 1
+    assert steps[0].type == state.StepType.REJECTION
+    assert steps[0].message is not None
+    assert "exceeded max_rounds=1" in steps[0].message.text
 
 
 @pytest.mark.asyncio
@@ -388,14 +579,13 @@ async def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> N
         project,
         node,
     )
-    tools = await executor._build_tools(effective_specs)
+    tools = await executor._build_connect_tools(effective_specs)
     assert tools is not None
     assert len(tools) == 1
 
     tool = tools[0]
-    assert tool["type"] == "function"
-    fn = tool["function"]
-    params = fn["parameters"]["properties"]
+    assert tool.name == "echo"
+    params = tool.input_schema["properties"]
     assert params["x"] == 2
     assert params["local"] is True
     assert params["global"] is True
@@ -453,7 +643,7 @@ async def test_llm_executor_build_tools_respects_global_enabled_override() -> No
         project,
         node,
     )
-    tools = await executor._build_tools(effective_specs)
+    tools = await executor._build_connect_tools(effective_specs)
     assert tools is None
 
 
@@ -464,7 +654,9 @@ async def test_llm_executor_outcome_tag_selection(
     monkeypatch.setattr(
         connect,
         "AsyncLLMClient",
-        lambda: FakeAsyncLLMClient(_stream_with_text("Tagged answer\nOUTCOME: success")),
+        lambda: FakeAsyncLLMClient(
+            _stream_with_text("Tagged answer\nOUTCOME: success")
+        ),
     )
 
     project = StubProject()
