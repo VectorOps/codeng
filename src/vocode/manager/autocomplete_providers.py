@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 from vocode.logger import logger
 from .autocomplete import AutocompleteManager, AutocompleteItem
 from vocode import settings as vocode_settings
+from .commands import auth as auth_commands
 
 if TYPE_CHECKING:
     from .server import UIServer
@@ -134,6 +135,86 @@ async def command_autocomplete_provider(
         )
 
     return _filter_noop(text, items) or None
+
+
+@AutocompleteManager.register_default
+async def auth_autocomplete_provider(
+    server: "UIServer",
+    text: str,
+    row: int,
+    col: int,
+) -> list[AutocompleteItem] | None:
+    _ = server
+    if not text:
+        return None
+    if row != 0:
+        return None
+    if not text.startswith("/auth"):
+        return None
+    if text != "/auth" and not text.startswith("/auth "):
+        return None
+
+    cursor = _clamp_cursor(text, col)
+    start, end = _token_span(text, cursor)
+    word = text[start:end]
+    tokens = text.split()
+    has_trailing_space = text.endswith(" ")
+
+    if len(tokens) <= 1:
+        items = [
+            AutocompleteItem(
+                title=f"/auth {name}",
+                replace_start=0,
+                replace_text=text,
+                insert_text=f"/auth {name} ",
+            )
+            for name in auth_commands.AUTH_SUBCOMMANDS
+        ]
+        return _filter_noop(text, items) or None
+
+    action = tokens[1]
+    if len(tokens) == 2 and not has_trailing_space:
+        needle = word
+        items = []
+        for name in auth_commands.AUTH_SUBCOMMANDS:
+            if needle and not name.startswith(needle):
+                continue
+            items.append(
+                AutocompleteItem(
+                    title=f"/auth {name}",
+                    replace_start=start,
+                    replace_text=word,
+                    insert_text=f"{name} ",
+                )
+            )
+        return _filter_noop(text, items) or None
+
+    if action == "cancel":
+        return None
+
+    if action not in auth_commands.AUTH_SUBCOMMANDS:
+        return None
+
+    if len(tokens) == 2 or (len(tokens) == 3 and not has_trailing_space):
+        needle = ""
+        replace_text = word
+        if len(tokens) == 3:
+            needle = tokens[2]
+        items = []
+        for provider in auth_commands.AUTH_PROVIDERS:
+            if needle and not provider.startswith(needle):
+                continue
+            items.append(
+                AutocompleteItem(
+                    title=f"/auth {action} {provider}",
+                    replace_start=start,
+                    replace_text=replace_text,
+                    insert_text=provider,
+                )
+            )
+        return _filter_noop(text, items) or None
+
+    return None
 
 
 @AutocompleteManager.register_default

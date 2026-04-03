@@ -4,7 +4,13 @@ import asyncio
 
 import pytest
 
+from vocode.manager import (
+    autocomplete_providers as _autocomplete_providers,
+)  # noqa: F401
 from vocode.manager.autocomplete import AutocompleteManager, AutocompleteItem
+from vocode.manager.server import UIServer
+from vocode.manager import helpers as manager_helpers
+from tests.stub_project import StubProject
 
 
 @pytest.mark.asyncio
@@ -72,3 +78,23 @@ async def test_autocomplete_manager_aggregates_results() -> None:
     items = await manager.get_completions(server, "x", 0, 1)
     assert [item.title for item in items] == ["one", "two"]
     assert [item.insert_text for item in items] == ["one", "TWO"]
+
+
+@pytest.mark.asyncio
+async def test_auth_autocomplete_provider_suggests_subcommands() -> None:
+    server_endpoint, _ = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=StubProject(), endpoint=server_endpoint)
+
+    items = await server._autocomplete.get_completions(server, "/auth l", 0, 7)
+
+    assert any(item.insert_text == "login " for item in items)
+
+
+@pytest.mark.asyncio
+async def test_auth_autocomplete_provider_suggests_provider_after_subcommand() -> None:
+    server_endpoint, _ = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=StubProject(), endpoint=server_endpoint)
+
+    items = await server._autocomplete.get_completions(server, "/auth login ch", 0, 14)
+
+    assert any(item.insert_text == "chatgpt" for item in items)

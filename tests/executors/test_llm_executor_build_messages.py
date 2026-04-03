@@ -39,7 +39,7 @@ class _FakeStreamHandle:
 
 
 class _FakeAsyncLLMClient:
-    def __init__(self, stream_handle: _FakeStreamHandle) -> None:
+    def __init__(self, stream_handle: _FakeStreamHandle, **kwargs) -> None:
         self._stream_handle = stream_handle
 
     async def __aenter__(self):
@@ -458,7 +458,7 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     monkeypatch.setattr(
         connect,
         "AsyncLLMClient",
-        lambda: _FakeAsyncLLMClient(
+        lambda *args, **kwargs: _FakeAsyncLLMClient(
             _FakeStreamHandle(
                 [
                     connect.TextDeltaEvent(index=0, delta="Why"),
@@ -466,7 +466,8 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
                     connect.ResponseEndEvent(response=final_response),
                 ],
                 final_response=final_response,
-            )
+            ),
+            **kwargs,
         ),
     )
 

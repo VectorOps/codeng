@@ -530,6 +530,7 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
         prompt_tokens=10,
         completion_tokens=5,
         cost_dollars=0.01,
+        model_name="chatgpt/gpt-5.4",
         input_token_limit=1000,
     )
 
@@ -593,6 +594,7 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
     assert state_packet.last_step_llm_usage is not None
     assert state_packet.last_step_llm_usage.prompt_tokens == 10
     assert state_packet.last_step_llm_usage.completion_tokens == 5
+    assert state_packet.last_step_llm_usage.model_name == "chatgpt/gpt-5.4"
     assert state_packet.last_step_llm_usage.input_token_limit == 1000
 
     dummy_task.cancel()
