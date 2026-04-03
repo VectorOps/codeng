@@ -3,11 +3,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Final
 import re
 import contextlib
-import json
 
 import connect
 
-from vocode.state import Message
 from vocode.logger import logger
 from vocode.settings import ToolSpec  # type: ignore
 
@@ -17,7 +15,6 @@ from .models import LLMNode
 CHOOSE_OUTCOME_TOOL_NAME: Final[str] = "__choose_outcome__"
 OUTCOME_TAG_RE = re.compile(r"^\s*OUTCOME\s*:\s*([A-Za-z0-9_\-]+)\s*$")
 OUTCOME_LINE_PREFIX_RE = re.compile(r"^\s*OUTCOME\s*:\s*")
-MAX_ROUNDS: Final[int] = 32
 
 
 def build_system_prompt(cfg: LLMNode) -> Optional[str]:
@@ -36,146 +33,6 @@ def build_system_prompt(cfg: LLMNode) -> Optional[str]:
         system_parts.append(tag_instruction)
     system_prompt = "\n\n".join(part for part in system_parts if part).strip()
     return system_prompt or None
-
-
-def serialize_connect_messages(
-    system_prompt: Optional[str],
-    messages: List[connect.Message],
-) -> List[Dict[str, Any]]:
-    serialized_messages: List[Dict[str, Any]] = []
-
-    if system_prompt:
-        serialized_messages.append(
-            {
-                "role": "system",
-                "content": system_prompt,
-            }
-        )
-
-    for message in messages:
-        if message.role == "user":
-            content = message.content
-            if isinstance(content, str):
-                text = content
-            else:
-                text = "".join(
-                    block.text for block in content if block.type == "text"
-                )
-            serialized_messages.append(
-                {
-                    "role": "user",
-                    "content": text,
-                }
-            )
-            continue
-
-        if message.role == "assistant":
-            base: Dict[str, Any] = {
-                "role": "assistant",
-                "content": "".join(
-                    block.text for block in message.content if block.type == "text"
-                ),
-            }
-
-            provider_specific_fields = _metadata_to_provider_specific_fields(
-                provider_meta=message.provider_meta,
-                protocol_state=message.protocol_meta,
-                reasoning_signature=_assistant_reasoning_signature(message),
-            )
-            if provider_specific_fields is not None:
-                base["provider_specific_fields"] = provider_specific_fields
-
-            tool_calls: List[Dict[str, Any]] = []
-            for block in message.content:
-                if block.type != "tool_call":
-                    continue
-                tool_call: Dict[str, Any] = {
-                    "id": block.id,
-                    "type": "function",
-                    "function": {
-                        "name": block.name,
-                        "arguments": json.dumps(block.arguments),
-                    },
-                }
-                provider_specific_fields = _metadata_to_provider_specific_fields(
-                    provider_meta=block.provider_meta,
-                    protocol_state=block.protocol_meta,
-                    reasoning_signature=_annotation_reasoning_signature(
-                        block.annotations
-                    ),
-                )
-                if provider_specific_fields is not None:
-                    tool_call["provider_specific_fields"] = provider_specific_fields
-                tool_calls.append(tool_call)
-
-            if tool_calls:
-                base["tool_calls"] = tool_calls
-
-            serialized_messages.append(base)
-            continue
-
-        serialized_messages.append(
-            {
-                "role": "tool",
-                "type": "function_call",
-                "tool_call_id": message.tool_call_id,
-                "name": message.tool_name,
-                "content": "".join(
-                    block.text for block in message.content if block.type == "text"
-                ),
-            }
-        )
-
-    return serialized_messages
-
-
-def _assistant_reasoning_signature(
-    message: connect.AssistantMessage,
-) -> Optional[str]:
-    for block in message.content:
-        if block.type == "reasoning" and block.signature:
-            return block.signature
-    return None
-
-
-def _annotation_reasoning_signature(
-    annotations: Any,
-) -> Optional[str]:
-    if isinstance(annotations, dict):
-        value = annotations.get("reasoning_signature")
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
-def _metadata_to_provider_specific_fields(
-    *,
-    provider_meta: Dict[str, Any],
-    protocol_state: Dict[str, Any],
-    reasoning_signature: Optional[str],
-) -> Optional[Dict[str, Any]]:
-    payload: Dict[str, Any] = {}
-    if provider_meta:
-        payload["provider_meta"] = dict(provider_meta)
-    if protocol_state:
-        payload["protocol_state"] = dict(protocol_state)
-    if reasoning_signature:
-        payload["reasoning_signature"] = reasoning_signature
-    return payload or None
-
-
-# Message mapping and prompt building
-def map_message_to_llm_dict(m: Message, cfg: LLMNode) -> Dict[str, Any]:
-    role = m.role or "user"
-    is_external = m.node is None or m.node != cfg.name
-    if is_external:
-        role = "user"
-    else:
-        if role == "agent":
-            role = "assistant"
-        elif role not in ("user", "system", "tool", "assistant"):
-            role = "user"
-    return {"role": role, "content": m.text}
 
 
 # Outcome helpers

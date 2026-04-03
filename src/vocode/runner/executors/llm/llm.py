@@ -32,27 +32,38 @@ class ToolCallProviderState(BaseModel):
     protocol_state: Dict[str, Any] = Field(default_factory=dict)
     reasoning_signature: Optional[str] = None
 
-    def to_provider_specific_fields(self) -> Optional[Dict[str, Any]]:
-        payload = self.model_dump(exclude_none=True)
-        payload = {key: value for key, value in payload.items() if value != {}}
-        return payload or None
-
 
 class LLMStepState(BaseModel):
     provider_meta: Dict[str, Any] = Field(default_factory=dict)
     protocol_state: Dict[str, Any] = Field(default_factory=dict)
     reasoning_signature: Optional[str] = None
 
-    def to_provider_specific_fields(self) -> Optional[Dict[str, Any]]:
-        payload = self.model_dump(exclude_none=True)
-        payload = {key: value for key, value in payload.items() if value != {}}
-        return payload or None
-
 
 @runner_base.ExecutorFactory.register("llm")
 class LLMExecutor(runner_base.BaseExecutor):
     async def init(self):
         return None
+
+    def _is_tool_round_limit_reached(
+        self,
+        execution: state.NodeExecution,
+    ) -> bool:
+        if self.config.max_rounds == 0:
+            return False
+
+        llm_output_steps = 0
+        for step in execution.iter_steps():
+            if step.type != state.StepType.OUTPUT_MESSAGE:
+                continue
+            if not step.is_complete:
+                continue
+            if step.message is None:
+                continue
+            if not step.message.tool_call_requests:
+                continue
+            llm_output_steps += 1
+
+        return llm_output_steps >= self.config.max_rounds
 
     def _iter_prompt_messages(
         self,
@@ -71,13 +82,6 @@ class LLMExecutor(runner_base.BaseExecutor):
                 and step.execution_id in active_execution_ids
             ]
         return list(runner_base.iter_execution_messages(execution))
-
-    def build_messages(self, inp: runner_base.ExecutorInput) -> List[Dict]:
-        """
-        Generate an OpenAI-compatible conversation from execution state.
-        """
-        system_prompt, connect_messages = self.build_connect_messages(inp)
-        return llm_helpers.serialize_connect_messages(system_prompt, connect_messages)
 
     def build_connect_messages(
         self,
@@ -125,7 +129,9 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         if not connect_messages:
             for msg in inp.execution.input_messages:
-                connect_messages.extend(self._build_connect_messages_for_message(msg, None))
+                connect_messages.extend(
+                    self._build_connect_messages_for_message(msg, None)
+                )
 
         return final_system_prompt, connect_messages
 
@@ -150,24 +156,29 @@ class LLMExecutor(runner_base.BaseExecutor):
                         annotations = {
                             "reasoning_signature": req.state.reasoning_signature,
                         }
+                    provider_meta = {}
+                    protocol_meta = {}
+                    if req.state is not None:
+                        provider_meta = dict(req.state.provider_meta)
+                        protocol_meta = dict(req.state.protocol_state)
                     content.append(
                         connect.ToolCallBlock(
                             id=req.id,
                             name=req.name,
                             arguments=dict(req.arguments or {}),
-                            provider_meta=dict(req.state.provider_meta)
-                            if req.state is not None
-                            else {},
-                            protocol_meta=dict(req.state.protocol_state)
-                            if req.state is not None
-                            else {},
+                            provider_meta=provider_meta,
+                            protocol_meta=protocol_meta,
                             annotations=annotations,
                         )
                     )
 
             provider_meta: Dict[str, Any] = {}
             protocol_meta: Dict[str, Any] = {}
-            if step is not None and step.state is not None and isinstance(step.state, LLMStepState):
+            if (
+                step is not None
+                and step.state is not None
+                and isinstance(step.state, LLMStepState)
+            ):
                 provider_meta = dict(step.state.provider_meta)
                 protocol_meta = dict(step.state.protocol_state)
 
@@ -256,33 +267,9 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         return base_step.model_copy(update=update)
 
-    async def _build_tools(self, effective_specs) -> Optional[List[Dict[str, Any]]]:
-        cfg = self.config
-        if not effective_specs:
-            return None
-
-        tools: List[Dict[str, Any]] = []
-        project_tools = getattr(self.project, "tools", {}) or {}
-
-        for spec in cfg.tools or []:
-            tool_name = spec.name
-            eff_spec = effective_specs.get(tool_name)
-            if eff_spec is None or not eff_spec.enabled:
-                continue
-            tool = project_tools.get(tool_name)
-            if tool is None:
-                continue
-            function_schema = await tool.openapi_spec(eff_spec)
-            tools.append(
-                {
-                    "type": "function",
-                    "function": function_schema,
-                }
-            )
-
-        return tools or None
-
-    async def _build_connect_tools(self, effective_specs) -> Optional[List[connect.ToolSpec]]:
+    async def _build_connect_tools(
+        self, effective_specs
+    ) -> Optional[List[connect.ToolSpec]]:
         cfg = self.config
         if not effective_specs:
             return None
@@ -315,8 +302,40 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         return tools or None
 
+    def _copy_metadata(
+        self,
+        provider_meta: Optional[Dict[str, Any]],
+        protocol_state: Optional[Dict[str, Any]],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        copied_provider_meta: Dict[str, Any] = {}
+        copied_protocol_state: Dict[str, Any] = {}
+        if provider_meta:
+            copied_provider_meta = dict(provider_meta)
+        if protocol_state:
+            copied_protocol_state = dict(protocol_state)
+        return copied_provider_meta, copied_protocol_state
+
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
+        if self._is_tool_round_limit_reached(inp.execution):
+            error_step = self.project.history.upsert_step(
+                inp.run,
+                state.Step(
+                    execution_id=inp.execution.id,
+                    type=state.StepType.REJECTION,
+                    is_complete=True,
+                    workflow_execution=inp.run,
+                ),
+            )
+            yield self._build_step_from_message(
+                error_step,
+                role=models.Role.SYSTEM,
+                step_type=state.StepType.REJECTION,
+                text=(f"LLM node '{cfg.name}' exceeded max_rounds={cfg.max_rounds}"),
+                is_complete=True,
+            )
+            return
+
         system_prompt, connect_messages = self.build_connect_messages(inp)
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
         tools = await self._build_connect_tools(effective_specs)
@@ -369,6 +388,8 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         while True:
             try:
+                assistant_partial = ""
+                final_response = None
                 request = connect.GenerateRequest(
                     messages=connect_messages,
                     system_prompt=system_prompt,
@@ -403,6 +424,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                     if remaining <= 0:
                         raise asyncio.TimeoutError()
                     return await asyncio.wait_for(awaitable, timeout=remaining)
+
                 has_visible_content = False
 
                 async with connect.AsyncLLMClient() as client:
@@ -447,7 +469,11 @@ class LLMExecutor(runner_base.BaseExecutor):
                             yield interim_step
                             continue
 
-                        if event.type == "text_end" and event.text and not assistant_partial:
+                        if (
+                            event.type == "text_end"
+                            and event.text
+                            and not assistant_partial
+                        ):
                             if not has_visible_content:
                                 has_visible_content = True
                             assistant_partial = event.text
@@ -571,9 +597,13 @@ class LLMExecutor(runner_base.BaseExecutor):
         tool_calls_data = [
             block for block in final_response.content if block.type == "tool_call"
         ]
+        response_provider_meta, response_protocol_state = self._copy_metadata(
+            final_response.provider_meta,
+            final_response.protocol_state,
+        )
         step_state = LLMStepState(
-            provider_meta=dict(final_response.provider_meta),
-            protocol_state=dict(final_response.protocol_state),
+            provider_meta=response_provider_meta,
+            protocol_state=response_protocol_state,
             reasoning_signature=next(
                 (
                     block.signature
@@ -612,6 +642,10 @@ class LLMExecutor(runner_base.BaseExecutor):
                 continue
 
             tool_spec = effective_specs.get(func_name)
+            tool_provider_meta, tool_protocol_state = self._copy_metadata(
+                tc.provider_meta,
+                tc.protocol_meta,
+            )
 
             tool_call_reqs.append(
                 state.ToolCallReq(
@@ -621,8 +655,8 @@ class LLMExecutor(runner_base.BaseExecutor):
                     arguments=arguments,
                     tool_spec=tool_spec,
                     state=ToolCallProviderState(
-                        provider_meta=dict(tc.provider_meta),
-                        protocol_state=dict(tc.protocol_meta),
+                        provider_meta=tool_provider_meta,
+                        protocol_state=tool_protocol_state,
                         reasoning_signature=(
                             tc.annotations.get("reasoning_signature")
                             if isinstance(tc.annotations, dict)
@@ -634,7 +668,9 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         # Collect usage stats
         usage_obj = final_response.usage
-        prompt_tokens = int(usage_obj.input_tokens or 0)
+        prompt_tokens = int(usage_obj.input_tokens or 0) + int(
+            usage_obj.cache_read_tokens or 0
+        )
         completion_tokens = int(usage_obj.output_tokens or 0)
 
         round_cost = 0.0
