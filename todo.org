@@ -1,7 +1,7 @@
 #+title: Todo
 
 * [ ] General
-** [ ] Analyze why usage for current session is not being captured correctly with Connect, as if input messages from previous round are not sent over
+** [X] Analyze why usage for current session is not being captured correctly with Connect, as if input messages from previous round are not sent over
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
 ** [X] knowlt: reject virtual path writes
 ** [ ] Nicely format tool call rejection text

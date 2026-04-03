@@ -44,6 +44,20 @@ class LLMExecutor(runner_base.BaseExecutor):
     async def init(self):
         return None
 
+    async def _ensure_provider_authorization(self) -> Optional[str]:
+        provider = None
+        if "/" in self.config.model:
+            provider, _, _ = self.config.model.partition("/")
+        if provider != "chatgpt":
+            return None
+        has_auth = await self.project.credentials.has_active_authorization(provider)
+        if has_auth:
+            return None
+        return (
+            "Missing authorization for chatgpt. "
+            "Run /auth login chatgpt to authenticate or provide environment credentials."
+        )
+
     def _is_tool_round_limit_reached(
         self,
         execution: state.NodeExecution,
@@ -317,6 +331,25 @@ class LLMExecutor(runner_base.BaseExecutor):
 
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
+        auth_error = await self._ensure_provider_authorization()
+        if auth_error is not None:
+            error_step = self.project.history.upsert_step(
+                inp.run,
+                state.Step(
+                    execution_id=inp.execution.id,
+                    type=state.StepType.REJECTION,
+                    is_complete=True,
+                    workflow_execution=inp.run,
+                ),
+            )
+            yield self._build_step_from_message(
+                error_step,
+                role=models.Role.SYSTEM,
+                step_type=state.StepType.REJECTION,
+                text=auth_error,
+                is_complete=True,
+            )
+            return
         if self._is_tool_round_limit_reached(inp.execution):
             error_step = self.project.history.upsert_step(
                 inp.run,
@@ -427,7 +460,9 @@ class LLMExecutor(runner_base.BaseExecutor):
 
                 has_visible_content = False
 
-                async with connect.AsyncLLMClient() as client:
+                async with connect.AsyncLLMClient(
+                    credential_manager=self.project.credentials
+                ) as client:
                     stream_handle = client.stream(
                         cfg.model,
                         request,
@@ -688,6 +723,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_dollars=round_cost,
+            model_name=cfg.model,
             input_token_limit=model_input_token_limit,
             output_token_limit=cfg.max_tokens,
         )

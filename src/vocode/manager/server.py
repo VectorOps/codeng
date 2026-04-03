@@ -12,6 +12,7 @@ from vocode import state
 from vocode.logger import get_log_manager_internal, init_log_manager, logger
 from vocode.project import Project
 from vocode.runner import proto as runner_proto
+from vocode.connect_auth import ServerAuthenticationSession
 
 from .base import BaseManager, RunnerFrame
 from .helpers import BaseEndpoint, IncomingPacketRouter, RpcHelper
@@ -22,6 +23,8 @@ from .commands import workflows as workflow_commands
 
 
 class UIServer:
+    manager_proto = manager_proto
+
     def __init__(
         self,
         project: Project,
@@ -44,6 +47,7 @@ class UIServer:
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
         self._pending_input_step: Optional[state.Step] = None
+        self._auth_session: Optional[ServerAuthenticationSession] = None
         self._progress_last_sent_at_by_id: dict[str, float] = {}
         self._know_repo_label_by_id: dict[str, str] = {}
         self._emit_branch_packets = False
@@ -128,6 +132,41 @@ class UIServer:
             payload=payload,
         )
         await self._endpoint.send(envelope)
+
+    async def request_text_input(
+        self,
+        *,
+        title: Optional[str] = None,
+        subtitle: Optional[str] = None,
+    ) -> str:
+        await self.send_packet(
+            manager_proto.InputPromptPacket(title=title, subtitle=subtitle)
+        )
+        waiter = self._push_input_waiter()
+        try:
+            packet = await waiter
+        except asyncio.CancelledError:
+            await self.send_packet(manager_proto.InputPromptPacket())
+            raise
+        await self.send_packet(manager_proto.InputPromptPacket())
+        message = packet.message
+        return message.text
+
+    def start_authentication_session(
+        self, provider: str
+    ) -> ServerAuthenticationSession:
+        session = ServerAuthenticationSession(self, provider)
+        self._auth_session = session
+        return session
+
+    @property
+    def auth_session(self) -> Optional[ServerAuthenticationSession]:
+        session = self._auth_session
+        if session is None:
+            return None
+        if not session.is_active:
+            return None
+        return session
 
     def enable_branch_packets(self) -> None:
         self._emit_branch_packets = True

@@ -47,8 +47,9 @@ class FakeStreamHandle:
 
 
 class FakeAsyncLLMClient:
-    def __init__(self, stream_handle: FakeStreamHandle) -> None:
+    def __init__(self, stream_handle: FakeStreamHandle, **kwargs: Any) -> None:
         self._stream_handle = stream_handle
+        self.kwargs = kwargs
 
     async def __aenter__(self):
         return self
@@ -177,8 +178,9 @@ async def test_llm_executor_with_connect_mock_response(
     monkeypatch.setattr(
         connect,
         "AsyncLLMClient",
-        lambda: FakeAsyncLLMClient(
-            _stream_with_text("It's simple to use and easy to get started")
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            _stream_with_text("It's simple to use and easy to get started"),
+            **kwargs,
         ),
     )
 
@@ -242,14 +244,15 @@ async def test_llm_executor_counts_cached_tokens_toward_round_prompt_usage(
     monkeypatch.setattr(
         connect,
         "AsyncLLMClient",
-        lambda: FakeAsyncLLMClient(
+        lambda *args, **kwargs: FakeAsyncLLMClient(
             FakeStreamHandle(
                 [
                     connect.TextDeltaEvent(index=0, delta="cached usage response"),
                     connect.ResponseEndEvent(response=response),
                 ],
                 final_response=response,
-            )
+            ),
+            **kwargs,
         ),
     )
 
@@ -283,9 +286,9 @@ async def test_llm_executor_timeouts_retry_and_fail(
 ) -> None:
     call_count = {"n": 0}
 
-    def fake_client_factory() -> FakeAsyncLLMClient:
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
         call_count["n"] += 1
-        return FakeAsyncLLMClient(_timeout_stream())
+        return FakeAsyncLLMClient(_timeout_stream(), **kwargs)
 
     monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
 
@@ -320,13 +323,14 @@ async def test_llm_executor_retry_clears_partial_streamed_text(
 ) -> None:
     call_count = {"n": 0}
 
-    def fake_client_factory() -> FakeAsyncLLMClient:
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
         call_count["n"] += 1
         if call_count["n"] == 1:
             return FakeAsyncLLMClient(
-                _partial_then_timeout_stream("Applying stale partial. ")
+                _partial_then_timeout_stream("Applying stale partial. "),
+                **kwargs,
             )
-        return FakeAsyncLLMClient(_stream_with_text("Final retry answer"))
+        return FakeAsyncLLMClient(_stream_with_text("Final retry answer"), **kwargs)
 
     monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
 
@@ -365,11 +369,12 @@ async def test_llm_executor_rejects_when_max_rounds_reached(
     monkeypatch.setattr(
         connect,
         "AsyncLLMClient",
-        lambda: FakeAsyncLLMClient(
+        lambda *args, **kwargs: FakeAsyncLLMClient(
             FakeStreamHandle(
                 [connect.ResponseEndEvent(response=response)],
                 final_response=response,
-            )
+            ),
+            **kwargs,
         ),
     )
 
@@ -424,9 +429,9 @@ async def test_llm_executor_start_timeout_ignores_empty_chunks(
 ) -> None:
     call_count = {"n": 0}
 
-    def fake_client_factory() -> FakeAsyncLLMClient:
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
         call_count["n"] += 1
-        return FakeAsyncLLMClient(_empty_then_timeout_stream())
+        return FakeAsyncLLMClient(_empty_then_timeout_stream(), **kwargs)
 
     monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
 
@@ -471,14 +476,15 @@ async def test_llm_executor_populates_tool_spec_on_tool_call(
     monkeypatch.setattr(
         connect,
         "AsyncLLMClient",
-        lambda: FakeAsyncLLMClient(
+        lambda *args, **kwargs: FakeAsyncLLMClient(
             FakeStreamHandle(
                 [
                     connect.TextDeltaEvent(index=0, delta="Tool answer"),
                     connect.ResponseEndEvent(response=response),
                 ],
                 final_response=response,
-            )
+            ),
+            **kwargs,
         ),
     )
 
@@ -654,8 +660,9 @@ async def test_llm_executor_outcome_tag_selection(
     monkeypatch.setattr(
         connect,
         "AsyncLLMClient",
-        lambda: FakeAsyncLLMClient(
-            _stream_with_text("Tagged answer\nOUTCOME: success")
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            _stream_with_text("Tagged answer\nOUTCOME: success"),
+            **kwargs,
         ),
     )
 
@@ -709,14 +716,15 @@ async def test_llm_executor_outcome_function_selection(
     monkeypatch.setattr(
         connect,
         "AsyncLLMClient",
-        lambda: FakeAsyncLLMClient(
+        lambda *args, **kwargs: FakeAsyncLLMClient(
             FakeStreamHandle(
                 [
                     connect.TextDeltaEvent(index=0, delta="Functional answer"),
                     connect.ResponseEndEvent(response=response),
                 ],
                 final_response=response,
-            )
+            ),
+            **kwargs,
         ),
     )
 
@@ -763,3 +771,30 @@ async def test_llm_executor_outcome_function_selection(
     for s in output_steps[:-1]:
         assert s.is_complete is False
     assert final_message_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_rejects_chatgpt_without_authorization() -> None:
+    project = StubProject()
+    project.credentials.has_active_authorization = lambda provider: asyncio.sleep(
+        0, result=False
+    )
+    node = LLMNode(
+        name="node-chatgpt-auth",
+        type="llm",
+        model="chatgpt/gpt-4o",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-chatgpt-auth", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(steps) == 1
+    assert steps[0].type == state.StepType.REJECTION
+    assert steps[0].message is not None
+    assert "Run /auth login chatgpt" in steps[0].message.text

@@ -168,7 +168,7 @@ wheels = [
 [[package]]
 name = "connect"
 version = "0.1.0"
-source = { git = "https://github.com/VectorOps/connect.git#c1f680f06666c7c05218b9e8a1598410e6becdfc" }
+source = { git = "https://github.com/VectorOps/connect.git#531c3ee2cc4977065cce2c1384b32101e248f25d" }
 dependencies = [
     { name = "aiohttp" },
     { name = "pydantic" },
