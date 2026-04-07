@@ -65,6 +65,35 @@ class InputManager:
                 except ValueError:
                     pass
 
+    async def snapshot(self) -> InputManagerState:
+        async with self._lock:
+            return InputManagerState(
+                queued_messages=deque(self._state.queued_messages),
+                waiters=deque(
+                    waiter for waiter in self._state.waiters if not waiter.done()
+                ),
+            )
+
+    async def dequeue(self) -> Optional[state.Message]:
+        async with self._lock:
+            if not self._state.queued_messages:
+                return None
+            return self._state.queued_messages.popleft()
+
+    async def remove_at(self, index: int) -> Optional[state.Message]:
+        async with self._lock:
+            if index < 0 or index >= len(self._state.queued_messages):
+                return None
+            message = self._state.queued_messages[index]
+            del self._state.queued_messages[index]
+            return message
+
+    async def clear_queue(self) -> int:
+        async with self._lock:
+            count = len(self._state.queued_messages)
+            self._state.queued_messages.clear()
+            return count
+
     async def reset(self) -> None:
         async with self._lock:
             self._state.queued_messages.clear()
