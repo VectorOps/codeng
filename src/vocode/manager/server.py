@@ -46,8 +46,6 @@ class UIServer:
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
         self._ui_input_channel_id = f"ui-server:{name}"
-        self._last_tool_confirmation_runner_id: Optional[str] = None
-        self._last_tool_confirmation_step: Optional[state.Step] = None
         self._auth_session: Optional[ServerAuthenticationSession] = None
         self._progress_last_sent_at_by_id: dict[str, float] = {}
         self._know_repo_label_by_id: dict[str, str] = {}
@@ -299,7 +297,6 @@ class UIServer:
         self._recv_task = asyncio.create_task(self._recv_loop())
 
         await workflow_commands.register_workflow_commands(self._commands)
-        await self._register_autoapprove_commands()
 
         settings = self._manager.project.settings
         if settings is not None:
@@ -518,147 +515,6 @@ class UIServer:
         )
         await self.send_packet(packet)
 
-    async def _register_autoapprove_commands(self) -> None:
-        async def aa(server: "UIServer", args: list[str]) -> None:
-            if args:
-                raise workflow_commands.CommandError("Usage: /aa")
-            step = server._last_tool_confirmation_step
-            if step is None or step.type != state.StepType.TOOL_REQUEST:
-                raise workflow_commands.CommandError(
-                    "No tool confirmation is currently pending."
-                )
-            message = step.message
-            if message is None:
-                raise workflow_commands.CommandError(
-                    "No tool confirmation is currently pending."
-                )
-
-            added: list[str] = []
-            for tool_req in message.tool_call_requests:
-                if tool_req.status != state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
-                    continue
-                server.manager.project.project_state.autoapprove.add_tool(tool_req.name)
-                added.append(tool_req.name)
-
-            runner = server.manager.current_runner
-            if runner is None:
-                raise workflow_commands.CommandError(
-                    "No tool confirmation is currently pending."
-                )
-            if server._last_tool_confirmation_runner_id != runner.input_workflow_id:
-                raise workflow_commands.CommandError(
-                    "No tool confirmation is currently pending."
-                )
-            accepted = await server.manager.project.input_manager.publish(
-                runner.input_workflow_id,
-                state.Message(role=models.Role.USER, text=""),
-                queue_if_unhandled=False,
-            )
-            if not accepted:
-                raise workflow_commands.CommandError(
-                    "No tool confirmation is currently pending."
-                )
-            prompt_packet = manager_proto.InputPromptPacket()
-            await server.send_packet(prompt_packet)
-            server._last_tool_confirmation_step = None
-            server._last_tool_confirmation_runner_id = None
-
-            if added:
-                unique = sorted(set(added))
-                await server.send_text_message(
-                    "Session auto-approve enabled for: " + ", ".join(unique)
-                )
-
-        await self._commands.register(
-            "aa",
-            aa,
-            description="Auto-approve similar tool calls for this session",
-            params=[],
-            hidden=True,
-        )
-
-        async def autoapprove(server: "UIServer", args: list[str]) -> None:
-            if not args:
-                raise workflow_commands.CommandError(
-                    "Usage: /autoapprove <list|add|remove|clear>"
-                )
-            sub = args[0]
-            rest = args[1:]
-            st = server.manager.project.project_state.autoapprove
-
-            if sub == "list":
-                if rest:
-                    raise workflow_commands.CommandError("Usage: /autoapprove list")
-                if not st.policies_by_tool:
-                    await server.send_text_message("No session auto-approve rules.")
-                    return
-                lines: list[str] = ["Session auto-approve rules:"]
-                for name in sorted(st.policies_by_tool.keys()):
-                    policy = st.policies_by_tool[name]
-                    if policy.approve_all:
-                        lines.append(f"  - {name}: approve_all")
-                    elif not policy.rules:
-                        lines.append(f"  - {name}: (no rules)")
-                    else:
-                        lines.append(f"  - {name}:")
-                        for rule in policy.rules:
-                            lines.append(f"      - {rule.key} ~= {rule.pattern}")
-                await server.send_text_message("\n".join(lines))
-                return
-
-            if sub == "add":
-                if len(rest) not in (1, 3):
-                    raise workflow_commands.CommandError(
-                        "Usage: /autoapprove add <tool> [<dotted_key> <pattern>]"
-                    )
-                tool_name = rest[0]
-                if len(rest) == 1:
-                    st.add_tool(tool_name, approve_all=True)
-                    await server.send_text_message(
-                        f"Session auto-approve enabled for tool: {tool_name}"
-                    )
-                    return
-                st.add_rule(tool_name, key=rest[1], pattern=rest[2])
-                await server.send_text_message(
-                    f"Session auto-approve rule added for tool: {tool_name}"
-                )
-                return
-
-            if sub == "remove":
-                if len(rest) != 1:
-                    raise workflow_commands.CommandError(
-                        "Usage: /autoapprove remove <tool>"
-                    )
-                tool_name = rest[0]
-                removed = st.remove_tool(tool_name)
-                if removed:
-                    await server.send_text_message(
-                        f"Session auto-approve disabled for tool: {tool_name}"
-                    )
-                else:
-                    await server.send_text_message(
-                        f"No session auto-approve rule found for tool: {tool_name}"
-                    )
-                return
-
-            if sub == "clear":
-                if rest:
-                    raise workflow_commands.CommandError("Usage: /autoapprove clear")
-                st.clear()
-                await server.send_text_message("Session auto-approve rules cleared.")
-                return
-
-            raise workflow_commands.CommandError(
-                "Usage: /autoapprove <list|add|remove|clear>"
-            )
-
-        await self._commands.register(
-            "autoapprove",
-            autoapprove,
-            description="Manage session auto-approve rules",
-            params=["<list|add|remove|clear>", "..."],
-        )
-
     async def stop(self) -> None:
         if not self._started:
             return
@@ -738,8 +594,6 @@ class UIServer:
                 "Empty line confirms, any text to reject with a message. "
                 "Tip: type /aa to auto-approve similar calls for this session"
             )
-            self._last_tool_confirmation_step = step
-            self._last_tool_confirmation_runner_id = frame.runner.input_workflow_id
 
         packet = manager_proto.RunnerReqPacket(
             workflow_id=frame.workflow_name,
@@ -785,8 +639,6 @@ class UIServer:
             state.RunnerStatus.STOPPED,
             state.RunnerStatus.FINISHED,
         ):
-            self._last_tool_confirmation_step = None
-            self._last_tool_confirmation_runner_id = None
             prompt_packet = manager_proto.InputPromptPacket()
             await self.send_packet(prompt_packet)
 

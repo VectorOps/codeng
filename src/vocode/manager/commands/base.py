@@ -49,6 +49,7 @@ class DeclarativeCommand:
         params: list[ParamSpec],
         description: str | None = None,
         param_names: list[str] | None = None,
+        hidden: bool = False,
     ) -> None:
         params_sorted = sorted(params, key=lambda p: p.index)
         seen: set[int] = set()
@@ -75,6 +76,7 @@ class DeclarativeCommand:
         self._splat = splat_spec
         self.description = description
         self.param_names = list(param_names) if param_names is not None else None
+        self.hidden = hidden
 
     def _parse_params(self, args: typing.Sequence[str]) -> list[typing.Any]:
         tokens = list(args)
@@ -143,6 +145,7 @@ class CommandManager:
                 self._metadata[name] = _CommandMeta(
                     description=decl.description,
                     params=params,
+                    hidden=decl.hidden,
                 )
 
     def _build_invoker(self, decl: DeclarativeCommand) -> CommandInvoker:
@@ -292,6 +295,7 @@ def command(
     *,
     description: str | None = None,
     params: list[str] | None = None,
+    hidden: bool = False,
 ) -> typing.Callable[
     [typing.Callable[..., typing.Awaitable[None]]], DeclarativeCommand
 ]:
@@ -307,6 +311,7 @@ def command(
             params=list(params_specs),
             description=description,
             param_names=params,
+            hidden=hidden,
         )
         _GLOBAL_COMMANDS[name] = decl
         return decl
