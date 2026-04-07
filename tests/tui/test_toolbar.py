@@ -421,6 +421,53 @@ def test_history_search_shows_matches_and_accepts() -> None:
     assert input_component.text == "echo world"
 
 
+def test_history_search_displays_only_first_line_and_keeps_full_value() -> None:
+    ui_state = _make_tui_state_with_console()
+    ui_state.history.add("echo hello\nsecond line")
+
+    input_component = ui_state._input_component
+    input_component.text = ""
+    input_component.set_cursor_position(0, 0)
+
+    event_ctrl_r = input_base.KeyEvent(
+        action="down",
+        key="r",
+        ctrl=True,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_ctrl_r)
+
+    terminal = ui_state.terminal
+    container = terminal.components[-1]
+    select_component = container.children[1]
+    assert select_component.items
+    assert select_component.items[0].text == "echo hello"
+    assert select_component.items[0].value == "echo hello\nsecond line"
+
+
+def test_history_search_shows_up_to_twenty_matches() -> None:
+    ui_state = _make_tui_state_with_console()
+    for index in range(25):
+        ui_state.history.add(f"echo {index}")
+
+    event_ctrl_r = input_base.KeyEvent(
+        action="down",
+        key="r",
+        ctrl=True,
+        alt=False,
+        shift=False,
+    )
+    ui_state._handle_input_event(event_ctrl_r)
+
+    terminal = ui_state.terminal
+    container = terminal.components[-1]
+    select_component = container.children[1]
+    assert len(select_component.items) == 20
+    assert select_component.items[0].text == "echo 24"
+    assert select_component.items[-1].text == "echo 5"
+
+
 def test_history_search_escape_keeps_original_buffer() -> None:
     ui_state = _make_tui_state_with_console()
     ui_state.history.add("one")
