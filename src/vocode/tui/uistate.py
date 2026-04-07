@@ -36,6 +36,7 @@ from vocode.tui.lib.input import handler as input_handler_mod
 
 AUTOCOMPLETE_DEBOUNCE_MS: typing.Final[int] = 100
 PROGRESS_VISIBILITY_DELAY_S: typing.Final[float] = 2.0
+HISTORY_SEARCH_MAX_ITEMS: typing.Final[int] = 20
 
 
 class ActionKind(str, enum.Enum):
@@ -297,14 +298,15 @@ class TUIState:
         for index, entry in enumerate(reversed(entries)):
             if q and q not in entry.casefold():
                 continue
+            single_line_entry = entry.splitlines()[0] if entry.splitlines() else ""
             items.append(
                 {
                     "id": str(index),
-                    "text": entry,
+                    "text": single_line_entry,
                     "value": entry,
                 }
             )
-            if len(items) >= 5:
+            if len(items) >= HISTORY_SEARCH_MAX_ITEMS:
                 break
         component.set_items(items)
 
