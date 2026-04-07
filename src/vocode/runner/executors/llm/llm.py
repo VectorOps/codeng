@@ -3,8 +3,8 @@ from typing import Final
 from collections.abc import Awaitable
 import asyncio
 import json
-import litellm
-from pydantic import BaseModel
+import connect
+from pydantic import BaseModel, Field
 
 from vocode import state, models
 from vocode.logger import logger
@@ -28,18 +28,56 @@ def _min_deadline(a: Optional[float], b: Optional[float]) -> Optional[float]:
 
 
 class ToolCallProviderState(BaseModel):
-    provider_state: Optional[Dict[str, Any]] = None
+    provider_meta: Dict[str, Any] = Field(default_factory=dict)
+    protocol_state: Dict[str, Any] = Field(default_factory=dict)
+    reasoning_signature: Optional[str] = None
 
 
 class LLMStepState(BaseModel):
-    provider_state: Optional[Dict[str, Any]] = None
+    provider_meta: Dict[str, Any] = Field(default_factory=dict)
+    protocol_state: Dict[str, Any] = Field(default_factory=dict)
+    reasoning_signature: Optional[str] = None
 
 
 @runner_base.ExecutorFactory.register("llm")
 class LLMExecutor(runner_base.BaseExecutor):
     async def init(self):
-        litellm.suppress_debug_info = True
-        litellm.set_verbose = False
+        return None
+
+    async def _ensure_provider_authorization(self) -> Optional[str]:
+        provider = None
+        if "/" in self.config.model:
+            provider, _, _ = self.config.model.partition("/")
+        if provider != "chatgpt":
+            return None
+        has_auth = await self.project.credentials.has_active_authorization(provider)
+        if has_auth:
+            return None
+        return (
+            "Missing authorization for chatgpt. "
+            "Run /auth login chatgpt to authenticate or provide environment credentials."
+        )
+
+    def _is_tool_round_limit_reached(
+        self,
+        execution: state.NodeExecution,
+    ) -> bool:
+        if self.config.max_rounds == 0:
+            return False
+
+        llm_output_steps = 0
+        for step in execution.iter_steps():
+            if step.type != state.StepType.OUTPUT_MESSAGE:
+                continue
+            if not step.is_complete:
+                continue
+            if step.message is None:
+                continue
+            if not step.message.tool_call_requests:
+                continue
+            llm_output_steps += 1
+
+        return llm_output_steps >= self.config.max_rounds
 
     def _iter_prompt_messages(
         self,
@@ -59,96 +97,23 @@ class LLMExecutor(runner_base.BaseExecutor):
             ]
         return list(runner_base.iter_execution_messages(execution))
 
-    def build_messages(self, inp: runner_base.ExecutorInput) -> List[Dict]:
-        """
-        Generate an OpenAI-compatible conversation from execution state.
-        """
+    def build_connect_messages(
+        self,
+        inp: runner_base.ExecutorInput,
+    ) -> tuple[Optional[str], List[connect.Message]]:
         cfg = self.config
-        execution = inp.execution
 
         collected_messages: List[state.Message] = []
         message_steps: Dict[str, Optional[state.Step]] = {}
 
-        # Build synthetic system message (if any) as a Message, so preprocessors can modify it.
-        system_parts: List[str] = []
-        if cfg.system:
-            system_parts.append(cfg.system)
-        if cfg.system_append:
-            system_parts.append(cfg.system_append)
-        outcome_names = llm_helpers.get_outcome_names(cfg)
-        if (
-            len(outcome_names) > 1
-            and cfg.outcome_strategy == models.OutcomeStrategy.TAG
-        ):
-            outcome_desc_bullets = llm_helpers.get_outcome_desc_bullets(cfg)
-            tag_instruction = llm_helpers.build_tag_system_instruction(
-                outcome_names,
-                outcome_desc_bullets,
+        system_prompt = llm_helpers.build_system_prompt(cfg)
+        if system_prompt:
+            system_message = state.Message(
+                role=models.Role.SYSTEM,
+                text=system_prompt,
             )
-            system_parts.append(tag_instruction)
-
-        if system_parts:
-            system_prompt = "\n\n".join(p for p in system_parts if p).strip()
-            if system_prompt:
-                system_message = state.Message(
-                    role=models.Role.SYSTEM,
-                    text=system_prompt,
-                )
-                collected_messages.append(system_message)
-                message_steps[str(system_message.id)] = None
-
-        def _append_tool_response(resp: state.ToolCallResp) -> None:
-            tool_msg: Dict[str, Any] = {
-                "role": "tool",
-                "type": "function_call",
-                "tool_call_id": resp.id,
-                "name": resp.name,
-                "content": "",
-            }
-            if resp.result is not None:
-                tool_msg["content"] = json.dumps(resp.result)
-            serialized_messages.append(tool_msg)
-
-        def _append_message(msg: state.Message) -> None:
-            step = message_steps.get(str(msg.id))
-
-            role_value = msg.role.value
-            base: Dict[str, Any] = {
-                "role": role_value,
-                "content": msg.text,
-            }
-
-            if (
-                step is not None
-                and step.state is not None
-                and isinstance(step.state, LLMStepState)
-                and step.state.provider_state is not None
-            ):
-                base["provider_specific_fields"] = step.state.provider_state
-
-            if msg.tool_call_requests:
-                tool_calls: List[Dict[str, Any]] = []
-                for req in msg.tool_call_requests:
-                    tool_call: Dict[str, Any] = {
-                        "id": req.id,
-                        "type": req.type,
-                        "function": {
-                            "name": req.name,
-                            "arguments": json.dumps(req.arguments or {}),
-                        },
-                    }
-                    if req.state is not None:
-                        tool_call["provider_specific_fields"] = req.state.provider_state
-                    tool_calls.append(tool_call)
-
-                if tool_calls:
-                    base["tool_calls"] = tool_calls
-
-            serialized_messages.append(base)
-
-            if msg.tool_call_responses:
-                for resp in msg.tool_call_responses:
-                    _append_tool_response(resp)
+            collected_messages.append(system_message)
+            message_steps[str(system_message.id)] = None
 
         for msg, step in self._iter_prompt_messages(inp):
             if step is not None and step.type not in INCLUDED_STEP_TYPES:
@@ -165,11 +130,108 @@ class LLMExecutor(runner_base.BaseExecutor):
         else:
             processed_messages = collected_messages
 
-        serialized_messages: List[Dict[str, Any]] = []
-        for msg in processed_messages:
-            _append_message(msg)
+        connect_messages: List[connect.Message] = []
+        final_system_prompt: Optional[str] = None
 
-        return serialized_messages
+        for msg in processed_messages:
+            if msg.role == models.Role.SYSTEM:
+                if final_system_prompt is None:
+                    final_system_prompt = msg.text
+                continue
+            step = message_steps.get(str(msg.id))
+            connect_messages.extend(self._build_connect_messages_for_message(msg, step))
+
+        if not connect_messages:
+            for msg in inp.execution.input_messages:
+                connect_messages.extend(
+                    self._build_connect_messages_for_message(msg, None)
+                )
+
+        return final_system_prompt, connect_messages
+
+    def _build_connect_messages_for_message(
+        self,
+        msg: state.Message,
+        step: Optional[state.Step],
+    ) -> List[connect.Message]:
+        if msg.role == models.Role.USER:
+            return [connect.UserMessage(content=msg.text)]
+
+        if msg.role == models.Role.ASSISTANT:
+            messages: List[connect.Message] = []
+            content: List[connect.AssistantContentBlock] = []
+            if msg.text:
+                content.append(connect.TextBlock(text=msg.text))
+
+            if msg.tool_call_requests:
+                for req in msg.tool_call_requests:
+                    annotations: Optional[Dict[str, Any]] = None
+                    if req.state is not None and req.state.reasoning_signature:
+                        annotations = {
+                            "reasoning_signature": req.state.reasoning_signature,
+                        }
+                    provider_meta = {}
+                    protocol_meta = {}
+                    if req.state is not None:
+                        provider_meta = dict(req.state.provider_meta)
+                        protocol_meta = dict(req.state.protocol_state)
+                    content.append(
+                        connect.ToolCallBlock(
+                            id=req.id,
+                            name=req.name,
+                            arguments=dict(req.arguments or {}),
+                            provider_meta=provider_meta,
+                            protocol_meta=protocol_meta,
+                            annotations=annotations,
+                        )
+                    )
+
+            provider_meta: Dict[str, Any] = {}
+            protocol_meta: Dict[str, Any] = {}
+            if (
+                step is not None
+                and step.state is not None
+                and isinstance(step.state, LLMStepState)
+            ):
+                provider_meta = dict(step.state.provider_meta)
+                protocol_meta = dict(step.state.protocol_state)
+
+            if content:
+                messages.append(
+                    connect.AssistantMessage(
+                        content=content,
+                        provider_meta=provider_meta,
+                        protocol_meta=protocol_meta,
+                    )
+                )
+
+            for resp in msg.tool_call_responses:
+                result_text = ""
+                if resp.result is not None:
+                    result_text = json.dumps(resp.result)
+                messages.append(
+                    connect.ToolResultMessage(
+                        tool_call_id=resp.id,
+                        tool_name=resp.name,
+                        content=[connect.TextBlock(text=result_text)],
+                    )
+                )
+
+            return messages
+
+        tool_messages: List[connect.Message] = []
+        for resp in msg.tool_call_responses:
+            result_text = ""
+            if resp.result is not None:
+                result_text = json.dumps(resp.result)
+            tool_messages.append(
+                connect.ToolResultMessage(
+                    tool_call_id=resp.id,
+                    tool_name=resp.name,
+                    content=[connect.TextBlock(text=result_text)],
+                )
+            )
+        return tool_messages
 
     def _build_step_from_message(
         self,
@@ -183,6 +245,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         tool_call_responses: Optional[List[state.ToolCallResp]] = None,
         is_complete: bool = False,
         outcome_name: Optional[str] = None,
+        step_state: Optional[BaseModel] = None,
     ) -> state.Step:
         workflow_execution = base_step._workflow_execution
         history = self.project.history
@@ -213,15 +276,19 @@ class LLMExecutor(runner_base.BaseExecutor):
             update["llm_usage"] = usage
         if outcome_name is not None:
             update["outcome_name"] = outcome_name
+        if step_state is not None:
+            update["state"] = step_state
 
         return base_step.model_copy(update=update)
 
-    async def _build_tools(self, effective_specs) -> Optional[List[Dict[str, Any]]]:
+    async def _build_connect_tools(
+        self, effective_specs
+    ) -> Optional[List[connect.ToolSpec]]:
         cfg = self.config
         if not effective_specs:
             return None
 
-        tools: List[Dict[str, Any]] = []
+        tools: List[connect.ToolSpec] = []
         project_tools = getattr(self.project, "tools", {}) or {}
 
         for spec in cfg.tools or []:
@@ -233,20 +300,78 @@ class LLMExecutor(runner_base.BaseExecutor):
             if tool is None:
                 continue
             function_schema = await tool.openapi_spec(eff_spec)
+            input_schema = function_schema.get("parameters") or function_schema.get(
+                "input_schema"
+            )
+            if not isinstance(input_schema, dict):
+                continue
+            description = function_schema.get("description") or tool_name
             tools.append(
-                {
-                    "type": "function",
-                    "function": function_schema,
-                }
+                connect.ToolSpec.external(
+                    name=function_schema.get("name") or tool_name,
+                    description=description,
+                    input_schema=input_schema,
+                )
             )
 
         return tools or None
 
+    def _copy_metadata(
+        self,
+        provider_meta: Optional[Dict[str, Any]],
+        protocol_state: Optional[Dict[str, Any]],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        copied_provider_meta: Dict[str, Any] = {}
+        copied_protocol_state: Dict[str, Any] = {}
+        if provider_meta:
+            copied_provider_meta = dict(provider_meta)
+        if protocol_state:
+            copied_protocol_state = dict(protocol_state)
+        return copied_provider_meta, copied_protocol_state
+
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
-        conv = self.build_messages(inp)
+        auth_error = await self._ensure_provider_authorization()
+        if auth_error is not None:
+            error_step = self.project.history.upsert_step(
+                inp.run,
+                state.Step(
+                    execution_id=inp.execution.id,
+                    type=state.StepType.REJECTION,
+                    is_complete=True,
+                    workflow_execution=inp.run,
+                ),
+            )
+            yield self._build_step_from_message(
+                error_step,
+                role=models.Role.SYSTEM,
+                step_type=state.StepType.REJECTION,
+                text=auth_error,
+                is_complete=True,
+            )
+            return
+        if self._is_tool_round_limit_reached(inp.execution):
+            error_step = self.project.history.upsert_step(
+                inp.run,
+                state.Step(
+                    execution_id=inp.execution.id,
+                    type=state.StepType.REJECTION,
+                    is_complete=True,
+                    workflow_execution=inp.run,
+                ),
+            )
+            yield self._build_step_from_message(
+                error_step,
+                role=models.Role.SYSTEM,
+                step_type=state.StepType.REJECTION,
+                text=(f"LLM node '{cfg.name}' exceeded max_rounds={cfg.max_rounds}"),
+                is_complete=True,
+            )
+            return
+
+        system_prompt, connect_messages = self.build_connect_messages(inp)
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
-        tools = await self._build_tools(effective_specs)
+        tools = await self._build_connect_tools(effective_specs)
         outcome_names = llm_helpers.get_outcome_names(cfg)
         if (
             len(outcome_names) > 1
@@ -264,7 +389,14 @@ class LLMExecutor(runner_base.BaseExecutor):
             )
             if tools is None:
                 tools = []
-            tools.append(choose_tool)
+            choose_function = choose_tool["function"]
+            tools.append(
+                connect.ToolSpec.external(
+                    name=choose_function["name"],
+                    description=choose_function["description"],
+                    input_schema=choose_function["parameters"],
+                )
+            )
 
         step = self.project.history.upsert_step(
             inp.run,
@@ -274,41 +406,39 @@ class LLMExecutor(runner_base.BaseExecutor):
             ),
         )
 
-        extra_args = dict(cfg.extra or {})
-
-        logger.debug("LLM request:", req=conv, tools=tools)
+        logger.debug(
+            "LLM request",
+            model=cfg.model,
+            system_prompt=system_prompt,
+            messages=connect_messages,
+            tools=tools,
+        )
 
         max_retries = 3
         attempt = 0
-        chunks: List[Any] = []
+        assistant_partial = ""
+        final_response: Optional[connect.AssistantResponse] = None
 
         while True:
             try:
-                args = dict(extra_args)
-                args.update(
-                    {
-                        "model": cfg.model,
-                        "messages": conv,
-                        "temperature": cfg.temperature,
-                        "reasoning_effort": cfg.reasoning_effort,
-                        "stream": True,
-                        "stream_options": {
-                            "include_usage": True,
-                        },
-                    }
+                assistant_partial = ""
+                final_response = None
+                request = connect.GenerateRequest(
+                    messages=connect_messages,
+                    system_prompt=system_prompt,
+                    tools=tools or [],
+                    tool_choice="auto" if tools else None,
+                    temperature=cfg.temperature,
+                    max_output_tokens=cfg.max_tokens,
+                    reasoning=(
+                        connect.ReasoningConfig(effort=cfg.reasoning_effort)
+                        if cfg.reasoning_effort is not None
+                        else None
+                    ),
                 )
-                if cfg.max_tokens is not None:
-                    args["max_tokens"] = cfg.max_tokens
-                if tools:
-                    args.setdefault("tools", tools)
-                    args.setdefault("tool_choice", "auto")
-
-                logger.debug("LLM request", args=args)
-
-                completion_coro = litellm.acompletion(**args)
-
-                task_name = f"llm.acompletion:{cfg.name}"
-                stream_task = asyncio.create_task(completion_coro, name=task_name)
+                options = connect.RequestOptions(
+                    provider_options=dict(cfg.extra or {}),
+                )
 
                 loop = asyncio.get_running_loop()
                 start_deadline: Optional[float] = None
@@ -328,58 +458,87 @@ class LLMExecutor(runner_base.BaseExecutor):
                         raise asyncio.TimeoutError()
                     return await asyncio.wait_for(awaitable, timeout=remaining)
 
-                phase_deadline = _min_deadline(start_deadline, response_deadline)
-                stream = await _await_with_deadline(stream_task, phase_deadline)
-
-                chunks = []
-                assistant_partial = ""
                 has_visible_content = False
 
-                stream_iter = stream.__aiter__()
+                async with connect.AsyncLLMClient(
+                    credential_manager=self.project.credentials
+                ) as client:
+                    stream_handle = client.stream(
+                        cfg.model,
+                        request,
+                        options=options,
+                    )
+                    stream_iter = stream_handle.__aiter__()
 
-                def _effective_deadline() -> Optional[float]:
-                    if has_visible_content:
-                        return response_deadline
-                    return _min_deadline(start_deadline, response_deadline)
+                    def _effective_deadline() -> Optional[float]:
+                        if has_visible_content:
+                            return response_deadline
+                        return _min_deadline(start_deadline, response_deadline)
 
-                while True:
-                    try:
-                        chunk = await _await_with_deadline(
-                            stream_iter.__anext__(), _effective_deadline()
-                        )
-                    except StopAsyncIteration:
-                        break
+                    while True:
+                        try:
+                            event = await _await_with_deadline(
+                                stream_iter.__anext__(), _effective_deadline()
+                            )
+                        except StopAsyncIteration:
+                            break
 
-                    chunks.append(chunk)
-                    choice_list = chunk.choices
-                    if not choice_list:
-                        continue
+                        if event.type == "error":
+                            raise connect.exception_from_error_info(event.error)
 
-                    choice0 = choice_list[0]
-                    delta = choice0.delta
-                    if not delta:
-                        continue
+                        if event.type == "response_end":
+                            final_response = event.response
+                            break
 
-                    content_piece = delta.content
+                        if event.type == "text_delta" and event.delta:
+                            if not has_visible_content:
+                                has_visible_content = True
+                            assistant_partial += event.delta
+                            interim_step = self._build_step_from_message(
+                                step,
+                                role=models.Role.ASSISTANT,
+                                step_type=state.StepType.OUTPUT_MESSAGE,
+                                text=assistant_partial,
+                            )
+                            step = interim_step
+                            yield interim_step
+                            continue
 
-                    if isinstance(content_piece, str) and content_piece:
-                        if not has_visible_content:
+                        if (
+                            event.type == "text_end"
+                            and event.text
+                            and not assistant_partial
+                        ):
+                            if not has_visible_content:
+                                has_visible_content = True
+                            assistant_partial = event.text
+                            interim_step = self._build_step_from_message(
+                                step,
+                                role=models.Role.ASSISTANT,
+                                step_type=state.StepType.OUTPUT_MESSAGE,
+                                text=assistant_partial,
+                            )
+                            step = interim_step
+                            yield interim_step
+                            continue
+
+                        if event.type in {
+                            "reasoning_delta",
+                            "reasoning_end",
+                            "tool_call_delta",
+                            "tool_call_end",
+                        }:
                             has_visible_content = True
-                        assistant_partial += content_piece
-                        interim_step = self._build_step_from_message(
-                            step,
-                            role=models.Role.ASSISTANT,
-                            step_type=state.StepType.OUTPUT_MESSAGE,
-                            text=assistant_partial,
+
+                    if final_response is None:
+                        final_response = await _await_with_deadline(
+                            stream_handle.final_response(),
+                            response_deadline,
                         )
-                        step = interim_step
-                        yield interim_step
 
                 break
             except asyncio.TimeoutError as e:
                 logger.error("LLM timeout", err=e)
-                if not stream_task.done():
-                    stream_task.cancel()
                 if attempt < max_retries:
                     attempt += 1
                     continue
@@ -393,19 +552,36 @@ class LLMExecutor(runner_base.BaseExecutor):
                 )
                 yield error_step
                 return
-            except litellm.RateLimitError as e:
+            except connect.RateLimitError as e:
                 logger.warning("LLM rate limit retry", exc=e)
                 if attempt < max_retries:
                     attempt += 1
-
-                    wait = 60
-                    if hasattr(e, "response") and e.response is not None:
-                        retry_after = e.response.headers.get("retry-after")
-                        if retry_after:
-                            wait = int(retry_after) + 1
-
-                    await asyncio.sleep(wait)
+                    await asyncio.sleep(60)
                     continue
+
+                error_step = self._build_step_from_message(
+                    step,
+                    role=models.Role.SYSTEM,
+                    step_type=state.StepType.REJECTION,
+                    text=f"LLM error: {e}",
+                    is_complete=True,
+                )
+                yield error_step
+                return
+            except connect.ConnectError as e:
+                if e.error.retryable and attempt < max_retries:
+                    attempt += 1
+                    await asyncio.sleep(1 * (2 ** (attempt - 1)))
+                    logger.warning(
+                        "LLM retry",
+                        attempt=attempt,
+                        max_retries=max_retries,
+                        status_code=e.error.status_code,
+                        err=str(e),
+                    )
+                    continue
+
+                logger.error("LLM error", status_code=e.error.status_code, err=e)
 
                 error_step = self._build_step_from_message(
                     step,
@@ -417,32 +593,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 yield error_step
                 return
             except Exception as e:
-                status_code = None
-                try:
-                    status_code = e.status_code
-                except Exception:
-                    status_code = None
-
-                try:
-                    should_retry = bool(litellm._should_retry(status_code))
-                except Exception:
-                    should_retry = False
-
-                if should_retry and attempt < max_retries:
-                    attempt += 1
-                    await asyncio.sleep(1 * (2 ** (attempt - 1)))
-
-                    logger.warning(
-                        "LLM retry",
-                        attempt=attempt,
-                        max_retries=max_retries,
-                        status_code=status_code,
-                        err=str(e),
-                    )
-
-                    continue
-
-                logger.error("LLM error", status_code=status_code, err=e)
+                logger.error("LLM error", err=e)
 
                 error_step = self._build_step_from_message(
                     step,
@@ -454,26 +605,16 @@ class LLMExecutor(runner_base.BaseExecutor):
                 yield error_step
                 return
 
-        response = litellm.stream_chunk_builder(
-            chunks,
-            messages=conv,
-        )
+        if final_response is None:
+            raise RuntimeError("LLM response missing final response")
 
-        logger.debug("LLM response", response=response)
-
-        choices = response.choices
-        if not choices:
-            raise RuntimeError("LLM response missing choices")
-
-        first_choice = choices[0]
-        message_data = first_choice.message
-        content = message_data.content
+        logger.debug("LLM response", response=final_response)
 
         # Prefer the streamed text as the final assistant message,
         # but capture the assembled content for comparison / fallback.
-        response_text: str = ""
-        if isinstance(content, str):
-            response_text = content
+        response_text = "".join(
+            block.text for block in final_response.content if block.type == "text"
+        )
 
         # Debug comparison of streamed vs assembled text
         if assistant_partial != response_text:
@@ -488,7 +629,25 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         outcome_name: Optional[str] = None
         tool_call_reqs: List[state.ToolCallReq] = []
-        tool_calls_data = message_data.tool_calls or []
+        tool_calls_data = [
+            block for block in final_response.content if block.type == "tool_call"
+        ]
+        response_provider_meta, response_protocol_state = self._copy_metadata(
+            final_response.provider_meta,
+            final_response.protocol_state,
+        )
+        step_state = LLMStepState(
+            provider_meta=response_provider_meta,
+            protocol_state=response_protocol_state,
+            reasoning_signature=next(
+                (
+                    block.signature
+                    for block in final_response.content
+                    if block.type == "reasoning" and block.signature
+                ),
+                None,
+            ),
+        )
 
         if (
             len(outcome_names) > 1
@@ -504,19 +663,9 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         for tc in tool_calls_data:
             tc_id = tc.id
-            tc_type = tc.type
-            func = tc.function
-
-            func_name = func.name
-            arguments_raw: str = "{}"
-            raw = func.arguments
-            if isinstance(raw, str):
-                arguments_raw = raw
-
-            try:
-                arguments = json.loads(arguments_raw)
-            except Exception:
-                arguments = {}
+            tc_type = "function"
+            func_name = tc.name
+            arguments = dict(tc.arguments)
             if (
                 len(outcome_names) > 1
                 and cfg.outcome_strategy == models.OutcomeStrategy.FUNCTION
@@ -528,14 +677,10 @@ class LLMExecutor(runner_base.BaseExecutor):
                 continue
 
             tool_spec = effective_specs.get(func_name)
-            provider_specific_fields: Optional[Dict[str, Any]] = None
-
-            try:
-                cand = tc.provider_specific_fields
-                if isinstance(cand, dict):
-                    provider_specific_fields = cand
-            except AttributeError:
-                pass
+            tool_provider_meta, tool_protocol_state = self._copy_metadata(
+                tc.provider_meta,
+                tc.protocol_meta,
+            )
 
             tool_call_reqs.append(
                 state.ToolCallReq(
@@ -544,29 +689,31 @@ class LLMExecutor(runner_base.BaseExecutor):
                     name=func_name,
                     arguments=arguments,
                     tool_spec=tool_spec,
-                    state=(
-                        ToolCallProviderState(provider_state=provider_specific_fields)
-                        if provider_specific_fields is not None
-                        else None
+                    state=ToolCallProviderState(
+                        provider_meta=tool_provider_meta,
+                        protocol_state=tool_protocol_state,
+                        reasoning_signature=(
+                            tc.annotations.get("reasoning_signature")
+                            if isinstance(tc.annotations, dict)
+                            else None
+                        ),
                     ),
                 )
             )
 
         # Collect usage stats
-        usage_obj = response.usage
-        prompt_tokens = 0
-        completion_tokens = 0
-        if usage_obj is not None:
-            prompt_tokens = int(usage_obj.prompt_tokens or 0)
-            completion_tokens = int(usage_obj.completion_tokens or 0)
+        usage_obj = final_response.usage
+        prompt_tokens = int(usage_obj.input_tokens or 0) + int(
+            usage_obj.cache_read_tokens or 0
+        )
+        completion_tokens = int(usage_obj.output_tokens or 0)
 
         round_cost = 0.0
         try:
-            cost_val = litellm.completion_cost(
-                completion_response=response, model=cfg.model
-            )
+            model_spec = connect.default_model_registry.resolve(cfg.model)
+            cost_val = connect.estimate_cost(model_spec, usage_obj)
             if cost_val is not None:
-                round_cost = float(cost_val)
+                round_cost = float(cost_val.total_cost)
         except Exception:
             round_cost = 0.0
 
@@ -576,6 +723,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_dollars=round_cost,
+            model_name=cfg.model,
             input_token_limit=model_input_token_limit,
             output_token_limit=cfg.max_tokens,
         )
@@ -591,5 +739,6 @@ class LLMExecutor(runner_base.BaseExecutor):
             tool_call_requests=tool_call_reqs or None,
             is_complete=True,
             outcome_name=final_outcome_name,
+            step_state=step_state,
         )
         yield message_step

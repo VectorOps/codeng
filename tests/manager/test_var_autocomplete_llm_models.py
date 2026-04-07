@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import types
-
+import connect
 import pytest
 
 from vocode.manager.helpers import InMemoryEndpoint
@@ -16,8 +15,22 @@ from tests.stub_project import StubProject
 async def test_var_autocomplete_llm_models_uses_raw_value_as_insert_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    stub = types.SimpleNamespace(model_list=["gpt-4o", "gpt-3.5-turbo"])
-    monkeypatch.setitem(__import__("sys").modules, "litellm", stub)
+    class _StubRegistry:
+        def list_models(self):
+            return [
+                connect.ModelSpec(
+                    provider="openai",
+                    model="gpt-4o",
+                    api_family="openai-responses",
+                ),
+                connect.ModelSpec(
+                    provider="openai",
+                    model="gpt-3.5-turbo",
+                    api_family="openai-responses",
+                ),
+            ]
+
+    monkeypatch.setattr(connect, "default_model_registry", _StubRegistry())
 
     settings = vocode_settings.Settings()
     settings.set_var_context({"LLM_MODEL": "gpt-4o"})

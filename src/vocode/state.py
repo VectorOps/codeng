@@ -65,6 +65,7 @@ class LLMUsageStats(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_dollars: float = 0.0
+    model_name: Optional[str] = None
     # Model limits; typically represent input (context window) and optional output cap
     input_token_limit: Optional[int] = None
     output_token_limit: Optional[int] = None

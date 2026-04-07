@@ -179,6 +179,7 @@ class Runner:
                 prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens,
                 cost_dollars=usage.cost_dollars,
+                model_name=usage.model_name,
                 input_token_limit=usage.input_token_limit,
                 output_token_limit=usage.output_token_limit,
             )
@@ -1149,6 +1150,7 @@ class Runner:
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
             cost_dollars=usage.cost_dollars,
+            model_name=usage.model_name,
             input_token_limit=usage.input_token_limit,
             output_token_limit=usage.output_token_limit,
         )
@@ -1158,6 +1160,7 @@ class Runner:
                 prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens,
                 cost_dollars=usage.cost_dollars,
+                model_name=usage.model_name,
                 input_token_limit=usage.input_token_limit,
                 output_token_limit=usage.output_token_limit,
             )
@@ -1165,6 +1168,8 @@ class Runner:
             execution_usage.prompt_tokens += usage.prompt_tokens
             execution_usage.completion_tokens += usage.completion_tokens
             execution_usage.cost_dollars += usage.cost_dollars
+            if execution_usage.model_name is None and usage.model_name is not None:
+                execution_usage.model_name = usage.model_name
             if (
                 execution_usage.input_token_limit is None
                 and usage.input_token_limit is not None

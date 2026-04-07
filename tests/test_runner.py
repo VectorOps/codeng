@@ -3,7 +3,6 @@ from typing import AsyncIterator, Callable, Dict
 import pytest
 
 from vocode import models, state
-from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
 from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
@@ -305,6 +304,34 @@ class FakeLLMToolExecutor(BaseExecutor):
                     is_complete=True,
                 ),
             )
+        yield step
+
+
+@ExecutorFactory.register("fake-llm-tool-loop")
+class FakeLLMToolLoopExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        tool_req = state.ToolCallReq(
+            id=f"call-loop-{len(inp.execution.step_ids)}",
+            name="fake-tool",
+            arguments={"x": 1},
+        )
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text="with tool loop",
+            tool_call_requests=[tool_req],
+        )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
         yield step
 
 

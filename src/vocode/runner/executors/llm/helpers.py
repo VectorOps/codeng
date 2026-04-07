@@ -3,11 +3,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Final
 import re
 import contextlib
-import json
 
-import litellm
+import connect
 
-from vocode.state import Message
 from vocode.logger import logger
 from vocode.settings import ToolSpec  # type: ignore
 
@@ -17,21 +15,24 @@ from .models import LLMNode
 CHOOSE_OUTCOME_TOOL_NAME: Final[str] = "__choose_outcome__"
 OUTCOME_TAG_RE = re.compile(r"^\s*OUTCOME\s*:\s*([A-Za-z0-9_\-]+)\s*$")
 OUTCOME_LINE_PREFIX_RE = re.compile(r"^\s*OUTCOME\s*:\s*")
-MAX_ROUNDS: Final[int] = 32
 
 
-# Message mapping and prompt building
-def map_message_to_llm_dict(m: Message, cfg: LLMNode) -> Dict[str, Any]:
-    role = m.role or "user"
-    is_external = m.node is None or m.node != cfg.name
-    if is_external:
-        role = "user"
-    else:
-        if role == "agent":
-            role = "assistant"
-        elif role not in ("user", "system", "tool", "assistant"):
-            role = "user"
-    return {"role": role, "content": m.text}
+def build_system_prompt(cfg: LLMNode) -> Optional[str]:
+    system_parts: List[str] = []
+    if cfg.system:
+        system_parts.append(cfg.system)
+    if cfg.system_append:
+        system_parts.append(cfg.system_append)
+    outcome_names = get_outcome_names(cfg)
+    if len(outcome_names) > 1 and cfg.outcome_strategy == "tag":
+        outcome_desc_bullets = get_outcome_desc_bullets(cfg)
+        tag_instruction = build_tag_system_instruction(
+            outcome_names,
+            outcome_desc_bullets,
+        )
+        system_parts.append(tag_instruction)
+    system_prompt = "\n\n".join(part for part in system_parts if part).strip()
+    return system_prompt or None
 
 
 # Outcome helpers
@@ -170,22 +171,20 @@ def resolve_model_token_limit(cfg: LLMNode) -> Optional[int]:
     """Resolve the model input context window (prompt token limit).
 
     Fallback order:
-    1) litellm.get_model_info(cfg.model).max_input_tokens
+    1) Connect model registry context_window
     2) cfg.extra['model_max_tokens']
-    3) litellm.get_model_info(cfg.model).max_tokens
+    3) Connect model registry max_output_tokens
     """
     with contextlib.suppress(Exception):
-        mi = litellm.get_model_info(cfg.model)
-        v = mi.get("max_input_tokens")
-        if v:
-            return v
+        model = connect.default_model_registry.resolve(cfg.model)
+        if model.context_window is not None and model.context_window > 0:
+            return int(model.context_window)
     with contextlib.suppress(Exception):
         v = int((cfg.extra or {}).get("model_max_tokens") or 0)
         if v > 0:
             return v
     with contextlib.suppress(Exception):
-        mi = litellm.get_model_info(cfg.model)
-        v = int(mi.get("max_tokens", 0))
-        if v > 0:
-            return v
+        model = connect.default_model_registry.resolve(cfg.model)
+        if model.max_output_tokens is not None and model.max_output_tokens > 0:
+            return int(model.max_output_tokens)
     return None

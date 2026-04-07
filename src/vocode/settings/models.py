@@ -159,9 +159,8 @@ class LoggingSettings(vars_mod.BaseVarModel):
     # Mapping of logger name -> level override (e.g., {"asyncio": "debug"})
     enabled_loggers: Dict[str, LogLevel] = Field(
         default_factory=lambda: {
-            "LiteLLM": LogLevel.critical,
-            "LiteLLM Proxy": LogLevel.critical,
-            "LiteLLM Router": LogLevel.critical,
+            "connect": LogLevel.critical,
+            "aiohttp": LogLevel.warning,
         }
     )
 

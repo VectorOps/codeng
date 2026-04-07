@@ -209,6 +209,9 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
             total_cost = float(project_usage.cost_dollars or 0.0)
 
         usage_parts: list[str] = []
+        model_name = ""
+        if last_step_usage is not None and last_step_usage.model_name is not None:
+            model_name = last_step_usage.model_name
         step_input_tokens_str = lib_formatting.format_int_compact(step_input_tokens)
         step_input_limit_str = lib_formatting.format_int_compact(step_input_limit)
 
@@ -216,6 +219,8 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         if step_input_limit > 0:
             percentage = int((step_input_tokens / step_input_limit) * 100)
 
+        if model_name:
+            usage_parts.append(f"[{model_name}]")
         usage_parts.append(
             f"{step_input_tokens_str}/{step_input_limit_str} ({percentage}%)"
         )

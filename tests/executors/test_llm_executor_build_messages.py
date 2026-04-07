@@ -1,4 +1,5 @@
 import pytest
+import connect
 
 from vocode import models, state
 from vocode.history.manager import HistoryManager
@@ -12,61 +13,46 @@ from vocode.runner.executors.llm.models import LLMNode
 from tests.stub_project import StubProject
 
 
-class _FakeDelta:
-    def __init__(self, content: str | None) -> None:
-        self.content = content
-
-
-class _FakeChoice:
-    def __init__(self, content: str | None) -> None:
-        self.delta = _FakeDelta(content)
-
-
-class _FakeChunk:
-    def __init__(self, content: str | None) -> None:
-        self.choices = [_FakeChoice(content)]
-
-
-class _FakeMessage:
-    def __init__(self, content: str) -> None:
-        self.content = content
-        self.tool_calls = []
-
-
-class _FakeResponseChoice:
-    def __init__(self, content: str) -> None:
-        self.message = _FakeMessage(content)
-
-
-class _FakeUsage:
-    def __init__(self) -> None:
-        self.prompt_tokens = 0
-        self.completion_tokens = 0
-
-
-class _FakeResponse:
-    def __init__(self, content: str) -> None:
-        self.choices = [_FakeResponseChoice(content)]
-        self.usage = _FakeUsage()
-
-
-class _FakeStream:
-    def __init__(self, chunks: list[str]) -> None:
-        self._chunks = chunks
+class _FakeStreamHandle:
+    def __init__(
+        self,
+        events: list[connect.StreamEvent],
+        final_response: connect.AssistantResponse,
+    ) -> None:
+        self._events = events
+        self._final_response = final_response
+        self._index = 0
 
     def __aiter__(self):
         self._index = 0
         return self
 
     async def __anext__(self):
-        if self._index >= len(self._chunks):
+        if self._index >= len(self._events):
             raise StopAsyncIteration
-        chunk = _FakeChunk(self._chunks[self._index])
+        event = self._events[self._index]
         self._index += 1
-        return chunk
+        return event
+
+    async def final_response(self) -> connect.AssistantResponse:
+        return self._final_response
 
 
-def test_build_messages_with_tool_call_and_tool_result() -> None:
+class _FakeAsyncLLMClient:
+    def __init__(self, stream_handle: _FakeStreamHandle, **kwargs) -> None:
+        self._stream_handle = stream_handle
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def stream(self, model: str, request: object, options: object = None):
+        return self._stream_handle
+
+
+def test_build_connect_messages_with_tool_call_and_tool_result() -> None:
     history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
@@ -88,7 +74,7 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
         id="call-test-tool-req",
         name="test-tool",
         arguments={"x": 1},
-        state=ToolCallProviderState(provider_state={"thought_signature": "sig-123"}),
+        state=ToolCallProviderState(reasoning_signature="sig-123"),
     )
     tool_resp = state.ToolCallResp(
         id="call-1",
@@ -117,27 +103,27 @@ def test_build_messages_with_tool_call_and_tool_result() -> None:
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
 
-    conv = executor.build_messages(inp)
+    system_prompt, messages = executor.build_connect_messages(inp)
 
-    assert len(conv) == 2
+    assert system_prompt is None
+    assert len(messages) == 2
 
-    first = conv[0]
-    assert first["role"] == "assistant"
-    assert "tool_calls" in first
-    assert first["tool_calls"][0]["function"]["name"] == "test-tool"
-    assert first["tool_calls"][0]["provider_specific_fields"] == {
-        "thought_signature": "sig-123"
-    }
+    first = messages[0]
+    assert isinstance(first, connect.AssistantMessage)
+    assert first.content[0].type == "text"
+    assert first.content[0].text == "call tool"
+    assert first.content[1].type == "tool_call"
+    assert first.content[1].name == "test-tool"
+    assert first.content[1].annotations == {"reasoning_signature": "sig-123"}
 
-    second = conv[1]
-    assert second["role"] == "tool"
-    assert second["tool_call_id"] == "call-1"
-    assert second["name"] == "test-tool"
-    assert second["content"] == '{"ok": true}'
-    assert "arguments" not in second
+    second = messages[1]
+    assert isinstance(second, connect.ToolResultMessage)
+    assert second.tool_call_id == "call-1"
+    assert second.tool_name == "test-tool"
+    assert second.content[0].text == '{"ok": true}'
 
 
-def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
+def test_build_connect_messages_applies_preprocessors_to_system_prompt() -> None:
     history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
@@ -167,17 +153,103 @@ def test_build_messages_applies_preprocessors_to_system_prompt() -> None:
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
 
-    conv = executor.build_messages(inp)
+    system_prompt, messages = executor.build_connect_messages(inp)
 
-    assert len(conv) == 1
-    first = conv[0]
-    assert first["role"] == "system"
-    assert first["content"].startswith("prefix")
-    assert "base system" in first["content"]
-    assert "\n--\n" in first["content"]
+    assert system_prompt is not None
+    assert system_prompt.startswith("prefix")
+    assert "base system" in system_prompt
+    assert "\n--\n" in system_prompt
+    assert messages == []
 
 
-def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> None:
+def test_build_connect_messages_keeps_linear_history_order() -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+        system="base system",
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    user_msg = state.Message(role=models.Role.USER, text="hello")
+    assistant_msg = state.Message(role=models.Role.ASSISTANT, text="hi there")
+    tool_msg = state.Message(
+        role=models.Role.ASSISTANT,
+        text="",
+        tool_call_responses=[
+            state.ToolCallResp(
+                id="call-1",
+                name="test-tool",
+                status=state.ToolCallStatus.COMPLETED,
+                result={"ok": True},
+            )
+        ],
+    )
+    for msg in [user_msg, assistant_msg, tool_msg]:
+        history.upsert_message(run, msg)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=user_msg.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_msg.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=tool_msg.id,
+            is_complete=True,
+        ),
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    inp = ExecutorInput(execution=execution, run=run)
+
+    system_prompt, messages = executor.build_connect_messages(inp)
+
+    assert system_prompt == "base system"
+    assert len(messages) == 3
+    assert isinstance(messages[0], connect.UserMessage)
+    assert messages[0].content == "hello"
+    assert isinstance(messages[1], connect.AssistantMessage)
+    assert messages[1].content[0].type == "text"
+    assert messages[1].content[0].text == "hi there"
+    assert isinstance(messages[2], connect.ToolResultMessage)
+    assert messages[2].tool_call_id == "call-1"
+    assert messages[2].tool_name == "test-tool"
+    assert messages[2].content[0].text == '{"ok": true}'
+
+
+def test_build_connect_messages_copies_llm_step_state_provider_fields_to_message() -> (
+    None
+):
     history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
@@ -204,7 +276,7 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=assistant_msg.id,
-            state=LLMStepState(provider_state={"cache_control": {"type": "ephemeral"}}),
+            state=LLMStepState(protocol_state={"cache_control": {"type": "ephemeral"}}),
             is_complete=True,
         ),
     )
@@ -212,16 +284,18 @@ def test_build_messages_copies_llm_step_state_provider_fields_to_message() -> No
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
 
-    conv = executor.build_messages(inp)
+    _, messages = executor.build_connect_messages(inp)
 
-    assert len(conv) == 1
-    first = conv[0]
-    assert first["role"] == "assistant"
-    assert first["content"] == "hello"
-    assert first["provider_specific_fields"] == {"cache_control": {"type": "ephemeral"}}
+    assert len(messages) == 1
+    first = messages[0]
+    assert isinstance(first, connect.AssistantMessage)
+    assert first.content[0].text == "hello"
+    assert first.protocol_meta == {"cache_control": {"type": "ephemeral"}}
 
 
-def test_build_messages_uses_active_history_view_after_user_input_edit() -> None:
+def test_build_connect_messages_uses_active_history_view_after_user_input_edit() -> (
+    None
+):
     history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",
@@ -285,9 +359,13 @@ def test_build_messages_uses_active_history_view_after_user_input_edit() -> None
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=active_execution, run=run)
 
-    conv = executor.build_messages(inp)
+    _, messages = executor.build_connect_messages(inp)
 
-    assert [message["content"] for message in conv] == ["prompt", "new user input"]
+    assert len(messages) == 2
+    assert isinstance(messages[0], connect.AssistantMessage)
+    assert messages[0].content[0].text == "prompt"
+    assert isinstance(messages[1], connect.UserMessage)
+    assert messages[1].content == "new user input"
 
 
 def test_build_step_from_message_reuses_existing_message_id_for_updates() -> None:
@@ -363,15 +441,35 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
 
-    async def fake_acompletion(**_: object):
-        return _FakeStream(["Why", " do"])
+    user_msg = state.Message(role=models.Role.USER, text="Why?")
+    history.upsert_message(run, user_msg)
+    execution.input_message_ids.append(user_msg.id)
 
-    monkeypatch.setattr("litellm.acompletion", fake_acompletion)
-    monkeypatch.setattr(
-        "litellm.stream_chunk_builder",
-        lambda chunks, messages=None: _FakeResponse("Why do"),
+    final_response = connect.AssistantResponse(
+        provider="openai",
+        model="test-model",
+        api_family="openai-responses",
+        content=[connect.TextBlock(text="Why do")],
+        finish_reason="stop",
+        usage=connect.Usage(
+            input_tokens=0, output_tokens=2, total_tokens=2, completeness="final"
+        ),
     )
-    monkeypatch.setattr("litellm.completion_cost", lambda **_: 0.0)
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: _FakeAsyncLLMClient(
+            _FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="Why"),
+                    connect.TextDeltaEvent(index=0, delta=" do"),
+                    connect.ResponseEndEvent(response=final_response),
+                ],
+                final_response=final_response,
+            ),
+            **kwargs,
+        ),
+    )
 
     steps = []
     async for step in executor.run(inp):
@@ -381,6 +479,6 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     assert steps[0].message_id is not None
     assert steps[1].message_id == steps[0].message_id
     assert steps[2].message_id == steps[0].message_id
-    assert len(run.messages_by_id) == 1
-    message = next(iter(run.messages_by_id.values()))
+    assert len(run.messages_by_id) == 2
+    message = run.get_message(steps[0].message_id)
     assert message.text == "Why do"
