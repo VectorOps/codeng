@@ -9,7 +9,7 @@ from aiohttp import ClientSession
 from vocode import models, state, settings as vocode_settings
 from vocode.http import server as http_server
 from vocode.runner.executors.http_input import HTTPInputNode
-from vocode.runner.runner import Runner, RunEvent
+from vocode.runner.runner import Runner, RunEvent, RunnerStopped
 from vocode.runner.proto import RunEventResp, RunEventResponseType
 from tests.stub_project import StubProject
 
@@ -102,7 +102,7 @@ async def test_http_input_executor_waits_for_external_message(tmp_path) -> None:
         async with ClientSession() as session:
             async with session.post(
                 f"http://{host}:{port}{node.path}",
-                json={"text": "from-http"},
+                json={"text": "from-http", "workflow_id": runner.input_workflow_id},
             ) as resp:
                 assert resp.status == 200
 
@@ -214,7 +214,10 @@ async def test_http_input_executor_accepts_markdown_without_wrapping(tmp_path) -
         async with ClientSession() as session:
             async with session.post(
                 f"http://{host}:{port}{node.path}",
-                json={"text": "from-http-md"},
+                json={
+                    "text": "from-http-md",
+                    "workflow_id": runner.input_workflow_id,
+                },
                 headers={
                     "Content-Type": "application/json; charset=utf-8; format=markdown"
                 },
@@ -253,3 +256,112 @@ async def test_http_input_executor_accepts_markdown_without_wrapping(tmp_path) -
         and e.step.message.text == "Waiting for external input"
         for e in events
     )
+
+
+@pytest.mark.asyncio
+async def test_http_input_executor_consumes_queued_input_before_waiting(
+    tmp_path,
+) -> None:
+    settings = vocode_settings.Settings(
+        internal_http=vocode_settings.InternalHTTPSettings(host="127.0.0.1", port=0)
+    )
+    http_server.configure_internal_http(settings.internal_http)  # type: ignore[arg-type]
+
+    project = StubProject(settings=settings)
+
+    node = HTTPInputNode(
+        name="http-input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        path="/http-input-test-queued",
+        message="Waiting for external input",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+
+    class Workflow:
+        def __init__(self) -> None:
+            self.name = "wf-http-input-queued"
+            self.graph = graph
+            self.need_input = False
+            self.need_input_prompt = None
+
+    workflow = Workflow()
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    accepted = await project.input_manager.publish(
+        runner.input_workflow_id,
+        state.Message(role=models.Role.USER, text="queued-http-input"),
+        queue_if_unhandled=True,
+    )
+    assert accepted is True
+
+    events = await _drive_runner(runner.run())
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "queued-http-input"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_input_executor_stop_resets_queued_input(tmp_path) -> None:
+    settings = vocode_settings.Settings(
+        internal_http=vocode_settings.InternalHTTPSettings(host="127.0.0.1", port=0)
+    )
+    http_server.configure_internal_http(settings.internal_http)  # type: ignore[arg-type]
+
+    project = StubProject(settings=settings)
+
+    node = HTTPInputNode(
+        name="http-input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        path="/http-input-test-reset",
+        message="Waiting for external input",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+
+    class Workflow:
+        def __init__(self) -> None:
+            self.name = "wf-http-input-reset"
+            self.graph = graph
+            self.need_input = False
+            self.need_input_prompt = None
+
+    workflow = Workflow()
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    accepted = await project.input_manager.publish(
+        runner.input_workflow_id,
+        state.Message(role=models.Role.USER, text="stale-http-input"),
+        queue_if_unhandled=True,
+    )
+    assert accepted is True
+
+    agen = runner.run()
+    first_event = await agen.__anext__()
+    assert first_event.stats is not None
+    stop_event = await agen.athrow(RunnerStopped())
+    assert stop_event.stats is not None
+    assert stop_event.stats.status == state.RunnerStatus.STOPPED
+
+    accepted_after_stop = await project.input_manager.publish(
+        runner.input_workflow_id,
+        state.Message(role=models.Role.USER, text="fresh-http-input"),
+        queue_if_unhandled=False,
+    )
+    assert accepted_after_stop is False

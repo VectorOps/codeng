@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import logging
+import asyncio
 from typing import Optional, cast
 import time
 import uuid
@@ -40,13 +40,14 @@ class UIServer:
         )
         self._status = manager_proto.UIServerStatus.IDLE
         self._push_msg_id = 0
-        self._input_waiters: list[asyncio.Future[manager_proto.UserInputPacket]] = []
         self._recv_task: Optional[asyncio.Task[None]] = None
         self._started = False
         self._autocomplete = AutocompleteManager()
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
-        self._pending_input_step: Optional[state.Step] = None
+        self._ui_input_channel_id = f"ui-server:{name}"
+        self._last_tool_confirmation_runner_id: Optional[str] = None
+        self._last_tool_confirmation_step: Optional[state.Step] = None
         self._auth_session: Optional[ServerAuthenticationSession] = None
         self._progress_last_sent_at_by_id: dict[str, float] = {}
         self._know_repo_label_by_id: dict[str, str] = {}
@@ -142,14 +143,14 @@ class UIServer:
         await self.send_packet(
             manager_proto.InputPromptPacket(title=title, subtitle=subtitle)
         )
-        waiter = self._push_input_waiter()
         try:
-            packet = await waiter
+            message = await self._manager.project.input_manager.wait_for_input(
+                self._ui_input_channel_id
+            )
         except asyncio.CancelledError:
             await self.send_packet(manager_proto.InputPromptPacket())
             raise
         await self.send_packet(manager_proto.InputPromptPacket())
-        message = packet.message
         return message.text
 
     def start_authentication_session(
@@ -521,7 +522,7 @@ class UIServer:
         async def aa(server: "UIServer", args: list[str]) -> None:
             if args:
                 raise workflow_commands.CommandError("Usage: /aa")
-            step = server._pending_input_step
+            step = server._last_tool_confirmation_step
             if step is None or step.type != state.StepType.TOOL_REQUEST:
                 raise workflow_commands.CommandError(
                     "No tool confirmation is currently pending."
@@ -539,19 +540,28 @@ class UIServer:
                 server.manager.project.project_state.autoapprove.add_tool(tool_req.name)
                 added.append(tool_req.name)
 
-            waiter = server._pop_input_waiter()
-            if waiter is None:
+            runner = server.manager.current_runner
+            if runner is None:
                 raise workflow_commands.CommandError(
                     "No tool confirmation is currently pending."
                 )
-            if not waiter.done():
-                user_input = manager_proto.UserInputPacket(
-                    message=state.Message(role=models.Role.USER, text="")
+            if server._last_tool_confirmation_runner_id != runner.input_workflow_id:
+                raise workflow_commands.CommandError(
+                    "No tool confirmation is currently pending."
                 )
-                waiter.set_result(user_input)
-                prompt_packet = manager_proto.InputPromptPacket()
-                await server.send_packet(prompt_packet)
-                server._pending_input_step = None
+            accepted = await server.manager.project.input_manager.publish(
+                runner.input_workflow_id,
+                state.Message(role=models.Role.USER, text=""),
+                queue_if_unhandled=False,
+            )
+            if not accepted:
+                raise workflow_commands.CommandError(
+                    "No tool confirmation is currently pending."
+                )
+            prompt_packet = manager_proto.InputPromptPacket()
+            await server.send_packet(prompt_packet)
+            server._last_tool_confirmation_step = None
+            server._last_tool_confirmation_runner_id = None
 
             if added:
                 unique = sorted(set(added))
@@ -664,30 +674,12 @@ class UIServer:
             self._recv_task = None
 
         self._rpc.cancel_all()
-
-        for waiter in self._input_waiters:
-            if not waiter.done():
-                waiter.cancel()
-        self._input_waiters.clear()
+        await self._manager.project.input_manager.reset_workflow(
+            self._ui_input_channel_id
+        )
 
         await self._manager.stop()
         self._started = False
-
-    # Input waiters
-    def _push_input_waiter(
-        self,
-    ) -> asyncio.Future[manager_proto.UserInputPacket]:
-        loop = asyncio.get_running_loop()
-        waiter: asyncio.Future[manager_proto.UserInputPacket] = loop.create_future()
-        self._input_waiters.append(waiter)
-        return waiter
-
-    def _pop_input_waiter(
-        self,
-    ) -> Optional[asyncio.Future[manager_proto.UserInputPacket]]:
-        if not self._input_waiters:
-            return None
-        return self._input_waiters.pop()
 
     # Runner event handling
     async def _handle_runner_step_event(
@@ -746,7 +738,8 @@ class UIServer:
                 "Empty line confirms, any text to reject with a message. "
                 "Tip: type /aa to auto-approve similar calls for this session"
             )
-            self._pending_input_step = step
+            self._last_tool_confirmation_step = step
+            self._last_tool_confirmation_runner_id = frame.runner.input_workflow_id
 
         packet = manager_proto.RunnerReqPacket(
             workflow_id=frame.workflow_name,
@@ -776,41 +769,6 @@ class UIServer:
         )
         await self.send_packet(prompt_packet)
 
-        waiter = self._push_input_waiter()
-        resp_packet = await waiter
-        if step is self._pending_input_step:
-            self._pending_input_step = None
-        message_packet = resp_packet.message
-
-        if step.type == state.StepType.PROMPT:
-            return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.MESSAGE,
-                message=message_packet,
-            )
-
-        if step.type == state.StepType.PROMPT_CONFIRM:
-            text = message_packet.text if message_packet is not None else ""
-            if text:
-                return runner_proto.RunEventResp(
-                    resp_type=runner_proto.RunEventResponseType.MESSAGE,
-                    message=message_packet,
-                )
-
-            return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.APPROVE,
-                message=None,
-            )
-
-        if step.type == state.StepType.TOOL_REQUEST:
-            resp_type = runner_proto.RunEventResponseType.APPROVE
-            if message_packet is not None and message_packet.text:
-                resp_type = runner_proto.RunEventResponseType.DECLINE
-
-            return runner_proto.RunEventResp(
-                resp_type=resp_type,
-                message=message_packet,
-            )
-
         return runner_proto.RunEventResp(
             resp_type=runner_proto.RunEventResponseType.NOOP,
             message=None,
@@ -827,11 +785,8 @@ class UIServer:
             state.RunnerStatus.STOPPED,
             state.RunnerStatus.FINISHED,
         ):
-            self._pending_input_step = None
-            for waiter in self._input_waiters:
-                if not waiter.done():
-                    waiter.cancel()
-            self._input_waiters.clear()
+            self._last_tool_confirmation_step = None
+            self._last_tool_confirmation_runner_id = None
             prompt_packet = manager_proto.InputPromptPacket()
             await self.send_packet(prompt_packet)
 
@@ -956,30 +911,45 @@ class UIServer:
                 )
             return None
 
-        waiter = self._pop_input_waiter()
-        if waiter is None:
-            runner = self._manager.current_runner
-            if runner is not None and runner.status == state.RunnerStatus.STOPPED:
-                res = await self._manager.edit_history_with_text(
-                    text,
-                    resume=False,
-                )
-                if res.changed:
-                    frame = self._manager.runner_stack[-1]
-                    await self.emit_history_mutation(frame, res)
-                if res.changed:
-                    await self._manager.continue_current_runner()
-                if not res.changed:
-                    await self.send_text_message(
-                        "Unable to edit history: no previous user input to replace."
-                    )
-            return None
+        runner = self._manager.current_runner
+        if runner is not None and runner.status != state.RunnerStatus.STOPPED:
+            accepted = await self._manager.project.input_manager.publish(
+                runner.input_workflow_id,
+                message,
+                queue_if_unhandled=False,
+            )
+            if accepted:
+                prompt_packet = manager_proto.InputPromptPacket()
+                await self.send_packet(prompt_packet)
+                return None
 
-        if not waiter.done():
-            user_input = cast(manager_proto.UserInputPacket, payload)
-            waiter.set_result(user_input)
+        accepted = await self._manager.project.input_manager.publish(
+            self._ui_input_channel_id,
+            message,
+            queue_if_unhandled=False,
+        )
+        if accepted:
             prompt_packet = manager_proto.InputPromptPacket()
             await self.send_packet(prompt_packet)
+            return None
+
+        if runner is not None and runner.status == state.RunnerStatus.STOPPED:
+            res = await self._manager.edit_history_with_text(
+                text,
+                resume=False,
+            )
+            if res.changed:
+                frame = self._manager.runner_stack[-1]
+                await self.emit_history_mutation(frame, res)
+            if res.changed:
+                await self._manager.continue_current_runner()
+            if not res.changed:
+                await self.send_text_message(
+                    "Unable to edit history: no previous user input to replace."
+                )
+            return None
+
+        await self.send_text_message("Input was rejected: no active input request.")
 
         return None
 

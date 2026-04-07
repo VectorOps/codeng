@@ -12,6 +12,7 @@ from .settings import KnowProjectSettings, Settings
 from .settings.loader import load_settings
 from .templates import write_default_config
 from .state import LLMUsageStats
+from .input_manager import InputManager
 from .know import KnowProject, convert_know_tool
 from .proc.manager import ProcessManager
 from .proc.base import EnvPolicy
@@ -37,6 +38,7 @@ class Project:
         self.tools: Dict[str, "BaseTool"] = {}
         self.know: KnowProject = KnowProject()
         self.project_state: ProjectState = ProjectState()
+        self.input_manager: InputManager = InputManager()
         self.history: HistoryManager = HistoryManager()
         self.credentials: ProjectCredentialManager = ProjectCredentialManager()
         self.llm_usage: LLMUsageStats = LLMUsageStats()
@@ -187,6 +189,7 @@ class Project:
 
     async def shutdown(self) -> None:
         """Gracefully shut down project components."""
+        await self.input_manager.reset_all()
         # Stop shell manager before underlying processes
         if self.shells is not None:
             await self.shells.stop()
