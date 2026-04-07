@@ -45,10 +45,6 @@ class Runner:
         }
         self.project.state_manager.track(self.execution)
 
-    @property
-    def input_workflow_id(self) -> str:
-        return str(self.execution.id)
-
     def _touch_execution(self) -> None:
         self.execution.touch()
         self.project.state_manager.notify_changed(self.execution)
@@ -485,9 +481,7 @@ class Runner:
         if step is None:
             return None
 
-        message = await self.project.input_manager.wait_for_input(
-            self.input_workflow_id
-        )
+        message = await self.project.input_manager.wait_for_input()
         managed_resp: Optional[RunEventResp] = None
 
         if step.type == state.StepType.PROMPT:
@@ -1165,7 +1159,7 @@ class Runner:
             _ = yield stop_event
             return
         finally:
-            await self.project.input_manager.reset_workflow(self.input_workflow_id)
+            await self.project.input_manager.reset()
             await self._shutdown_executors()
 
     def set_status(

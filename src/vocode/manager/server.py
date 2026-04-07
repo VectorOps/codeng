@@ -45,7 +45,6 @@ class UIServer:
         self._autocomplete = AutocompleteManager()
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
-        self._ui_input_channel_id = f"ui-server:{name}"
         self._auth_session: Optional[ServerAuthenticationSession] = None
         self._progress_last_sent_at_by_id: dict[str, float] = {}
         self._know_repo_label_by_id: dict[str, str] = {}
@@ -142,9 +141,7 @@ class UIServer:
             manager_proto.InputPromptPacket(title=title, subtitle=subtitle)
         )
         try:
-            message = await self._manager.project.input_manager.wait_for_input(
-                self._ui_input_channel_id
-            )
+            message = await self._manager.project.input_manager.wait_for_input()
         except asyncio.CancelledError:
             await self.send_packet(manager_proto.InputPromptPacket())
             raise
@@ -530,9 +527,7 @@ class UIServer:
             self._recv_task = None
 
         self._rpc.cancel_all()
-        await self._manager.project.input_manager.reset_workflow(
-            self._ui_input_channel_id
-        )
+        await self._manager.project.input_manager.reset()
 
         await self._manager.stop()
         self._started = False
@@ -766,9 +761,8 @@ class UIServer:
         runner = self._manager.current_runner
         if runner is not None and runner.status != state.RunnerStatus.STOPPED:
             accepted = await self._manager.project.input_manager.publish(
-                runner.input_workflow_id,
                 message,
-                queue_if_unhandled=False,
+                queue=False,
             )
             if accepted:
                 prompt_packet = manager_proto.InputPromptPacket()
@@ -776,9 +770,8 @@ class UIServer:
                 return None
 
         accepted = await self._manager.project.input_manager.publish(
-            self._ui_input_channel_id,
             message,
-            queue_if_unhandled=False,
+            queue=False,
         )
         if accepted:
             prompt_packet = manager_proto.InputPromptPacket()

@@ -33,7 +33,3 @@ class DummyRunnerWithWorkflow:
         self.workflow = DummyWorkflow(node_names)
         self.execution = execution or state.WorkflowExecution(workflow_name="dummy")
         self.status = status
-
-    @property
-    def input_workflow_id(self) -> str:
-        return str(self.execution.id)
