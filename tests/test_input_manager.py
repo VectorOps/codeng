@@ -53,6 +53,29 @@ async def test_input_manager_delivers_directly_to_waiter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_input_manager_snapshot_and_dequeue_reflect_queued_messages() -> None:
+    manager = InputManager()
+    first = state.Message(role=models.Role.USER, text="one")
+    second = state.Message(role=models.Role.USER, text="two")
+
+    assert await manager.publish(first, queue=True) is True
+    assert await manager.publish(second, queue=True) is True
+
+    snapshot = await manager.snapshot()
+
+    assert [message.text for message in snapshot.queued_messages] == ["one", "two"]
+    assert len(snapshot.waiters) == 0
+
+    dequeued = await manager.dequeue()
+
+    assert dequeued is not None
+    assert dequeued.text == "one"
+
+    snapshot = await manager.snapshot()
+    assert [message.text for message in snapshot.queued_messages] == ["two"]
+
+
+@pytest.mark.asyncio
 async def test_input_manager_cleans_up_canceled_waiter() -> None:
     manager = InputManager()
     task = asyncio.create_task(manager.wait_for_input())
