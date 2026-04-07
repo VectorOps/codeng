@@ -154,6 +154,7 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
         prompt_tokens=10,
         completion_tokens=5,
         cost_dollars=0.01,
+        model_name="chatgpt/gpt-5.4",
         input_token_limit=1000,
     )
     project_usage = state.LLMUsageStats(
@@ -178,6 +179,7 @@ def test_toolbar_shows_stacked_runners_and_usage() -> None:
     renderable = toolbar._build_renderable(rich_console.Console())
     rendered_text = str(renderable)
     assert "node1@wf1 > node2@wf2" in rendered_text
+    assert "[chatgpt/gpt-5.4]" in rendered_text
     assert "10/1k (1%)" in rendered_text
     assert "ts: 100" in rendered_text
     assert "tr: 50" in rendered_text

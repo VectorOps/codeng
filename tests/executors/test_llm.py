@@ -1,10 +1,11 @@
 from typing import Any, List, Optional
 
 import asyncio
-import litellm
+import connect
 import pytest
 
 from vocode import state, models, settings as vocode_settings
+from vocode.history.manager import HistoryManager
 from vocode.runner.executors.llm.llm import LLMExecutor
 from vocode.runner.executors.llm.models import LLMNode
 from vocode.runner.executors.llm import helpers as llm_helpers
@@ -15,92 +16,172 @@ from tests.stub_project import StubProject
 RECORDED_TOOL_CALLS: List[str] = []  # type: ignore
 
 
-class FakeDelta:
-    def __init__(self, content: str) -> None:
-        self.content = content
-
-
-class FakeChoiceChunk:
-    def __init__(self, content: str) -> None:
-        self.delta = FakeDelta(content)
-
-
-class FakeChunk:
-    def __init__(self, content: str) -> None:
-        self.choices = [FakeChoiceChunk(content)]
-
-
-class FakeChunkNoChoices:
-    def __init__(self) -> None:
-        self.choices = []
-
-
-class FakeFunction:
-    def __init__(self, name: str, arguments: str) -> None:
-        self.name = name
-        self.arguments = arguments
-
-
-class FakeToolCall:
-    def __init__(self, name: str, arguments: str) -> None:
-        self.id = "call_1"
-        self.type = "function"
-        self.function = FakeFunction(name, arguments)
-
-
-class FakeMessage:
-    def __init__(self, content: str, tool_calls: Optional[List[Any]] = None) -> None:
-        self.content = content
-        self.tool_calls = list(tool_calls or [])
-
-
-class FakeUsage:
-    def __init__(self, prompt_tokens: int, completion_tokens: int) -> None:
-        self.prompt_tokens = prompt_tokens
-        self.completion_tokens = completion_tokens
-
-
-class FakeChoiceResponse:
-    def __init__(self, message: FakeMessage) -> None:
-        self.message = message
-
-
-class FakeResponse:
+class FakeStreamHandle:
     def __init__(
         self,
-        content: str,
-        *,
-        tool_calls: Optional[List[Any]] = None,
+        events: List[connect.StreamEvent],
+        final_response: Optional[connect.AssistantResponse] = None,
     ) -> None:
-        self.choices = [FakeChoiceResponse(FakeMessage(content, tool_calls))]
-        self.usage = FakeUsage(prompt_tokens=5, completion_tokens=len(content))
+        self._events = events
+        self._final_response = final_response
+        self._index = 0
+
+    def __aiter__(self):
+        self._index = 0
+        return self
+
+    async def __anext__(self):
+        if self._index >= len(self._events):
+            raise StopAsyncIteration
+        event = self._events[self._index]
+        self._index += 1
+        return event
+
+    async def final_response(self) -> connect.AssistantResponse:
+        if self._final_response is not None:
+            return self._final_response
+        for event in reversed(self._events):
+            if event.type == "response_end":
+                return event.response
+        raise RuntimeError("missing final response")
+
+
+class FakeAsyncLLMClient:
+    def __init__(self, stream_handle: FakeStreamHandle, **kwargs: Any) -> None:
+        self._stream_handle = stream_handle
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def stream(self, model: str, request: Any, options: Any = None):
+        return self._stream_handle
+
+
+def _assistant_response(
+    text: str,
+    *,
+    tool_calls: Optional[List[connect.ToolCallBlock]] = None,
+) -> connect.AssistantResponse:
+    content: List[connect.AssistantContentBlock] = [connect.TextBlock(text=text)]
+    for tool_call in tool_calls or []:
+        content.append(tool_call)
+    return connect.AssistantResponse(
+        provider="openai",
+        model="gpt-3.5-turbo",
+        api_family="openai-responses",
+        content=content,
+        finish_reason="stop",
+        usage=connect.Usage(
+            input_tokens=5,
+            output_tokens=len(text),
+            total_tokens=5 + len(text),
+            completeness="final",
+        ),
+    )
+
+
+def _stream_with_text(text: str) -> FakeStreamHandle:
+    response = _assistant_response(text)
+    return FakeStreamHandle(
+        [
+            connect.TextDeltaEvent(index=0, delta=text),
+            connect.ResponseEndEvent(response=response),
+        ],
+        final_response=response,
+    )
+
+
+def _timeout_stream() -> FakeStreamHandle:
+    class _BlockingStreamHandle(FakeStreamHandle):
+        async def __anext__(self):
+            await asyncio.sleep(3600)
+            raise StopAsyncIteration
+
+    return _BlockingStreamHandle([])
+
+
+def _empty_then_timeout_stream() -> FakeStreamHandle:
+    class _EmptyTimeoutStreamHandle(FakeStreamHandle):
+        def __init__(self, events: Optional[List[connect.StreamEvent]] = None) -> None:
+            self._index = 0
+
+        def __aiter__(self):
+            self._index = 0
+            return self
+
+        async def __anext__(self):
+            if self._index == 0:
+                self._index += 1
+                return connect.TextEndEvent(index=0, text="")
+            await asyncio.sleep(3600)
+            raise StopAsyncIteration
+
+    return _EmptyTimeoutStreamHandle()
+
+
+def _partial_then_timeout_stream(text: str) -> FakeStreamHandle:
+    class _PartialTimeoutStreamHandle(FakeStreamHandle):
+        def __init__(self, partial_text: str) -> None:
+            self._partial_text = partial_text
+            self._index = 0
+
+        def __aiter__(self):
+            self._index = 0
+            return self
+
+        async def __anext__(self):
+            if self._index == 0:
+                self._index += 1
+                return connect.TextDeltaEvent(index=0, delta=self._partial_text)
+            await asyncio.sleep(3600)
+            raise StopAsyncIteration
+
+    return _PartialTimeoutStreamHandle(text)
+
+
+def _tool_call_response(tool_call_id: str) -> connect.AssistantResponse:
+    tool_call = connect.ToolCallBlock(
+        id=tool_call_id,
+        name="echo",
+        arguments={"x": 1},
+    )
+    return _assistant_response("Tool answer", tool_calls=[tool_call])
+
+
+def _build_execution_with_input(
+    node_name: str, text: str
+) -> tuple[state.WorkflowExecution, state.NodeExecution]:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    user_msg = state.Message(role=models.Role.USER, text=text)
+    history.upsert_message(run, user_msg)
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node=node_name,
+            input_message_ids=[user_msg.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    return run, execution
 
 
 @pytest.mark.asyncio
-async def test_llm_executor_with_litellm_mock_response(
+async def test_llm_executor_with_connect_mock_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
-        async def gen() -> Any:
-            yield FakeChunk("It's simple to use and easy to get started")
-
-        return gen()
-
-    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
-        parts: List[str] = []
-        for chunk in chunks:
-            choice0 = chunk.choices[0]
-            if choice0.delta.content:
-                parts.append(choice0.delta.content)
-        full_text = "".join(parts)
-
-        return FakeResponse(full_text)
-
-    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
     monkeypatch.setattr(
-        litellm,
-        "stream_chunk_builder",
-        fake_stream_chunk_builder,
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            _stream_with_text("It's simple to use and easy to get started"),
+            **kwargs,
+        ),
     )
 
     project = StubProject()
@@ -112,17 +193,7 @@ async def test_llm_executor_with_litellm_mock_response(
     )
     executor = LLMExecutor(config=node, project=project)
 
-    user_msg = state.Message(role=models.Role.USER, text="Hey, I'm a mock request")
-    execution = state.NodeExecution(
-        node="node-1",
-        input_messages=[user_msg],
-        status=state.RunStatus.RUNNING,
-    )
-    run = state.WorkflowExecution(
-        workflow_name="wf",
-        node_executions={execution.id: execution},
-        steps=[],
-    )
+    run, execution = _build_execution_with_input("node-1", "Hey, I'm a mock request")
     inp = ExecutorInput(execution=execution, run=run)
 
     steps: List[state.Step] = []
@@ -153,26 +224,73 @@ async def test_llm_executor_with_litellm_mock_response(
 
 
 @pytest.mark.asyncio
+async def test_llm_executor_counts_cached_tokens_toward_round_prompt_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = connect.AssistantResponse(
+        provider="openai",
+        model="gpt-3.5-turbo",
+        api_family="openai-responses",
+        content=[connect.TextBlock(text="cached usage response")],
+        finish_reason="stop",
+        usage=connect.Usage(
+            input_tokens=5,
+            output_tokens=3,
+            cache_read_tokens=7,
+            total_tokens=15,
+            completeness="final",
+        ),
+    )
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="cached usage response"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-cached-usage",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-cached-usage", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    final_message_step = output_steps[-1]
+    assert final_message_step.llm_usage is not None
+    assert final_message_step.llm_usage.prompt_tokens == 12
+    assert final_message_step.llm_usage.completion_tokens == 3
+
+
+@pytest.mark.asyncio
 async def test_llm_executor_timeouts_retry_and_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_count = {"n": 0}
 
-    async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
         call_count["n"] += 1
+        return FakeAsyncLLMClient(_timeout_stream(), **kwargs)
 
-        async def gen() -> Any:
-            while True:
-                await asyncio.sleep(3600)
-                yield FakeChunk("")
-
-        return gen()
-
-    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
-        return FakeResponse("")
-
-    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-    monkeypatch.setattr(litellm, "stream_chunk_builder", fake_stream_chunk_builder)
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
 
     project = StubProject()
     node = LLMNode(
@@ -185,17 +303,7 @@ async def test_llm_executor_timeouts_retry_and_fail(
     )
     executor = LLMExecutor(config=node, project=project)
 
-    user_msg = state.Message(role=models.Role.USER, text="Hi")
-    execution = state.NodeExecution(
-        node="node-timeouts",
-        input_messages=[user_msg],
-        status=state.RunStatus.RUNNING,
-    )
-    run = state.WorkflowExecution(
-        workflow_name="wf",
-        node_executions={execution.id: execution},
-        steps=[],
-    )
+    run, execution = _build_execution_with_input("node-timeouts", "Hi")
     inp = ExecutorInput(execution=execution, run=run)
 
     steps: List[state.Step] = []
@@ -210,27 +318,122 @@ async def test_llm_executor_timeouts_retry_and_fail(
 
 
 @pytest.mark.asyncio
+async def test_llm_executor_retry_clears_partial_streamed_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"n": 0}
+
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return FakeAsyncLLMClient(
+                _partial_then_timeout_stream("Applying stale partial. "),
+                **kwargs,
+            )
+        return FakeAsyncLLMClient(_stream_with_text("Final retry answer"), **kwargs)
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-retry-partial-reset",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        response_timeout=0.01,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-retry-partial-reset", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert call_count["n"] == 2
+    output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
+    assert output_steps
+    final_message_step = output_steps[-1]
+    assert final_message_step.message is not None
+    assert final_message_step.message.text == "Final retry answer"
+    assert "Applying stale partial." not in final_message_step.message.text
+    assert final_message_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_rejects_when_max_rounds_reached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _tool_call_response("call-prior")
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            FakeStreamHandle(
+                [connect.ResponseEndEvent(response=response)],
+                final_response=response,
+            ),
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-max-rounds",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        max_rounds=1,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-max-rounds", "Hi")
+    prior_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="Tool answer",
+        tool_call_requests=[
+            state.ToolCallReq(
+                id="call-prior",
+                name="echo",
+                arguments={"x": 1},
+            )
+        ],
+    )
+    project.history.upsert_message(run, prior_message)
+    project.history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=prior_message.id,
+            is_complete=True,
+        ),
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(steps) == 1
+    assert steps[0].type == state.StepType.REJECTION
+    assert steps[0].message is not None
+    assert "exceeded max_rounds=1" in steps[0].message.text
+
+
+@pytest.mark.asyncio
 async def test_llm_executor_start_timeout_ignores_empty_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_count = {"n": 0}
 
-    async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
         call_count["n"] += 1
+        return FakeAsyncLLMClient(_empty_then_timeout_stream(), **kwargs)
 
-        async def gen() -> Any:
-            while True:
-                yield FakeChunk("")
-                yield FakeChunkNoChoices()
-                await asyncio.sleep(3600)
-
-        return gen()
-
-    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
-        return FakeResponse("")
-
-    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-    monkeypatch.setattr(litellm, "stream_chunk_builder", fake_stream_chunk_builder)
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
 
     project = StubProject()
     node = LLMNode(
@@ -242,17 +445,7 @@ async def test_llm_executor_start_timeout_ignores_empty_chunks(
     )
     executor = LLMExecutor(config=node, project=project)
 
-    user_msg = state.Message(role=models.Role.USER, text="Hi")
-    execution = state.NodeExecution(
-        node="node-start-timeout-empty",
-        input_messages=[user_msg],
-        status=state.RunStatus.RUNNING,
-    )
-    run = state.WorkflowExecution(
-        workflow_name="wf",
-        node_executions={execution.id: execution},
-        steps=[],
-    )
+    run, execution = _build_execution_with_input("node-start-timeout-empty", "Hi")
     inp = ExecutorInput(execution=execution, run=run)
 
     steps: List[state.Step] = []
@@ -274,26 +467,26 @@ async def test_llm_executor_start_timeout_ignores_empty_chunks(
 async def test_llm_executor_populates_tool_spec_on_tool_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
-        async def gen() -> Any:
-            yield FakeChunk("Tool answer")
-
-        return gen()
-
-    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
-        parts: List[str] = []
-        for chunk in chunks:
-            choice0 = chunk.choices[0]
-            if choice0.delta.content:
-                parts.append(choice0.delta.content)
-        full_text = "".join(parts)
-
-        tool_args = "{}"
-        tool_call = FakeToolCall("echo", tool_args)
-        return FakeResponse(full_text, tool_calls=[tool_call])
-
-    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-    monkeypatch.setattr(litellm, "stream_chunk_builder", fake_stream_chunk_builder)
+    tool_call = connect.ToolCallBlock(
+        id="call_1",
+        name="echo",
+        arguments={},
+    )
+    response = _assistant_response("Tool answer", tool_calls=[tool_call])
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="Tool answer"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            **kwargs,
+        ),
+    )
 
     project = StubProject()
 
@@ -319,17 +512,7 @@ async def test_llm_executor_populates_tool_spec_on_tool_call(
     )
     executor = LLMExecutor(config=node, project=project)
 
-    user_msg = state.Message(role=models.Role.USER, text="Hi")
-    execution = state.NodeExecution(
-        node="node-tools-call",
-        input_messages=[user_msg],
-        status=state.RunStatus.RUNNING,
-    )
-    run = state.WorkflowExecution(
-        workflow_name="wf",
-        node_executions={execution.id: execution},
-        steps=[],
-    )
+    run, execution = _build_execution_with_input("node-tools-call", "Hi")
     inp = ExecutorInput(execution=execution, run=run)
 
     steps: List[state.Step] = []
@@ -402,14 +585,13 @@ async def test_llm_executor_build_tools_uses_effective_specs_config_merge() -> N
         project,
         node,
     )
-    tools = await executor._build_tools(effective_specs)
+    tools = await executor._build_connect_tools(effective_specs)
     assert tools is not None
     assert len(tools) == 1
 
     tool = tools[0]
-    assert tool["type"] == "function"
-    fn = tool["function"]
-    params = fn["parameters"]["properties"]
+    assert tool.name == "echo"
+    params = tool.input_schema["properties"]
     assert params["x"] == 2
     assert params["local"] is True
     assert params["global"] is True
@@ -467,7 +649,7 @@ async def test_llm_executor_build_tools_respects_global_enabled_override() -> No
         project,
         node,
     )
-    tools = await executor._build_tools(effective_specs)
+    tools = await executor._build_connect_tools(effective_specs)
     assert tools is None
 
 
@@ -475,23 +657,14 @@ async def test_llm_executor_build_tools_respects_global_enabled_override() -> No
 async def test_llm_executor_outcome_tag_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
-        async def gen() -> Any:
-            yield FakeChunk("Tagged answer\nOUTCOME: success")
-
-        return gen()
-
-    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
-        parts: List[str] = []
-        for chunk in chunks:
-            choice0 = chunk.choices[0]
-            if choice0.delta.content:
-                parts.append(choice0.delta.content)
-        full_text = "".join(parts)
-        return FakeResponse(full_text)
-
-    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-    monkeypatch.setattr(litellm, "stream_chunk_builder", fake_stream_chunk_builder)
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            _stream_with_text("Tagged answer\nOUTCOME: success"),
+            **kwargs,
+        ),
+    )
 
     project = StubProject()
     node = LLMNode(
@@ -507,17 +680,7 @@ async def test_llm_executor_outcome_tag_selection(
     )
     executor = LLMExecutor(config=node, project=project)
 
-    user_msg = state.Message(role=models.Role.USER, text="Hi")
-    execution = state.NodeExecution(
-        node="node-outcome-tag",
-        input_messages=[user_msg],
-        status=state.RunStatus.RUNNING,
-    )
-    run = state.WorkflowExecution(
-        workflow_name="wf",
-        node_executions={execution.id: execution},
-        steps=[],
-    )
+    run, execution = _build_execution_with_input("node-outcome-tag", "Hi")
     inp = ExecutorInput(execution=execution, run=run)
 
     steps: List[state.Step] = []
@@ -543,28 +706,27 @@ async def test_llm_executor_outcome_function_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     RECORDED_TOOL_CALLS.clear()
-
-    async def fake_acompletion(*args: Any, **kwargs: Any) -> Any:
-        async def gen() -> Any:
-            yield FakeChunk("Functional answer")
-
-        return gen()
-
-    def fake_stream_chunk_builder(chunks: List[Any], messages: Any) -> Any:
-        parts: List[str] = []
-        for chunk in chunks:
-            choice0 = chunk.choices[0]
-            if choice0.delta.content:
-                parts.append(choice0.delta.content)
-        full_text = "".join(parts)
-
-        outcome_args = '{"outcome": "success"}'
-        tool_call = FakeToolCall(llm_helpers.CHOOSE_OUTCOME_TOOL_NAME, outcome_args)
-        RECORDED_TOOL_CALLS.append(tool_call.function.name)
-        return FakeResponse(full_text, tool_calls=[tool_call])
-
-    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-    monkeypatch.setattr(litellm, "stream_chunk_builder", fake_stream_chunk_builder)
+    tool_call = connect.ToolCallBlock(
+        id="call_1",
+        name=llm_helpers.CHOOSE_OUTCOME_TOOL_NAME,
+        arguments={"outcome": "success"},
+    )
+    RECORDED_TOOL_CALLS.append(tool_call.name)
+    response = _assistant_response("Functional answer", tool_calls=[tool_call])
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="Functional answer"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            **kwargs,
+        ),
+    )
 
     project = StubProject()
     node = LLMNode(
@@ -580,17 +742,7 @@ async def test_llm_executor_outcome_function_selection(
     )
     executor = LLMExecutor(config=node, project=project)
 
-    user_msg = state.Message(role=models.Role.USER, text="Hi")
-    execution = state.NodeExecution(
-        node="node-outcome-function",
-        input_messages=[user_msg],
-        status=state.RunStatus.RUNNING,
-    )
-    run = state.WorkflowExecution(
-        workflow_name="wf",
-        node_executions={execution.id: execution},
-        steps=[],
-    )
+    run, execution = _build_execution_with_input("node-outcome-function", "Hi")
     inp = ExecutorInput(execution=execution, run=run)
 
     steps: List[state.Step] = []
@@ -619,3 +771,30 @@ async def test_llm_executor_outcome_function_selection(
     for s in output_steps[:-1]:
         assert s.is_complete is False
     assert final_message_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_rejects_chatgpt_without_authorization() -> None:
+    project = StubProject()
+    project.credentials.has_active_authorization = lambda provider: asyncio.sleep(
+        0, result=False
+    )
+    node = LLMNode(
+        name="node-chatgpt-auth",
+        type="llm",
+        model="chatgpt/gpt-4o",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-chatgpt-auth", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(steps) == 1
+    assert steps[0].type == state.StepType.REJECTION
+    assert steps[0].message is not None
+    assert "Run /auth login chatgpt" in steps[0].message.text

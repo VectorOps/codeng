@@ -19,6 +19,7 @@ from .proc.shell import ShellManager
 from .skills import Skill, discover_skills
 from .project_state import FileChangeModel, ProjectState
 from .history.manager import HistoryManager
+from .connect_auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 
@@ -37,6 +38,7 @@ class Project:
         self.know: KnowProject = KnowProject()
         self.project_state: ProjectState = ProjectState()
         self.history: HistoryManager = HistoryManager()
+        self.credentials: ProjectCredentialManager = ProjectCredentialManager()
         self.llm_usage: LLMUsageStats = LLMUsageStats()
         self.processes: Optional[ProcessManager] = None
         self.shells: Optional[ShellManager] = None

@@ -152,7 +152,7 @@ structlog.configure(
 logger: structlog.BoundLogger = structlog.get_logger("vocode")
 
 
-# Fix Litellm warning
+# Suppress noisy serializer warnings from provider/client integrations
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=r"^Pydantic serializer warnings:"
 )

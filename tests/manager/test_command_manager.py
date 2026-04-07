@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from uuid import uuid4
 
 import pytest
+from connect.credentials import chatgpt as connect_chatgpt_credentials
 
 from vocode import models, state
 from vocode import settings as vocode_settings
@@ -383,7 +385,184 @@ async def test_help_command_lists_debug_and_workflows() -> None:
     text = payload.text
     assert "/debug" in text
     assert "/workflows" in text
+    assert "/auth" in text
     assert "/aa" not in text
+
+
+@pytest.mark.asyncio
+async def test_auth_status_command_reports_credential_status() -> None:
+    project = StubProject()
+    project.credentials._env["CHATGPT_ACCESS_TOKEN"] = "token"
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/auth status chatgpt")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.text == "Authentication is configured for chatgpt."
+
+
+@pytest.mark.asyncio
+async def test_auth_verify_command_errors_when_missing_auth() -> None:
+    project = StubProject()
+    project.credentials.authorization_status = lambda provider: asyncio.sleep(
+        0, result=type("_Status", (), {"is_authorized": False})()
+    )
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/auth verify chatgpt")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "Command error:" in payload.text
+    assert "No active authorization for chatgpt" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_auth_login_command_runs_login_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    called = {"n": 0}
+
+    async def _fake_login(provider, callbacks):
+        called["n"] += 1
+        assert provider == "chatgpt"
+        callbacks.on_auth(
+            connect_chatgpt_credentials.OAuthAuthInfo(url="https://example.test/auth")
+        )
+        return connect_chatgpt_credentials.ChatGPTCredentials(
+            access_token="token",
+            refresh_token="refresh",
+            expires_at=time.time() + 60,
+            account_id="acct_test",
+        )
+
+    async def _authorized_status(provider):
+        return type("_Status", (), {"is_authorized": True})()
+
+    monkeypatch.setattr(project.credentials, "login", _fake_login)
+    monkeypatch.setattr(project.credentials, "authorization_status", _authorized_status)
+
+    message = state.Message(role=models.Role.USER, text="/auth login chatgpt")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    packets: list[manager_proto.BasePacket] = []
+    for _ in range(5):
+        response_envelope = await client_endpoint.recv()
+        packets.append(response_envelope.payload)
+
+    assert called["n"] == 1
+    assert any(
+        isinstance(packet, manager_proto.ProgressPacket)
+        and packet.status == manager_proto.ProgressStatus.START
+        for packet in packets
+    )
+    assert any(
+        isinstance(packet, manager_proto.TextMessagePacket)
+        and "https://example.test/auth" in packet.text
+        and packet.format == manager_proto.TextMessageFormat.MARKDOWN
+        for packet in packets
+    )
+    assert any(
+        isinstance(packet, manager_proto.TextMessagePacket)
+        and "Authentication successful for chatgpt." in packet.text
+        for packet in packets
+    )
+
+
+@pytest.mark.asyncio
+async def test_auth_cancel_command_stops_active_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    started = asyncio.Event()
+
+    async def _fake_login(provider, callbacks):
+        assert provider == "chatgpt"
+        started.set()
+        await asyncio.sleep(3600)
+        return connect_chatgpt_credentials.ChatGPTCredentials(
+            access_token="token",
+            refresh_token="refresh",
+            expires_at=time.time() + 60,
+            account_id="acct_test",
+        )
+
+    monkeypatch.setattr(project.credentials, "login", _fake_login)
+
+    login_task = asyncio.create_task(
+        server.on_ui_packet(
+            manager_proto.BasePacketEnvelope(
+                msg_id=1,
+                payload=manager_proto.UserInputPacket(
+                    message=state.Message(
+                        role=models.Role.USER,
+                        text="/auth login chatgpt",
+                    )
+                ),
+            )
+        )
+    )
+    await started.wait()
+
+    handled = await server.on_ui_packet(
+        manager_proto.BasePacketEnvelope(
+            msg_id=2,
+            payload=manager_proto.UserInputPacket(
+                message=state.Message(
+                    role=models.Role.USER,
+                    text="/auth cancel",
+                )
+            ),
+        )
+    )
+    assert handled is True
+
+    await login_task
+
+    packets: list[manager_proto.BasePacket] = []
+    for _ in range(4):
+        response_envelope = await client_endpoint.recv()
+        packets.append(response_envelope.payload)
+
+    assert any(
+        isinstance(packet, manager_proto.TextMessagePacket)
+        and packet.text == "Authentication cancelled."
+        for packet in packets
+    )
 
 
 @pytest.mark.asyncio
