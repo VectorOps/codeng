@@ -103,7 +103,7 @@ async def test_http_input_executor_waits_for_external_message(tmp_path) -> None:
         async with ClientSession() as session:
             async with session.post(
                 f"http://{host}:{port}{node.path}",
-                json={"text": "from-http", "workflow_id": runner.input_workflow_id},
+                json={"text": "from-http"},
             ) as resp:
                 assert resp.status == 200
 
@@ -217,7 +217,6 @@ async def test_http_input_executor_accepts_markdown_without_wrapping(tmp_path) -
                 f"http://{host}:{port}{node.path}",
                 json={
                     "text": "from-http-md",
-                    "workflow_id": runner.input_workflow_id,
                 },
                 headers={
                     "Content-Type": "application/json; charset=utf-8; format=markdown"
@@ -295,9 +294,8 @@ async def test_http_input_executor_consumes_queued_input_before_waiting(
     )
 
     accepted = await project.input_manager.publish(
-        runner.input_workflow_id,
         state.Message(role=models.Role.USER, text="queued-http-input"),
-        queue_if_unhandled=True,
+        queue=True,
     )
     assert accepted is True
 
@@ -347,9 +345,8 @@ async def test_http_input_executor_stop_resets_queued_input(tmp_path) -> None:
     )
 
     accepted = await project.input_manager.publish(
-        runner.input_workflow_id,
         state.Message(role=models.Role.USER, text="stale-http-input"),
-        queue_if_unhandled=True,
+        queue=True,
     )
     assert accepted is True
 
@@ -361,9 +358,8 @@ async def test_http_input_executor_stop_resets_queued_input(tmp_path) -> None:
     assert stop_event.stats.status == state.RunnerStatus.STOPPED
 
     accepted_after_stop = await project.input_manager.publish(
-        runner.input_workflow_id,
         state.Message(role=models.Role.USER, text="fresh-http-input"),
-        queue_if_unhandled=False,
+        queue=False,
     )
     assert accepted_after_stop is False
 
@@ -433,7 +429,6 @@ async def test_runner_can_consume_normal_and_http_inputs_on_same_workflow(
                 f"http://{host}:{port}{http_node.path}",
                 json={
                     "text": "from-http-after-prompt",
-                    "workflow_id": runner.input_workflow_id,
                 },
             ) as resp:
                 assert resp.status == 200
@@ -445,9 +440,8 @@ async def test_runner_can_consume_normal_and_http_inputs_on_same_workflow(
 
     async def publish_prompt_input() -> None:
         accepted = await project.input_manager.publish(
-            runner.input_workflow_id,
             state.Message(role=models.Role.USER, text="from-normal-input"),
-            queue_if_unhandled=False,
+            queue=False,
         )
         assert accepted is True
 

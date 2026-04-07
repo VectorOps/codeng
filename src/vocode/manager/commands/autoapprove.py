@@ -53,9 +53,8 @@ async def _aa(server, args: list[str]) -> None:
         added.append(tool_req.name)
 
     accepted = await server.manager.project.input_manager.publish(
-        runner.input_workflow_id,
         state.Message(role=models.Role.USER, text=""),
-        queue_if_unhandled=False,
+        queue=False,
     )
     if not accepted:
         raise CommandError("No tool confirmation is currently pending.")

@@ -69,13 +69,9 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
                 role=role,
                 text=text,
             )
-            workflow_id = data.get("workflow_id")
-            if not isinstance(workflow_id, str) or not workflow_id:
-                return web.json_response({"error": "missing_workflow_id"}, status=400)
             accepted = await self.project.input_manager.publish(
-                workflow_id,
                 message,
-                queue_if_unhandled=True,
+                queue=True,
             )
             if not accepted:
                 return web.json_response({"error": "rejected"}, status=409)
@@ -116,7 +112,7 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
         )
         yield waiting_step
 
-        message = await self.project.input_manager.wait_for_input(str(inp.run.id))
+        message = await self.project.input_manager.wait_for_input()
         history.upsert_message(inp.run, message)
         output_step = history.upsert_step(
             inp.run,

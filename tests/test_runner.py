@@ -2392,9 +2392,8 @@ async def test_runner_prompt_uses_input_manager_when_event_response_is_noop() ->
 
     async def publish_input() -> None:
         accepted = await project.input_manager.publish(
-            runner.input_workflow_id,
             state.Message(role=models.Role.USER, text="managed-input"),
-            queue_if_unhandled=False,
+            queue=False,
         )
         assert accepted is True
 
@@ -2452,9 +2451,8 @@ async def test_runner_initial_input_uses_queued_input_manager_message() -> None:
     )
 
     accepted = await project.input_manager.publish(
-        runner.input_workflow_id,
         state.Message(role=models.Role.USER, text="queued-input"),
-        queue_if_unhandled=True,
+        queue=True,
     )
     assert accepted is True
 
@@ -2494,9 +2492,8 @@ async def test_runner_stop_resets_managed_input_queue() -> None:
     )
 
     accepted = await project.input_manager.publish(
-        runner.input_workflow_id,
         state.Message(role=models.Role.USER, text="stale-input"),
-        queue_if_unhandled=True,
+        queue=True,
     )
     assert accepted is True
 
@@ -2511,9 +2508,8 @@ async def test_runner_stop_resets_managed_input_queue() -> None:
     assert stop_event.stats.status == state.RunnerStatus.STOPPED
 
     accepted_after_stop = await project.input_manager.publish(
-        runner.input_workflow_id,
         state.Message(role=models.Role.USER, text="fresh-input"),
-        queue_if_unhandled=False,
+        queue=False,
     )
 
     assert accepted_after_stop is False
