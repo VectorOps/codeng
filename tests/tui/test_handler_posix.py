@@ -21,6 +21,48 @@ def test_decoder_simple_character() -> None:
     assert not event.shift
 
 
+def test_decoder_simple_unicode_character() -> None:
+    decoder = posix.PosixInputDecoder()
+    events = decoder.feed("é".encode("utf-8"))
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, base.KeyEvent)
+    assert event.action == "down"
+    assert event.key == "é"
+    assert event.text == "é"
+    assert not event.ctrl
+    assert not event.alt
+    assert not event.shift
+
+
+def test_decoder_alt_modified_unicode_character() -> None:
+    decoder = posix.PosixInputDecoder()
+    events = decoder.feed(b"\x1b" + "é".encode("utf-8"))
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, base.KeyEvent)
+    assert event.action == "down"
+    assert event.key == "é"
+    assert event.text == "é"
+    assert not event.ctrl
+    assert event.alt
+    assert not event.shift
+
+
+def test_decoder_csi_u_unicode_character() -> None:
+    decoder = posix.PosixInputDecoder()
+    events = decoder.feed(b"\x1b[233;1u")
+    assert len(events) == 1
+    event = events[0]
+    assert isinstance(event, base.KeyEvent)
+    assert event.action == "down"
+    assert event.key == "é"
+    assert event.text == "é"
+    assert not event.ctrl
+    assert not event.alt
+    assert not event.shift
+
+
 def test_decoder_space_and_ctrl_space() -> None:
     decoder = posix.PosixInputDecoder()
 

@@ -106,6 +106,42 @@ class PosixInputDecoder:
         self._paste_mode = False
         self._paste_buffer: bytes = b""
 
+    def _try_consume_utf8_char(
+        self,
+        events: list[input_base.InputEvent],
+        *,
+        alt: bool = False,
+    ) -> tuple[bool, bool]:
+        if not self._buffer:
+            return False, False
+
+        first_byte = self._buffer[0]
+        expected_length = 0
+        if 0xC2 <= first_byte <= 0xDF:
+            expected_length = 2
+        elif 0xE0 <= first_byte <= 0xEF:
+            expected_length = 3
+        elif 0xF0 <= first_byte <= 0xF4:
+            expected_length = 4
+        else:
+            return False, False
+
+        if len(self._buffer) < expected_length:
+            return False, True
+
+        chunk = self._buffer[:expected_length]
+        try:
+            ch = chunk.decode("utf-8")
+        except UnicodeDecodeError:
+            return False, False
+
+        if not ch.isprintable():
+            return False, False
+
+        self._buffer = self._buffer[expected_length:]
+        self._append_char_key(events, ch, alt=alt)
+        return True, False
+
     def _append_char_key(
         self,
         events: list[input_base.InputEvent],
@@ -198,10 +234,12 @@ class PosixInputDecoder:
             except ValueError:
                 mods = 1
 
-        if not (32 <= codepoint <= 126):
+        if not (32 <= codepoint <= 0x10FFFF):
             return False, False
 
         ch = chr(codepoint)
+        if not ch.isprintable():
+            return False, False
         ctrl = mods in (5, 6, 7, 8)
         alt = mods in (3, 4, 7, 8)
         shift = mods in (2, 4, 6, 8)
@@ -249,11 +287,11 @@ class PosixInputDecoder:
             return False
 
         second_byte = self._buffer[1]
-        self._buffer = self._buffer[2:]
 
         base_seq = bytes([second_byte])
         base_mapping = _KEY_SEQUENCE_MAP.get(base_seq)
         if base_mapping is not None:
+            self._buffer = self._buffer[2:]
             events.append(
                 input_base.KeyEvent(
                     action="down",
@@ -266,13 +304,25 @@ class PosixInputDecoder:
             )
             return True
 
+        self._buffer = self._buffer[1:]
+        consumed, need_more = self._try_consume_utf8_char(events, alt=True)
+        if need_more:
+            self._buffer = b"\x1b" + self._buffer
+            return False
+        if consumed:
+            return True
+
+        self._buffer = self._buffer[1:]
         ch = chr(second_byte)
         if ch.isprintable():
             self._append_char_key(events, ch, alt=True)
         return True
 
     def _consume_one_byte(self, events: list[input_base.InputEvent]) -> None:
-        # Fallback: consume one byte; emit a KeyEvent only for printable ASCII.
+        # Fallback: consume one byte; emit a KeyEvent for printable ASCII or UTF-8.
+        consumed, need_more = self._try_consume_utf8_char(events)
+        if consumed or need_more:
+            return
         byte = self._buffer[0]
         self._buffer = self._buffer[1:]
         if 32 <= byte <= 126:
