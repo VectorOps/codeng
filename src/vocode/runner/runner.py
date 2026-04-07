@@ -45,6 +45,10 @@ class Runner:
         }
         self.project.state_manager.track(self.execution)
 
+    @property
+    def input_workflow_id(self) -> str:
+        return str(self.execution.id)
+
     def _touch_execution(self) -> None:
         self.execution.touch()
         self.project.state_manager.notify_changed(self.execution)
@@ -469,6 +473,55 @@ class Runner:
             step=response_step,
         )
 
+    async def _wait_for_managed_input_response(
+        self,
+        req: RunEventReq,
+        resp: Optional[RunEventResp],
+    ) -> Optional[state.Step]:
+        if resp is not None and resp.resp_type != RunEventResponseType.NOOP:
+            return self._handle_run_event_response(req, resp)
+
+        step = req.step
+        if step is None:
+            return None
+
+        message = await self.project.input_manager.wait_for_input(
+            self.input_workflow_id
+        )
+        managed_resp: Optional[RunEventResp] = None
+
+        if step.type == state.StepType.PROMPT:
+            managed_resp = RunEventResp(
+                resp_type=RunEventResponseType.MESSAGE,
+                message=message,
+            )
+        elif step.type == state.StepType.PROMPT_CONFIRM:
+            if message.text:
+                managed_resp = RunEventResp(
+                    resp_type=RunEventResponseType.MESSAGE,
+                    message=message,
+                )
+            else:
+                managed_resp = RunEventResp(
+                    resp_type=RunEventResponseType.APPROVE,
+                    message=None,
+                )
+        elif step.type == state.StepType.TOOL_REQUEST:
+            if message.text:
+                managed_resp = RunEventResp(
+                    resp_type=RunEventResponseType.DECLINE,
+                    message=message,
+                )
+            else:
+                managed_resp = RunEventResp(
+                    resp_type=RunEventResponseType.APPROVE,
+                    message=None,
+                )
+
+        if managed_resp is None:
+            return None
+        return self._handle_run_event_response(req, managed_resp)
+
     async def _init_executors(self) -> None:
         for executor in self._executors.values():
             await executor.init()
@@ -535,7 +588,7 @@ class Runner:
                     step=persisted_prompt,
                 )
                 resp = yield req
-                response_step = self._handle_run_event_response(req, resp)
+                response_step = await self._wait_for_managed_input_response(req, resp)
                 response_event = self._build_response_event(response_step)
                 if response_event is not None:
                     _ = yield response_event
@@ -614,7 +667,16 @@ class Runner:
                         )
                         resp = yield req
 
-                        response_step = self._handle_run_event_response(req, resp)
+                        if persisted_step.type in (
+                            state.StepType.PROMPT,
+                            state.StepType.PROMPT_CONFIRM,
+                        ):
+                            response_step = await self._wait_for_managed_input_response(
+                                req,
+                                resp,
+                            )
+                        else:
+                            response_step = self._handle_run_event_response(req, resp)
                         response_event = self._build_response_event(response_step)
                         if response_event is not None:
                             _ = yield response_event
@@ -735,7 +797,7 @@ class Runner:
                                 approved.append(req)
                                 break
 
-                            response_step = self._handle_run_event_response(
+                            response_step = await self._wait_for_managed_input_response(
                                 req_event, resp_event
                             )
                             response_event = self._build_response_event(response_step)
@@ -924,7 +986,7 @@ class Runner:
                             step=persisted_prompt,
                         )
                         resp_event = yield req_event
-                        response_step = self._handle_run_event_response(
+                        response_step = await self._wait_for_managed_input_response(
                             req_event, resp_event
                         )
                         response_event = self._build_response_event(response_step)
@@ -1103,6 +1165,7 @@ class Runner:
             _ = yield stop_event
             return
         finally:
+            await self.project.input_manager.reset_workflow(self.input_workflow_id)
             await self._shutdown_executors()
 
     def set_status(

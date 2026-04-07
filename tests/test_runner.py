@@ -1,8 +1,10 @@
+import asyncio
 from typing import AsyncIterator, Callable, Dict
 
 import pytest
 
 from vocode import models, state
+from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
 from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
@@ -2367,3 +2369,151 @@ async def test_runner_continue_after_stop_does_not_create_new_steps_for_visible_
     assert set(runner.execution.steps_by_id.keys()) == before_all_step_ids
     assert runner.execution.step_ids == [output_step.id]
     assert events == []
+
+
+@pytest.mark.asyncio
+async def test_runner_prompt_uses_input_manager_when_event_response_is_noop() -> None:
+    node = InputNode(
+        name="input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        message="Say something",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    project = StubProject()
+    runner = Runner(
+        workflow=DummyWorkflow(name="wf-input-manager-prompt", graph=graph),
+        project=project,
+        initial_message=None,
+    )
+
+    agen = runner.run()
+    prompt_seen = False
+
+    async def publish_input() -> None:
+        accepted = await project.input_manager.publish(
+            runner.input_workflow_id,
+            state.Message(role=models.Role.USER, text="managed-input"),
+            queue_if_unhandled=False,
+        )
+        assert accepted is True
+
+    events: list[RunEvent] = []
+    send: RunEventResp | None = None
+    publish_task: asyncio.Task[None] | None = None
+    while True:
+        try:
+            if send is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(send)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        if (
+            event.step is not None
+            and event.step.type == state.StepType.PROMPT
+            and not prompt_seen
+        ):
+            prompt_seen = True
+            publish_task = asyncio.create_task(publish_input())
+        send = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    if publish_task is not None:
+        await publish_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "managed-input"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_initial_input_uses_queued_input_manager_message() -> None:
+    node = models.Node(
+        name="root",
+        type="initial-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    project = StubProject()
+    runner = Runner(
+        workflow=InitialInputWorkflow(name="wf-initial-queued", graph=graph),
+        project=project,
+        initial_message=None,
+    )
+
+    accepted = await project.input_manager.publish(
+        runner.input_workflow_id,
+        state.Message(role=models.Role.USER, text="queued-input"),
+        queue_if_unhandled=True,
+    )
+    assert accepted is True
+
+    events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "queued-input"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_stop_resets_managed_input_queue() -> None:
+    node = InputNode(
+        name="input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        message="Say something",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    project = StubProject()
+    runner = Runner(
+        workflow=DummyWorkflow(name="wf-reset-managed-input", graph=graph),
+        project=project,
+        initial_message=None,
+    )
+
+    accepted = await project.input_manager.publish(
+        runner.input_workflow_id,
+        state.Message(role=models.Role.USER, text="stale-input"),
+        queue_if_unhandled=True,
+    )
+    assert accepted is True
+
+    agen = runner.run()
+    while True:
+        event = await agen.__anext__()
+        if event.step is not None and event.step.type == state.StepType.PROMPT:
+            break
+
+    stop_event = await agen.athrow(RunnerStopped())
+    assert stop_event.stats is not None
+    assert stop_event.stats.status == state.RunnerStatus.STOPPED
+
+    accepted_after_stop = await project.input_manager.publish(
+        runner.input_workflow_id,
+        state.Message(role=models.Role.USER, text="fresh-input"),
+        queue_if_unhandled=False,
+    )
+
+    assert accepted_after_stop is False
