@@ -417,7 +417,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         max_retries = 3
         attempt = 0
         assistant_partial = ""
-        final_response: Optional[connect.AssistantResponse] = None
+        final_response: Optional[connect.AssistantMessage] = None
 
         while True:
             try:

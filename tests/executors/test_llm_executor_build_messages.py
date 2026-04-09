@@ -17,7 +17,7 @@ class _FakeStreamHandle:
     def __init__(
         self,
         events: list[connect.StreamEvent],
-        final_response: connect.AssistantResponse,
+        final_response: connect.AssistantMessage,
     ) -> None:
         self._events = events
         self._final_response = final_response
@@ -34,7 +34,7 @@ class _FakeStreamHandle:
         self._index += 1
         return event
 
-    async def final_response(self) -> connect.AssistantResponse:
+    async def final_response(self) -> connect.AssistantMessage:
         return self._final_response
 
 
@@ -445,7 +445,7 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     history.upsert_message(run, user_msg)
     execution.input_message_ids.append(user_msg.id)
 
-    final_response = connect.AssistantResponse(
+    final_response = connect.AssistantMessage(
         provider="openai",
         model="test-model",
         api_family="openai-responses",
