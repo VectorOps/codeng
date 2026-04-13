@@ -45,6 +45,19 @@ class MultiLineComponent(tui_terminal.Component):
         return [[rich_segment.Segment(line)] for line in self.lines]
 
 
+class CountingComponent(MultiLineComponent):
+    def __init__(self, lines: list[str], id: str | None = None) -> None:
+        super().__init__(lines, id=id)
+        self.render_count = 0
+
+    def render(
+        self,
+        options: rich_console.ConsoleOptions,
+    ) -> tui_terminal.Lines:
+        self.render_count += 1
+        return super().render(options)
+
+
 class InputComponent(tui_terminal.Component):
     def __init__(self, text: str, id: str | None = None) -> None:
         super().__init__(id=id)
@@ -1032,6 +1045,75 @@ async def test_terminal_full_refresh_max_lines_unlimited_by_default() -> None:
     assert "three" in output
     assert "two" in output
     assert "one" in output
+
+
+@pytest.mark.asyncio
+async def test_terminal_full_refresh_max_components_limits_recomputed_components() -> (
+    None
+):
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        height=2,
+    )
+    tui_options = vocode_settings.TUIOptions(full_refresh_max_components=2)
+    settings = tui_terminal.TerminalSettings(auto_render=False, tui=tui_options)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    first = CountingComponent(["one"], id="one")
+    second = CountingComponent(["two"], id="two")
+    third = CountingComponent(["three"], id="three")
+
+    terminal.append_component(first)
+    terminal.append_component(second)
+    terminal.append_component(third)
+    await terminal.render()
+
+    assert first.render_count == 0
+    assert second.render_count == 1
+    assert third.render_count == 1
+    output = buffer.getvalue()
+    assert "three" in output
+    assert "two" in output
+    assert "one" not in output
+
+
+@pytest.mark.asyncio
+async def test_terminal_full_refresh_max_components_repaint_all_only_recomputes_tail() -> (
+    None
+):
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=20,
+        height=2,
+    )
+    tui_options = vocode_settings.TUIOptions(full_refresh_max_components=2)
+    settings = tui_terminal.TerminalSettings(auto_render=False, tui=tui_options)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    first = CountingComponent(["one"], id="one")
+    second = CountingComponent(["two"], id="two")
+    third = CountingComponent(["three"], id="three")
+
+    terminal.append_component(first)
+    terminal.append_component(second)
+    terminal.append_component(third)
+    await terminal.render()
+
+    first.render_count = 0
+    second.render_count = 0
+    third.render_count = 0
+
+    console.size = rich_console.ConsoleDimensions(30, 2)
+    terminal._handle_input_event(input_base.ResizeEvent(width=30, height=2))
+    await terminal.render()
+
+    assert first.render_count == 0
+    assert second.render_count == 1
+    assert third.render_count == 1
 
 
 def test_component_style_panel_extended_properties() -> None:

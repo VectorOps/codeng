@@ -8,6 +8,7 @@ import pytest
 from vocode import models, state
 from vocode.history.manager import HistoryManager
 from vocode.history.models import HistoryMutationResult
+from vocode.input_manager import InputManager
 from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
@@ -97,12 +98,14 @@ class FakeProject:
         self.settings = None
         self.tools: dict[str, object] = {}
         self.history = HistoryManager()
+        self.input_manager = InputManager()
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
 
     async def start(self) -> None:
         return None
 
     async def shutdown(self) -> None:
+        await self.input_manager.reset_all()
         return None
 
 

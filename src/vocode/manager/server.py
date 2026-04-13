@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import logging
+import asyncio
 from typing import Optional, cast
 import time
 import uuid
@@ -40,13 +40,11 @@ class UIServer:
         )
         self._status = manager_proto.UIServerStatus.IDLE
         self._push_msg_id = 0
-        self._input_waiters: list[asyncio.Future[manager_proto.UserInputPacket]] = []
         self._recv_task: Optional[asyncio.Task[None]] = None
         self._started = False
         self._autocomplete = AutocompleteManager()
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
-        self._pending_input_step: Optional[state.Step] = None
         self._auth_session: Optional[ServerAuthenticationSession] = None
         self._progress_last_sent_at_by_id: dict[str, float] = {}
         self._know_repo_label_by_id: dict[str, str] = {}
@@ -142,14 +140,12 @@ class UIServer:
         await self.send_packet(
             manager_proto.InputPromptPacket(title=title, subtitle=subtitle)
         )
-        waiter = self._push_input_waiter()
         try:
-            packet = await waiter
+            message = await self._manager.project.input_manager.wait_for_input()
         except asyncio.CancelledError:
             await self.send_packet(manager_proto.InputPromptPacket())
             raise
         await self.send_packet(manager_proto.InputPromptPacket())
-        message = packet.message
         return message.text
 
     def start_authentication_session(
@@ -298,7 +294,6 @@ class UIServer:
         self._recv_task = asyncio.create_task(self._recv_loop())
 
         await workflow_commands.register_workflow_commands(self._commands)
-        await self._register_autoapprove_commands()
 
         settings = self._manager.project.settings
         if settings is not None:
@@ -517,138 +512,6 @@ class UIServer:
         )
         await self.send_packet(packet)
 
-    async def _register_autoapprove_commands(self) -> None:
-        async def aa(server: "UIServer", args: list[str]) -> None:
-            if args:
-                raise workflow_commands.CommandError("Usage: /aa")
-            step = server._pending_input_step
-            if step is None or step.type != state.StepType.TOOL_REQUEST:
-                raise workflow_commands.CommandError(
-                    "No tool confirmation is currently pending."
-                )
-            message = step.message
-            if message is None:
-                raise workflow_commands.CommandError(
-                    "No tool confirmation is currently pending."
-                )
-
-            added: list[str] = []
-            for tool_req in message.tool_call_requests:
-                if tool_req.status != state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
-                    continue
-                server.manager.project.project_state.autoapprove.add_tool(tool_req.name)
-                added.append(tool_req.name)
-
-            waiter = server._pop_input_waiter()
-            if waiter is None:
-                raise workflow_commands.CommandError(
-                    "No tool confirmation is currently pending."
-                )
-            if not waiter.done():
-                user_input = manager_proto.UserInputPacket(
-                    message=state.Message(role=models.Role.USER, text="")
-                )
-                waiter.set_result(user_input)
-                prompt_packet = manager_proto.InputPromptPacket()
-                await server.send_packet(prompt_packet)
-                server._pending_input_step = None
-
-            if added:
-                unique = sorted(set(added))
-                await server.send_text_message(
-                    "Session auto-approve enabled for: " + ", ".join(unique)
-                )
-
-        await self._commands.register(
-            "aa",
-            aa,
-            description="Auto-approve similar tool calls for this session",
-            params=[],
-            hidden=True,
-        )
-
-        async def autoapprove(server: "UIServer", args: list[str]) -> None:
-            if not args:
-                raise workflow_commands.CommandError(
-                    "Usage: /autoapprove <list|add|remove|clear>"
-                )
-            sub = args[0]
-            rest = args[1:]
-            st = server.manager.project.project_state.autoapprove
-
-            if sub == "list":
-                if rest:
-                    raise workflow_commands.CommandError("Usage: /autoapprove list")
-                if not st.policies_by_tool:
-                    await server.send_text_message("No session auto-approve rules.")
-                    return
-                lines: list[str] = ["Session auto-approve rules:"]
-                for name in sorted(st.policies_by_tool.keys()):
-                    policy = st.policies_by_tool[name]
-                    if policy.approve_all:
-                        lines.append(f"  - {name}: approve_all")
-                    elif not policy.rules:
-                        lines.append(f"  - {name}: (no rules)")
-                    else:
-                        lines.append(f"  - {name}:")
-                        for rule in policy.rules:
-                            lines.append(f"      - {rule.key} ~= {rule.pattern}")
-                await server.send_text_message("\n".join(lines))
-                return
-
-            if sub == "add":
-                if len(rest) not in (1, 3):
-                    raise workflow_commands.CommandError(
-                        "Usage: /autoapprove add <tool> [<dotted_key> <pattern>]"
-                    )
-                tool_name = rest[0]
-                if len(rest) == 1:
-                    st.add_tool(tool_name, approve_all=True)
-                    await server.send_text_message(
-                        f"Session auto-approve enabled for tool: {tool_name}"
-                    )
-                    return
-                st.add_rule(tool_name, key=rest[1], pattern=rest[2])
-                await server.send_text_message(
-                    f"Session auto-approve rule added for tool: {tool_name}"
-                )
-                return
-
-            if sub == "remove":
-                if len(rest) != 1:
-                    raise workflow_commands.CommandError(
-                        "Usage: /autoapprove remove <tool>"
-                    )
-                tool_name = rest[0]
-                removed = st.remove_tool(tool_name)
-                if removed:
-                    await server.send_text_message(
-                        f"Session auto-approve disabled for tool: {tool_name}"
-                    )
-                else:
-                    await server.send_text_message(
-                        f"No session auto-approve rule found for tool: {tool_name}"
-                    )
-                return
-
-            if sub == "clear":
-                if rest:
-                    raise workflow_commands.CommandError("Usage: /autoapprove clear")
-                st.clear()
-                await server.send_text_message("Session auto-approve rules cleared.")
-                return
-
-            raise workflow_commands.CommandError(
-                "Usage: /autoapprove <list|add|remove|clear>"
-            )
-
-        await self._commands.register(
-            "autoapprove",
-            autoapprove,
-            description="Manage session auto-approve rules",
-            params=["<list|add|remove|clear>", "..."],
-        )
-
     async def stop(self) -> None:
         if not self._started:
             return
@@ -664,30 +527,10 @@ class UIServer:
             self._recv_task = None
 
         self._rpc.cancel_all()
-
-        for waiter in self._input_waiters:
-            if not waiter.done():
-                waiter.cancel()
-        self._input_waiters.clear()
+        await self._manager.project.input_manager.reset()
 
         await self._manager.stop()
         self._started = False
-
-    # Input waiters
-    def _push_input_waiter(
-        self,
-    ) -> asyncio.Future[manager_proto.UserInputPacket]:
-        loop = asyncio.get_running_loop()
-        waiter: asyncio.Future[manager_proto.UserInputPacket] = loop.create_future()
-        self._input_waiters.append(waiter)
-        return waiter
-
-    def _pop_input_waiter(
-        self,
-    ) -> Optional[asyncio.Future[manager_proto.UserInputPacket]]:
-        if not self._input_waiters:
-            return None
-        return self._input_waiters.pop()
 
     # Runner event handling
     async def _handle_runner_step_event(
@@ -746,7 +589,6 @@ class UIServer:
                 "Empty line confirms, any text to reject with a message. "
                 "Tip: type /aa to auto-approve similar calls for this session"
             )
-            self._pending_input_step = step
 
         packet = manager_proto.RunnerReqPacket(
             workflow_id=frame.workflow_name,
@@ -776,41 +618,6 @@ class UIServer:
         )
         await self.send_packet(prompt_packet)
 
-        waiter = self._push_input_waiter()
-        resp_packet = await waiter
-        if step is self._pending_input_step:
-            self._pending_input_step = None
-        message_packet = resp_packet.message
-
-        if step.type == state.StepType.PROMPT:
-            return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.MESSAGE,
-                message=message_packet,
-            )
-
-        if step.type == state.StepType.PROMPT_CONFIRM:
-            text = message_packet.text if message_packet is not None else ""
-            if text:
-                return runner_proto.RunEventResp(
-                    resp_type=runner_proto.RunEventResponseType.MESSAGE,
-                    message=message_packet,
-                )
-
-            return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.APPROVE,
-                message=None,
-            )
-
-        if step.type == state.StepType.TOOL_REQUEST:
-            resp_type = runner_proto.RunEventResponseType.APPROVE
-            if message_packet is not None and message_packet.text:
-                resp_type = runner_proto.RunEventResponseType.DECLINE
-
-            return runner_proto.RunEventResp(
-                resp_type=resp_type,
-                message=message_packet,
-            )
-
         return runner_proto.RunEventResp(
             resp_type=runner_proto.RunEventResponseType.NOOP,
             message=None,
@@ -827,11 +634,6 @@ class UIServer:
             state.RunnerStatus.STOPPED,
             state.RunnerStatus.FINISHED,
         ):
-            self._pending_input_step = None
-            for waiter in self._input_waiters:
-                if not waiter.done():
-                    waiter.cancel()
-            self._input_waiters.clear()
             prompt_packet = manager_proto.InputPromptPacket()
             await self.send_packet(prompt_packet)
 
@@ -956,30 +758,43 @@ class UIServer:
                 )
             return None
 
-        waiter = self._pop_input_waiter()
-        if waiter is None:
-            runner = self._manager.current_runner
-            if runner is not None and runner.status == state.RunnerStatus.STOPPED:
-                res = await self._manager.edit_history_with_text(
-                    text,
-                    resume=False,
-                )
-                if res.changed:
-                    frame = self._manager.runner_stack[-1]
-                    await self.emit_history_mutation(frame, res)
-                if res.changed:
-                    await self._manager.continue_current_runner()
-                if not res.changed:
-                    await self.send_text_message(
-                        "Unable to edit history: no previous user input to replace."
-                    )
-            return None
+        runner = self._manager.current_runner
+        if runner is not None and runner.status != state.RunnerStatus.STOPPED:
+            accepted = await self._manager.project.input_manager.publish(
+                message,
+                queue=False,
+            )
+            if accepted:
+                prompt_packet = manager_proto.InputPromptPacket()
+                await self.send_packet(prompt_packet)
+                return None
 
-        if not waiter.done():
-            user_input = cast(manager_proto.UserInputPacket, payload)
-            waiter.set_result(user_input)
+        accepted = await self._manager.project.input_manager.publish(
+            message,
+            queue=False,
+        )
+        if accepted:
             prompt_packet = manager_proto.InputPromptPacket()
             await self.send_packet(prompt_packet)
+            return None
+
+        if runner is not None and runner.status == state.RunnerStatus.STOPPED:
+            res = await self._manager.edit_history_with_text(
+                text,
+                resume=False,
+            )
+            if res.changed:
+                frame = self._manager.runner_stack[-1]
+                await self.emit_history_mutation(frame, res)
+            if res.changed:
+                await self._manager.continue_current_runner()
+            if not res.changed:
+                await self.send_text_message(
+                    "Unable to edit history: no previous user input to replace."
+                )
+            return None
+
+        await self.send_text_message("Input was rejected: no active input request.")
 
         return None
 

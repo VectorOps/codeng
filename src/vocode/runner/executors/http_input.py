@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import AsyncIterator, Optional
 
 from aiohttp import web
@@ -36,14 +35,8 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
         super().__init__(config=config, project=project)
         self.config = config
         self._route_handle: Optional[http_server.RouteHandle] = None
-        self._queue_key = f"http-input:{self.config.name}"
 
     async def init(self) -> None:
-        queue = self.project.project_state.get(self._queue_key)
-        if queue is None:
-            queue = asyncio.Queue()
-            self.project.project_state.set(self._queue_key, queue)
-
         async def handler(request: web.Request) -> web.StreamResponse:
             try:
                 data = await request.json()
@@ -76,7 +69,12 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
                 role=role,
                 text=text,
             )
-            await queue.put(message)
+            accepted = await self.project.input_manager.publish(
+                message,
+                queue=True,
+            )
+            if not accepted:
+                return web.json_response({"error": "rejected"}, status=409)
             return web.json_response({"status": "ok"})
 
         protected = http_server.require_internal_auth(handler)
@@ -94,11 +92,6 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         execution = inp.execution
         history = self.project.history
-
-        queue = self.project.project_state.get(self._queue_key)
-        if queue is None:
-            queue = asyncio.Queue()
-            self.project.project_state.set(self._queue_key, queue)
 
         waiting_text = self.config.message or "Waiting for HTTP input..."
         waiting_message = state.Message(
@@ -119,7 +112,7 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
         )
         yield waiting_step
 
-        message = await queue.get()
+        message = await self.project.input_manager.wait_for_input()
         history.upsert_message(inp.run, message)
         output_step = history.upsert_step(
             inp.run,

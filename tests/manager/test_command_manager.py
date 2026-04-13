@@ -390,6 +390,197 @@ async def test_help_command_lists_debug_and_workflows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_queue_list_command_reports_queue_contents() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-1"),
+        queue=True,
+    )
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-2"),
+        queue=True,
+    )
+
+    message = state.Message(role=models.Role.USER, text="/queue list")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "Queued messages: 2" in payload.text
+    assert "1. user: queued-1" in payload.text
+    assert "2. user: queued-2" in payload.text
+    assert "queued-1" in payload.text
+    assert "queued-2" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_queue_add_and_delete_commands_mutate_queue() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    add_message = state.Message(
+        role=models.Role.USER,
+        text="/queue add q",
+    )
+    add_packet = manager_proto.UserInputPacket(message=add_message)
+    add_envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=add_packet)
+    await client_endpoint.send(add_envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "Queued input message." in payload.text
+
+    snapshot = await project.input_manager.snapshot()
+    assert len(snapshot.queued_messages) == 1
+    assert snapshot.queued_messages[0].text == "q"
+
+    delete_message = state.Message(
+        role=models.Role.USER,
+        text="/queue delete",
+    )
+    delete_packet = manager_proto.UserInputPacket(message=delete_message)
+    delete_envelope = manager_proto.BasePacketEnvelope(
+        msg_id=2,
+        payload=delete_packet,
+    )
+    await client_endpoint.send(delete_envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "Deleted input message" in payload.text
+    assert "q" in payload.text
+
+    snapshot = await project.input_manager.snapshot()
+    assert len(snapshot.queued_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_queue_delete_with_number_removes_selected_item() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-1"),
+        queue=True,
+    )
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-2"),
+        queue=True,
+    )
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-3"),
+        queue=True,
+    )
+
+    message = state.Message(role=models.Role.USER, text="/queue delete 2")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "Deleted input message" in payload.text
+    assert "queued-2" in payload.text
+
+    snapshot = await project.input_manager.snapshot()
+    assert [message.text for message in snapshot.queued_messages] == [
+        "queued-1",
+        "queued-3",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_queue_list_shows_only_first_ten_items() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    for index in range(12):
+        await project.input_manager.publish(
+            state.Message(role=models.Role.USER, text=f"queued-{index + 1}"),
+            queue=True,
+        )
+
+    message = state.Message(role=models.Role.USER, text="/queue list")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "1. user: queued-1" in payload.text
+    assert "10. user: queued-10" in payload.text
+    assert "queued-11" not in payload.text
+    assert "queued-12" not in payload.text
+    assert "... and 2 more" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_queue_clear_command_empties_queue() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-1"),
+        queue=True,
+    )
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-2"),
+        queue=True,
+    )
+
+    message = state.Message(role=models.Role.USER, text="/queue clear")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "Cleared 2 queued input message(s)." == payload.text
+
+    snapshot = await project.input_manager.snapshot()
+    assert len(snapshot.queued_messages) == 0
+
+
+@pytest.mark.asyncio
 async def test_auth_status_command_reports_credential_status() -> None:
     project = StubProject()
     project.credentials._env["CHATGPT_ACCESS_TOKEN"] = "token"

@@ -117,6 +117,8 @@ class TUIOptions(vars_mod.BaseVarModel):
     markdown_render_mode: MarkdownRenderMode = MarkdownRenderMode.rich_markdown
     full_refresh_max_lines: Optional[int] = Field(default=None, ge=1)
 
+    full_refresh_max_components: Optional[int] = Field(default=None, ge=1)
+
 
 class ToolSpec(vars_mod.BaseVarModel):
     """

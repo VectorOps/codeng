@@ -8,8 +8,9 @@ from aiohttp import ClientSession
 
 from vocode import models, state, settings as vocode_settings
 from vocode.http import server as http_server
+from vocode.runner.executors.input import InputNode
 from vocode.runner.executors.http_input import HTTPInputNode
-from vocode.runner.runner import Runner, RunEvent
+from vocode.runner.runner import Runner, RunEvent, RunnerStopped
 from vocode.runner.proto import RunEventResp, RunEventResponseType
 from tests.stub_project import StubProject
 
@@ -214,7 +215,9 @@ async def test_http_input_executor_accepts_markdown_without_wrapping(tmp_path) -
         async with ClientSession() as session:
             async with session.post(
                 f"http://{host}:{port}{node.path}",
-                json={"text": "from-http-md"},
+                json={
+                    "text": "from-http-md",
+                },
                 headers={
                     "Content-Type": "application/json; charset=utf-8; format=markdown"
                 },
@@ -252,4 +255,244 @@ async def test_http_input_executor_accepts_markdown_without_wrapping(tmp_path) -
         and e.step.message is not None
         and e.step.message.text == "Waiting for external input"
         for e in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_input_executor_consumes_queued_input_before_waiting(
+    tmp_path,
+) -> None:
+    settings = vocode_settings.Settings(
+        internal_http=vocode_settings.InternalHTTPSettings(host="127.0.0.1", port=0)
+    )
+    http_server.configure_internal_http(settings.internal_http)  # type: ignore[arg-type]
+
+    project = StubProject(settings=settings)
+
+    node = HTTPInputNode(
+        name="http-input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        path="/http-input-test-queued",
+        message="Waiting for external input",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+
+    class Workflow:
+        def __init__(self) -> None:
+            self.name = "wf-http-input-queued"
+            self.graph = graph
+            self.need_input = False
+            self.need_input_prompt = None
+
+    workflow = Workflow()
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    accepted = await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-http-input"),
+        queue=True,
+    )
+    assert accepted is True
+
+    events = await _drive_runner(runner.run())
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "queued-http-input"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_input_executor_stop_resets_queued_input(tmp_path) -> None:
+    settings = vocode_settings.Settings(
+        internal_http=vocode_settings.InternalHTTPSettings(host="127.0.0.1", port=0)
+    )
+    http_server.configure_internal_http(settings.internal_http)  # type: ignore[arg-type]
+
+    project = StubProject(settings=settings)
+
+    node = HTTPInputNode(
+        name="http-input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        path="/http-input-test-reset",
+        message="Waiting for external input",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+
+    class Workflow:
+        def __init__(self) -> None:
+            self.name = "wf-http-input-reset"
+            self.graph = graph
+            self.need_input = False
+            self.need_input_prompt = None
+
+    workflow = Workflow()
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    accepted = await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="stale-http-input"),
+        queue=True,
+    )
+    assert accepted is True
+
+    agen = runner.run()
+    first_event = await agen.__anext__()
+    assert first_event.stats is not None
+    stop_event = await agen.athrow(RunnerStopped())
+    assert stop_event.stats is not None
+    assert stop_event.stats.status == state.RunnerStatus.STOPPED
+
+    accepted_after_stop = await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="fresh-http-input"),
+        queue=False,
+    )
+    assert accepted_after_stop is False
+
+
+@pytest.mark.asyncio
+async def test_runner_can_consume_normal_and_http_inputs_on_same_workflow(
+    tmp_path,
+) -> None:
+    settings = vocode_settings.Settings(
+        internal_http=vocode_settings.InternalHTTPSettings(host="127.0.0.1", port=0)
+    )
+    http_server.configure_internal_http(settings.internal_http)  # type: ignore[arg-type]
+
+    project = StubProject(settings=settings)
+
+    prompt_node = InputNode(
+        name="prompt-node",
+        outcomes=[models.OutcomeSlot(name="next")],
+        confirmation=models.Confirmation.AUTO,
+        message="Say something",
+    )
+    http_node = HTTPInputNode(
+        name="http-input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        path="/http-input-mixed",
+        message="Waiting for external input",
+    )
+    graph = models.Graph(
+        nodes=[prompt_node, http_node],
+        edges=[
+            models.Edge(
+                source_node="prompt-node",
+                source_outcome="next",
+                target_node="http-input-node",
+            )
+        ],
+    )
+
+    class Workflow:
+        def __init__(self) -> None:
+            self.name = "wf-http-and-normal-input"
+            self.graph = graph
+            self.need_input = False
+            self.need_input_prompt = None
+
+    runner = Runner(
+        workflow=Workflow(),
+        project=project,
+        initial_message=None,
+    )
+
+    async def send_http_request() -> None:
+        while not http_server.is_running():
+            await asyncio.sleep(0.01)
+        srv = http_server.get_internal_http_server()
+        runner_http = srv._runner
+        assert runner_http is not None
+        sites = list(runner_http.sites)
+        assert sites
+        site = sites[0]
+        sockets = list(site._server.sockets) if site._server is not None else []
+        assert sockets
+        host, port = sockets[0].getsockname()[:2]
+        async with ClientSession() as session:
+            async with session.post(
+                f"http://{host}:{port}{http_node.path}",
+                json={
+                    "text": "from-http-after-prompt",
+                },
+            ) as resp:
+                assert resp.status == 200
+
+    events: list[RunEvent] = []
+    send: RunEventResp | None = None
+    http_sender_task: asyncio.Task[None] | None = None
+    prompt_publish_task: asyncio.Task[None] | None = None
+
+    async def publish_prompt_input() -> None:
+        accepted = await project.input_manager.publish(
+            state.Message(role=models.Role.USER, text="from-normal-input"),
+            queue=False,
+        )
+        assert accepted is True
+
+    agen = runner.run()
+    while True:
+        try:
+            if send is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(send)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        send = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+        if event.step is None:
+            continue
+        step = event.step
+        if step.type == state.StepType.PROMPT and step.execution.node == "prompt-node":
+            prompt_publish_task = asyncio.create_task(publish_prompt_input())
+            continue
+        if (
+            step.type == state.StepType.OUTPUT_MESSAGE
+            and step.execution.node == "http-input-node"
+            and step.message is not None
+            and step.message.text == "Waiting for external input"
+            and http_sender_task is None
+        ):
+            http_sender_task = asyncio.create_task(send_http_request())
+
+    if http_sender_task is not None:
+        await http_sender_task
+    if prompt_publish_task is not None:
+        await prompt_publish_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.execution.node == "prompt-node"
+        and event.step.message is not None
+        and event.step.message.text == "from-normal-input"
+        for event in events
+    )
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.execution.node == "http-input-node"
+        and event.step.message is not None
+        and event.step.message.text == "```\nfrom-http-after-prompt\n```"
+        for event in events
     )
