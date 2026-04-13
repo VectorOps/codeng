@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import List
 
+from vocode import state
+
 
 class DummyNode:
     def __init__(self) -> None:
@@ -22,5 +24,12 @@ class DummyWorkflow:
 
 
 class DummyRunnerWithWorkflow:
-    def __init__(self, node_names: List[str]) -> None:
+    def __init__(
+        self,
+        node_names: List[str],
+        execution: state.WorkflowExecution | None = None,
+        status: state.RunnerStatus = state.RunnerStatus.RUNNING,
+    ) -> None:
         self.workflow = DummyWorkflow(node_names)
+        self.execution = execution or state.WorkflowExecution(workflow_name="dummy")
+        self.status = status

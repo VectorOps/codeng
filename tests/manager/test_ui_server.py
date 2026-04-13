@@ -236,7 +236,6 @@ async def test_uiserver_clears_input_waiters_on_runner_stop() -> None:
         last_stats=stats,
     )
     server.manager._runner_stack.append(frame)
-    server._push_input_waiter()
 
     event = runner_proto.RunEventReq(
         kind=runner_proto.RunEventReqKind.STATUS,
@@ -357,13 +356,14 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
         await asyncio.Event().wait()
 
     dummy_task = asyncio.create_task(dummy_coro())
-    runner = DummyRunnerWithWorkflow(["node1"])
+    runner = DummyRunnerWithWorkflow(["node1"], execution=execution)
     frame = RunnerFrame(
         workflow_name="wf-ui-server-user-input",
         runner=runner,  # type: ignore[arg-type]
         initial_message=None,
         agen=None,
     )
+    server.manager._runner_stack.append(frame)
 
     assert server.manager.project is project
 
@@ -381,6 +381,8 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     initial_prompt_payload = initial_prompt_envelope.payload
     assert initial_prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
     assert isinstance(initial_prompt_payload, manager_proto.InputPromptPacket)
+    waiter_task = asyncio.create_task(project.input_manager.wait_for_input())
+    await asyncio.sleep(0)
     user_message = state.Message(role=models.Role.USER, text="user input message")
     user_input_packet = manager_proto.UserInputPacket(message=user_message)
     response_envelope = manager_proto.BasePacketEnvelope(
@@ -393,10 +395,13 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     handled = await server.on_ui_packet(server_incoming)
     assert handled is True
 
+    published_message = await waiter_task
+    assert published_message == user_message
+
     resp = await response_task
     assert resp is not None
-    assert resp.resp_type == runner_proto.RunEventResponseType.MESSAGE
-    assert resp.message == user_message
+    assert resp.resp_type == runner_proto.RunEventResponseType.NOOP
+    assert resp.message is None
 
     prompt_envelope = await client_endpoint.recv()
     prompt_payload = prompt_envelope.payload
@@ -442,13 +447,14 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
         await asyncio.Event().wait()
 
     dummy_task = asyncio.create_task(dummy_coro())
-    runner = DummyRunnerWithWorkflow(["node1"])
+    runner = DummyRunnerWithWorkflow(["node1"], execution=execution)
     frame = RunnerFrame(
         workflow_name="wf-ui-server-user-input-confirm",
         runner=runner,  # type: ignore[arg-type]
         initial_message=None,
         agen=None,
     )
+    server.manager._runner_stack.append(frame)
 
     response_task = asyncio.create_task(server.on_runner_event(frame, event))
 
@@ -458,6 +464,8 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
     assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
     assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
     assert prompt_payload.title == "Press enter to confirm or provide a reply"
+    waiter_task = asyncio.create_task(project.input_manager.wait_for_input())
+    await asyncio.sleep(0)
 
     user_message = state.Message(role=models.Role.USER, text="")
     user_input_packet = manager_proto.UserInputPacket(message=user_message)
@@ -471,9 +479,12 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
     handled = await server.on_ui_packet(server_incoming)
     assert handled is True
 
+    published_message = await waiter_task
+    assert published_message == user_message
+
     resp = await response_task
     assert resp is not None
-    assert resp.resp_type == runner_proto.RunEventResponseType.APPROVE
+    assert resp.resp_type == runner_proto.RunEventResponseType.NOOP
 
     dummy_task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -1010,13 +1021,14 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
     )
 
     dummy_task = asyncio.create_task(asyncio.Event().wait())
-    runner = DummyRunnerWithWorkflow(["node1"])
+    runner = DummyRunnerWithWorkflow(["node1"], execution=execution)
     frame = RunnerFrame(
         workflow_name="wf-ui-aa",
         runner=runner,  # type: ignore[arg-type]
         initial_message=None,
         agen=None,
     )
+    server.manager._runner_stack.append(frame)
 
     await server.start()
     response_task = asyncio.create_task(server.on_runner_event(frame, event))
@@ -1028,6 +1040,8 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
     assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
     assert prompt_payload.subtitle is not None
     assert "/aa" in prompt_payload.subtitle
+    waiter_task = asyncio.create_task(project.input_manager.wait_for_input())
+    await asyncio.sleep(0)
 
     user_message = state.Message(role=models.Role.USER, text="/aa")
     user_input_packet = manager_proto.UserInputPacket(message=user_message)
@@ -1041,11 +1055,41 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
     handled = await server.on_ui_packet(server_incoming)
     assert handled is True
 
+    published_message = await waiter_task
+    assert published_message.text == ""
+
     resp = await response_task
     assert resp is not None
-    assert resp.resp_type == runner_proto.RunEventResponseType.APPROVE
+    assert resp.resp_type == runner_proto.RunEventResponseType.NOOP
     assert project.project_state.autoapprove.should_auto_approve("test-tool", {"x": 1})
+
+    clear_prompt_envelope = await client_endpoint.recv()
+    assert isinstance(clear_prompt_envelope.payload, manager_proto.InputPromptPacket)
+
+    text_envelope = await client_endpoint.recv()
+    assert isinstance(text_envelope.payload, manager_proto.TextMessagePacket)
 
     dummy_task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await dummy_task
+
+
+@pytest.mark.asyncio
+async def test_uiserver_user_input_sends_error_when_no_active_input_request() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    user_message = state.Message(role=models.Role.USER, text="orphan input")
+    packet = manager_proto.UserInputPacket(message=user_message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+
+    resp_envelope = await client_endpoint.recv()
+    assert isinstance(resp_envelope.payload, manager_proto.TextMessagePacket)
+    assert "Input was rejected" in resp_envelope.payload.text

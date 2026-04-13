@@ -452,11 +452,38 @@ class Terminal:
         self._delete_removed_components()
 
         options = self._console.options
+        components_to_render = self._components
+        max_components = self._settings.tui.full_refresh_max_components
+        if max_components is not None:
+            visible_budget = self._console.size.height
+            render_start = len(self._components)
+            components_remaining = max_components
+            for index in range(len(self._components) - 1, -1, -1):
+                if components_remaining <= 0 or visible_budget <= 0:
+                    break
+                component = self._components[index]
+                cached_lines = self._cache.get(component, [])
+                component_height = len(cached_lines)
+                if component in self._dirty_components or repaint_all:
+                    component_height = max(component_height, 1)
+                if component_height <= 0:
+                    continue
+                render_start = index
+                visible_budget -= component_height
+                components_remaining -= 1
+
+            components_to_render = self._components[render_start:]
+
         components_to_render: typing.Iterable[tui_base.Component]
         if repaint_all:
-            components_to_render = self._components
+            components_to_render = components_to_render
         else:
-            components_to_render = self._dirty_components
+            dirty_components = self._dirty_components
+            components_to_render = [
+                component
+                for component in components_to_render
+                if component in dirty_components
+            ]
 
         for component in components_to_render:
             if component.is_hidden:

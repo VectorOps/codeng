@@ -20,7 +20,7 @@ class FakeStreamHandle:
     def __init__(
         self,
         events: List[connect.StreamEvent],
-        final_response: Optional[connect.AssistantResponse] = None,
+        final_response: Optional[connect.AssistantMessage] = None,
     ) -> None:
         self._events = events
         self._final_response = final_response
@@ -37,7 +37,7 @@ class FakeStreamHandle:
         self._index += 1
         return event
 
-    async def final_response(self) -> connect.AssistantResponse:
+    async def final_response(self) -> connect.AssistantMessage:
         if self._final_response is not None:
             return self._final_response
         for event in reversed(self._events):
@@ -65,11 +65,11 @@ def _assistant_response(
     text: str,
     *,
     tool_calls: Optional[List[connect.ToolCallBlock]] = None,
-) -> connect.AssistantResponse:
+) -> connect.AssistantMessage:
     content: List[connect.AssistantContentBlock] = [connect.TextBlock(text=text)]
     for tool_call in tool_calls or []:
         content.append(tool_call)
-    return connect.AssistantResponse(
+    return connect.AssistantMessage(
         provider="openai",
         model="gpt-3.5-turbo",
         api_family="openai-responses",
@@ -143,7 +143,7 @@ def _partial_then_timeout_stream(text: str) -> FakeStreamHandle:
     return _PartialTimeoutStreamHandle(text)
 
 
-def _tool_call_response(tool_call_id: str) -> connect.AssistantResponse:
+def _tool_call_response(tool_call_id: str) -> connect.AssistantMessage:
     tool_call = connect.ToolCallBlock(
         id=tool_call_id,
         name="echo",
@@ -227,7 +227,7 @@ async def test_llm_executor_with_connect_mock_response(
 async def test_llm_executor_counts_cached_tokens_toward_round_prompt_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    response = connect.AssistantResponse(
+    response = connect.AssistantMessage(
         provider="openai",
         model="gpt-3.5-turbo",
         api_family="openai-responses",
