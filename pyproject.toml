@@ -21,6 +21,7 @@ dependencies = [
 
 [tool.uv]
 package = true
+exclude-newer = "1 week"
 
 [tool.setuptools.packages.find]
 where = ["src"]
