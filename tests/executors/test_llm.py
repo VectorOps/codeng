@@ -61,6 +61,20 @@ class FakeAsyncLLMClient:
         return self._stream_handle
 
 
+class FailingAsyncLLMClient:
+    def __init__(self, error: connect.ConnectError, **kwargs: Any) -> None:
+        self._error = error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def stream(self, model: str, request: Any, options: Any = None):
+        raise self._error
+
+
 def _assistant_response(
     text: str,
     *,
@@ -798,3 +812,52 @@ async def test_llm_executor_rejects_chatgpt_without_authorization() -> None:
     assert steps[0].type == state.StepType.REJECTION
     assert steps[0].message is not None
     assert "Run /auth login chatgpt" in steps[0].message.text
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_surfaces_structured_connect_error_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = connect.PermanentProviderError(
+        connect.ErrorInfo(
+            code="provider_error",
+            message="Provider request failed",
+            provider="chatgpt",
+            api_family="chatgpt-responses",
+            status_code=400,
+            retryable=False,
+            raw={"error": {"message": "bad request", "type": "invalid_request_error"}},
+        )
+    )
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FailingAsyncLLMClient(error, **kwargs),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-connect-error",
+        type="llm",
+        model="chatgpt/gpt-5.4-mini",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-connect-error", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(steps) == 1
+    rejection = steps[0]
+    assert rejection.type == state.StepType.REJECTION
+    assert rejection.message is not None
+    assert "provider=chatgpt" in rejection.message.text
+    assert "api_family=chatgpt-responses" in rejection.message.text
+    assert "status_code=400" in rejection.message.text
+    assert "code=provider_error" in rejection.message.text
+    assert "retryable=False" in rejection.message.text
+    assert '"type": "invalid_request_error"' in rejection.message.text

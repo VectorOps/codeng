@@ -706,6 +706,17 @@ class Runner:
                     )
                     _ = yield usage_status_event
 
+                if last_complete_step.type == state.StepType.REJECTION:
+                    self._set_node_execution_status(
+                        current_execution, state.RunStatus.FINISHED
+                    )
+                    status_event = self.set_status(
+                        state.RunnerStatus.FINISHED,
+                        current_execution=current_execution,
+                    )
+                    _ = yield status_event
+                    return
+
                 if (
                     last_complete_step is not None
                     and last_complete_step.type == state.StepType.WORKFLOW_REQUEST
