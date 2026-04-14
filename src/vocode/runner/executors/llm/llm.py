@@ -329,6 +329,32 @@ class LLMExecutor(runner_base.BaseExecutor):
             copied_protocol_state = dict(protocol_state)
         return copied_provider_meta, copied_protocol_state
 
+    def _format_connect_error_message(self, error: connect.ConnectError) -> str:
+        error_info = error.error
+        parts = [f"LLM error: {error_info.message}"]
+        details: list[str] = []
+        if error_info.provider:
+            details.append(f"provider={error_info.provider}")
+        if error_info.api_family:
+            details.append(f"api_family={error_info.api_family}")
+        if error_info.status_code is not None:
+            details.append(f"status_code={error_info.status_code}")
+        if error_info.code:
+            details.append(f"code={error_info.code}")
+        details.append(f"retryable={error_info.retryable}")
+        if details:
+            parts.append(" ".join(details))
+        if error_info.raw is not None:
+            try:
+                raw_text = json.dumps(
+                    error_info.raw, ensure_ascii=False, sort_keys=True, default=str
+                )
+            except Exception:
+                raw_text = str(error_info.raw)
+            if raw_text:
+                parts.append(f"raw={raw_text}")
+        return "\n".join(parts)
+
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
         auth_error = await self._ensure_provider_authorization()
@@ -581,13 +607,21 @@ class LLMExecutor(runner_base.BaseExecutor):
                     )
                     continue
 
-                logger.error("LLM error", status_code=e.error.status_code, err=e)
+                rejection_text = self._format_connect_error_message(e)
+                logger.error(
+                    "LLM error",
+                    status_code=e.error.status_code,
+                    code=e.error.code,
+                    provider=e.error.provider,
+                    api_family=e.error.api_family,
+                    err=e,
+                )
 
                 error_step = self._build_step_from_message(
                     step,
                     role=models.Role.SYSTEM,
                     step_type=state.StepType.REJECTION,
-                    text=f"LLM error: {e}",
+                    text=rejection_text,
                     is_complete=True,
                 )
                 yield error_step

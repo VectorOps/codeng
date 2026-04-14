@@ -503,6 +503,28 @@ class MultiCompleteExecutor(BaseExecutor):
         yield step2
 
 
+@ExecutorFactory.register("rejecting")
+class RejectingExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        msg = state.Message(
+            role=models.Role.SYSTEM,
+            text="provider request failed",
+        )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.REJECTION,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
 @ExecutorFactory.register("initial-input")
 class InitialInputEchoExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
@@ -857,6 +879,72 @@ async def test_runner_errors_when_executor_has_no_complete_step():
                 message=None,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_runner_stops_after_rejection_step_without_advancing():
+    node1 = models.Node(
+        name="node1",
+        type="rejecting",
+        outcomes=[models.OutcomeSlot(name="next")],
+        confirmation=models.Confirmation.AUTO,
+    )
+    node2 = models.Node(
+        name="node2",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(
+        nodes=[node1, node2],
+        edges=[
+            models.Edge(
+                source_node="node1",
+                source_outcome="next",
+                target_node="node2",
+            ),
+        ],
+    )
+    workflow = DummyWorkflow(name="wf-rejection-stop", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for ne in runner.execution.node_executions.values():
+        node_execs_by_name[ne.node] = ne
+
+    assert set(node_execs_by_name.keys()) == {"node1"}
+    node1_exec = node_execs_by_name["node1"]
+    rejection_steps = [
+        s
+        for s in node1_exec.iter_steps()
+        if s.type == state.StepType.REJECTION and s.is_complete
+    ]
+    assert rejection_steps
+    assert rejection_steps[-1].message is not None
+    assert rejection_steps[-1].message.text == "provider request failed"
+    assert not any(
+        event.step is not None and event.step.execution.node == "node2"
+        for event in events
+    )
 
 
 @pytest.mark.asyncio
