@@ -16,7 +16,7 @@ dependencies = [
     "knowlt @ git+https://github.com/vectorops/knowlt.git@11b72cea2681aa17da06a550992a0c7fb0bf3c13",
     "rich==14.3.3",
     "pyfiglet==1.0.4",
-    "aiohttp==3.13.3",
+    "aiohttp==3.13.5",
 ]
 
 [tool.uv]
