@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-07T03:19:20.421948Z"
+exclude-newer = "2026-04-07T03:52:43.153291Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -172,7 +172,7 @@ wheels = [
 [[package]]
 name = "connect"
 version = "0.1.0"
-source = { git = "https://github.com/VectorOps/connect.git#afedf846aedfa3fba4ea95f821c5ffda5d1b0dd2" }
+source = { git = "https://github.com/VectorOps/connect.git#282b686ef5052699eb58157dfe211c91828f2a06" }
 dependencies = [
     { name = "aiohttp" },
     { name = "pydantic" },
