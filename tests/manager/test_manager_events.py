@@ -47,6 +47,48 @@ class ManagerTestExecutor(BaseExecutor):
         yield step
 
 
+@ExecutorFactory.register("manager-retry-llm")
+class ManagerRetryLlmExecutor(BaseExecutor):
+    type = "manager-retry-llm"
+
+    def __init__(self, config: models.Node, project) -> None:
+        super().__init__(config, project)
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        execution = inp.execution
+        failed_steps = [
+            step
+            for step in execution.iter_steps()
+            if step.type == state.StepType.REJECTION
+        ]
+        if not failed_steps:
+            message = state.Message(role=models.Role.SYSTEM, text="LLM failure")
+            history.upsert_message(inp.run, message)
+            yield history.upsert_step(
+                inp.run,
+                state.Step(
+                    execution_id=execution.id,
+                    type=state.StepType.REJECTION,
+                    message_id=message.id,
+                    is_complete=True,
+                ),
+            )
+            return
+
+        message = state.Message(role=models.Role.ASSISTANT, text="retried output")
+        history.upsert_message(inp.run, message)
+        yield history.upsert_step(
+            inp.run,
+            state.Step(
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=message.id,
+                is_complete=True,
+            ),
+        )
+
+
 block_event: asyncio.Event | None = None
 
 
@@ -265,6 +307,57 @@ async def test_manager_emits_final_status_on_runner_stop() -> None:
     assert runner.status == state.RunnerStatus.STOPPED
     assert state.RunnerStatus.RUNNING in status_events
     assert state.RunnerStatus.STOPPED in status_events
+
+
+@pytest.mark.asyncio
+async def test_manager_continue_retries_stopped_llm_runner() -> None:
+    node = models.Node(
+        name="node-retry",
+        type="manager-retry-llm",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-manager-continue-retry", graph=graph)
+
+    project = FakeProject()
+    initial_message = state.Message(role=models.Role.USER, text="hello")
+    runner = Runner(workflow=workflow, project=project, initial_message=initial_message)
+
+    async def run_event_listener(frame: RunnerFrame, event) -> RunEventResp | None:
+        if event.kind == RunEventReqKind.STATUS:
+            return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
+        return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
+
+    manager = BaseManager(project=project, run_event_listener=run_event_listener)  # type: ignore[arg-type]
+    frame = RunnerFrame(
+        workflow_name="wf-manager-continue-retry",
+        runner=runner,
+        initial_message=initial_message,
+        agen=runner.run(),
+    )
+    manager._runner_stack.append(frame)
+
+    await manager._run_runner_task()
+
+    assert runner.status == state.RunnerStatus.STOPPED
+    assert len(manager.runner_stack) == 1
+    assert manager.runner_stack[0].runner is runner
+
+    await manager.continue_current_runner()
+    await manager._run_runner_task()
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert manager.runner_stack == []
+    node_exec = next(iter(runner.execution.node_executions.values()))
+    complete_steps = [
+        step
+        for step in node_exec.iter_steps()
+        if step.type == state.StepType.OUTPUT_MESSAGE and step.is_complete
+    ]
+    assert complete_steps
+    assert complete_steps[-1].message is not None
+    assert complete_steps[-1].message.text == "retried output"
 
 
 @pytest.mark.asyncio

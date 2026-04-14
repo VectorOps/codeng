@@ -426,6 +426,10 @@ class Runner:
             execution_id, last_step.execution
         )
         runtime_node = self.graph.get_runtime_node_by_name(execution.node)
+        if last_step.type == state.StepType.REJECTION and last_step.is_complete:
+            if execution.status != state.RunStatus.RUNNING:
+                self._set_node_execution_status(execution, state.RunStatus.RUNNING)
+            return runtime_node, execution, last_step, False
         if execution.status != state.RunStatus.RUNNING:
             self._set_node_execution_status(execution, state.RunStatus.RUNNING)
         return runtime_node, execution, resume_step, skip_executor
@@ -708,10 +712,10 @@ class Runner:
 
                 if last_complete_step.type == state.StepType.REJECTION:
                     self._set_node_execution_status(
-                        current_execution, state.RunStatus.FINISHED
+                        current_execution, state.RunStatus.STOPPED
                     )
                     status_event = self.set_status(
-                        state.RunnerStatus.FINISHED,
+                        state.RunnerStatus.STOPPED,
                         current_execution=current_execution,
                     )
                     _ = yield status_event
