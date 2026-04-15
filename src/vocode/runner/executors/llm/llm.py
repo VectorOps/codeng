@@ -83,18 +83,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         self,
         inp: runner_base.ExecutorInput,
     ) -> List[tuple[state.Message, Optional[state.Step]]]:
-        run = inp.run
         execution = inp.execution
-        active_execution_ids = {
-            step.execution_id for step in run.iter_steps() if step.message is not None
-        }
-        if execution.id in active_execution_ids:
-            return [
-                (step.message, step)
-                for step in run.iter_steps()
-                if step.message is not None
-                and step.execution_id in active_execution_ids
-            ]
         return list(runner_base.iter_execution_messages(execution))
 
     def build_connect_messages(
