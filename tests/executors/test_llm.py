@@ -295,6 +295,94 @@ async def test_llm_executor_counts_cached_tokens_toward_round_prompt_usage(
 
 
 @pytest.mark.asyncio
+async def test_llm_executor_uses_only_current_node_execution_messages_when_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_requests: List[Any] = []
+    response = _assistant_response("fresh answer")
+
+    class CapturingAsyncLLMClient(FakeAsyncLLMClient):
+        def stream(self, model: str, request: Any, options: Any = None):
+            captured_requests.append(request)
+            return super().stream(model, request, options)
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: CapturingAsyncLLMClient(
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="fresh answer"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="decompile",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+
+    first_input = state.Message(role=models.Role.USER, text="first pass input")
+    history.upsert_message(run, first_input)
+    first_execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="decompile",
+            input_message_ids=[first_input.id],
+            status=state.RunStatus.FINISHED,
+        ),
+    )
+    first_output = state.Message(role=models.Role.ASSISTANT, text="old result")
+    history.upsert_message(run, first_output)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=first_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=first_output.id,
+            is_complete=True,
+            is_final=True,
+        ),
+    )
+
+    second_input = state.Message(role=models.Role.USER, text="second pass input")
+    history.upsert_message(run, second_input)
+    reset_execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="decompile",
+            input_message_ids=[second_input.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    inp = ExecutorInput(execution=reset_execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert steps
+    assert len(captured_requests) == 1
+    request = captured_requests[0]
+    assert [message.content for message in request.messages] == ["second pass input"]
+
+
+@pytest.mark.asyncio
 async def test_llm_executor_timeouts_retry_and_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
