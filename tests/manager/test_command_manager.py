@@ -1029,6 +1029,44 @@ async def test_run_command_stops_all_and_starts_workflow(
 
 
 @pytest.mark.asyncio
+async def test_reset_command_restarts_last_finished_root_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = vocode_settings.Settings()
+    settings.workflows["alpha"] = vocode_settings.WorkflowConfig()
+    project = StubProject(settings=settings)
+    project.last_root_workflow = "alpha"
+
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    called: list[tuple[str, object]] = []
+
+    async def fake_stop_all_runners() -> None:
+        called.append(("stop_all", None))
+
+    async def fake_start_workflow(name: str) -> None:
+        called.append(("start", name))
+
+    monkeypatch.setattr(server.manager, "stop_all_runners", fake_stop_all_runners)
+    monkeypatch.setattr(server.manager, "start_workflow", fake_start_workflow)
+
+    message = state.Message(role=models.Role.USER, text="/reset")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    assert ("stop_all", None) in called
+    assert ("start", "alpha") in called
+
+
+@pytest.mark.asyncio
 async def test_branch_list_command_outputs_branches() -> None:
     project = StubProject()
     server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()

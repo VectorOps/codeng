@@ -19,6 +19,7 @@ class StubProject:
         self.llm_usage = state.LLMUsageStats()
         self.settings = settings or vocode_settings.Settings()
         self.current_workflow = None
+        self.last_root_workflow = None
         self.tools = {}
         self.history = HistoryManager()
         self.input_manager = InputManager()
