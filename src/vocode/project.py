@@ -49,6 +49,7 @@ class Project:
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
         self.current_workflow: Optional[str] = None
+        self.last_root_workflow: Optional[str] = None
         self.session_id: str = uuid.uuid4().hex
         save_interval_s = 120.0
         max_total_log_bytes = 1024 * 1024 * 1024

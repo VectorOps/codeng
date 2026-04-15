@@ -73,6 +73,8 @@ async def register_workflow_commands(manager: CommandManager) -> None:
         if workflow_name is None:
             workflow_name = server.manager.project.current_workflow
         if workflow_name is None:
+            workflow_name = server.manager.project.last_root_workflow
+        if workflow_name is None:
             raise CommandError("No active workflow to reset.")
 
         await run_workflow(server, [workflow_name])
