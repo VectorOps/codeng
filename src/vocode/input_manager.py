@@ -82,7 +82,10 @@ class InputManager:
 
     async def remove_at(self, index: int) -> Optional[state.Message]:
         async with self._lock:
-            if index < 0 or index >= len(self._state.queued_messages):
+            queue_size = len(self._state.queued_messages)
+            if index < 0:
+                index = queue_size + index
+            if index < 0 or index >= queue_size:
                 return None
             message = self._state.queued_messages[index]
             del self._state.queued_messages[index]

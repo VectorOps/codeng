@@ -16,7 +16,10 @@ USAGE = (
     "  /queue add <text>\n"
     "    Append a user message to the input queue.\n\n"
     "  /queue delete [number]\n"
-    "    Remove a queued input message by number, or the top message when omitted.\n\n"
+    "    Remove a queued input message by number, or the first message when omitted.\n"
+    "    Negative numbers count from the end.\n\n"
+    "  /queue pop\n"
+    "    Remove the last queued input message.\n\n"
     "  /queue clear\n"
     "    Remove all queued input messages.\n"
 )
@@ -36,22 +39,32 @@ async def _queue(server, args: list[str]) -> None:
     action = args[0]
     input_manager = server.manager.project.input_manager
 
+    def _format_queue_text(text: str) -> str:
+        lines = text.splitlines() or [text]
+        visible_lines = [line.rstrip() for line in lines[:3]]
+        formatted = "\n      ".join(visible_lines)
+        if len(lines) > 3:
+            formatted = f"{formatted}\n      ..."
+        return formatted or "<empty>"
+
     if action in {"list", "peek", "snoop"}:
         if len(args) != 1:
             await server.send_text_message("Usage: /queue list")
             return
         snapshot = await input_manager.snapshot()
         lines = [
-            f"Pending waiters: {len(snapshot.waiters)}",
-            f"Queued messages: {len(snapshot.queued_messages)}",
+            "Input queue",
+            f"  Pending waiters: {len(snapshot.waiters)}",
+            f"  Queued messages: {len(snapshot.queued_messages)}",
         ]
         if snapshot.queued_messages:
             queued_messages = list(snapshot.queued_messages)
             for index, message in enumerate(queued_messages[:MAX_LIST_ITEMS], start=1):
-                lines.append(f"{index}. {message.role.value}: {message.text}")
+                lines.append(f"\n[{index:>2}] {message.role.value}")
+                lines.append(f"      {_format_queue_text(message.text)}")
             remaining = len(queued_messages) - MAX_LIST_ITEMS
             if remaining > 0:
-                lines.append(f"... and {remaining} more")
+                lines.append(f"\n... and {remaining} more")
         await server.send_text_message("\n".join(lines))
         return
 
@@ -68,7 +81,7 @@ async def _queue(server, args: list[str]) -> None:
         )
         return
 
-    if action in {"delete", "del", "remove", "pop"}:
+    if action in {"delete", "del", "remove"}:
         if len(args) > 2:
             await server.send_text_message("Usage: /queue delete [number]")
             return
@@ -80,15 +93,29 @@ async def _queue(server, args: list[str]) -> None:
             except ValueError:
                 await server.send_text_message("Usage: /queue delete [number]")
                 return
-            if queue_number <= 0:
-                await server.send_text_message("Queue number must be greater than 0.")
+            if queue_number == 0:
+                await server.send_text_message("Queue number must not be 0.")
                 return
-            message = await input_manager.remove_at(queue_number - 1)
+            queue_index = queue_number - 1 if queue_number > 0 else queue_number
+            message = await input_manager.remove_at(queue_index)
         if message is None:
             await server.send_text_message("Input queue is empty.")
             return
         await server.send_text_message(
             f"Deleted input message: {message.role.value}: {message.text}"
+        )
+        return
+
+    if action == "pop":
+        if len(args) != 1:
+            await server.send_text_message("Usage: /queue pop")
+            return
+        message = await input_manager.remove_at(-1)
+        if message is None:
+            await server.send_text_message("Input queue is empty.")
+            return
+        await server.send_text_message(
+            f"Popped input message: {message.role.value}: {message.text}"
         )
         return
 
