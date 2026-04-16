@@ -344,6 +344,22 @@ class LLMExecutor(runner_base.BaseExecutor):
                 parts.append(f"raw={raw_text}")
         return "\n".join(parts)
 
+    def _build_preview_usage(
+        self,
+        inp: runner_base.ExecutorInput,
+    ) -> state.LLMUsageStats:
+        prior_usage = inp.run.last_step_llm_usage
+        return state.LLMUsageStats(
+            prompt_tokens=(prior_usage.prompt_tokens if prior_usage is not None else 0),
+            completion_tokens=(
+                prior_usage.completion_tokens if prior_usage is not None else 0
+            ),
+            cost_dollars=(prior_usage.cost_dollars if prior_usage is not None else 0.0),
+            model_name=self.config.model,
+            input_token_limit=llm_helpers.resolve_model_token_limit(self.config),
+            output_token_limit=self.config.max_tokens,
+        )
+
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
         auth_error = await self._ensure_provider_authorization()
@@ -420,6 +436,14 @@ class LLMExecutor(runner_base.BaseExecutor):
                 type=state.StepType.OUTPUT_MESSAGE,
             ),
         )
+        preview_step = step.model_copy(
+            update={
+                "llm_usage": self._build_preview_usage(inp),
+                "is_complete": False,
+            }
+        )
+        step = preview_step
+        yield preview_step
 
         logger.debug(
             "LLM request",

@@ -240,6 +240,42 @@ class ToolPromptExecutor(BaseExecutor):
         yield step
 
 
+@ExecutorFactory.register("preview-usage")
+class PreviewUsageExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        preview_step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                llm_usage=state.LLMUsageStats(
+                    prompt_tokens=7,
+                    completion_tokens=3,
+                    cost_dollars=0.25,
+                    model_name="preview-model",
+                ),
+                is_complete=False,
+            ),
+        )
+        yield preview_step
+
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text="done",
+        )
+        history.upsert_message(inp.run, msg)
+        final_step = preview_step.model_copy(
+            update={
+                "message_id": msg.id,
+                "llm_usage": None,
+                "is_complete": True,
+            }
+        )
+        yield final_step
+
+
 @ExecutorFactory.register("fake-llm-tool")
 class FakeLLMToolExecutor(BaseExecutor):
     def __init__(self, config: models.Node, project):
@@ -1719,6 +1755,58 @@ async def test_runner_tool_round_carries_llm_usage_on_tool_request():
     assert project.llm_usage.prompt_tokens == 10
     assert project.llm_usage.completion_tokens == 5
     assert project.llm_usage.cost_dollars == 1.0
+
+
+@pytest.mark.asyncio
+async def test_runner_preview_usage_refreshes_status_without_updating_totals():
+    node = models.Node(
+        name="preview-node",
+        type="preview-usage",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-preview-usage", graph=graph)
+
+    project = StubProject()
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.execution.last_step_llm_usage is not None
+    assert runner.execution.last_step_llm_usage.prompt_tokens == 7
+    assert runner.execution.last_step_llm_usage.completion_tokens == 3
+    assert runner.execution.last_step_llm_usage.cost_dollars == 0.25
+    assert runner.execution.llm_usage is None
+    assert project.llm_usage.prompt_tokens == 0
+    assert project.llm_usage.completion_tokens == 0
+    assert project.llm_usage.cost_dollars == 0.0
+
+    status_events = [
+        event for event in events if event.step is None and event.stats is not None
+    ]
+    assert any(
+        event.stats is not None
+        and event.stats.status == state.RunnerStatus.RUNNING
+        and event.stats.current_node_name == "preview-node"
+        and event.execution.last_step_llm_usage is not None
+        and event.execution.last_step_llm_usage.prompt_tokens == 7
+        for event in status_events
+    )
 
 
 @pytest.mark.asyncio
