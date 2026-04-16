@@ -718,10 +718,10 @@ class Runner:
 
                 if last_complete_step.type == state.StepType.REJECTION:
                     self._set_node_execution_status(
-                        current_execution, state.RunStatus.FINISHED
+                        current_execution, state.RunStatus.STOPPED
                     )
                     status_event = self.set_status(
-                        state.RunnerStatus.FINISHED,
+                        state.RunnerStatus.STOPPED,
                         current_execution=current_execution,
                     )
                     _ = yield status_event

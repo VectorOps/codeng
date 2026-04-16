@@ -47,6 +47,54 @@ class ManagerTestExecutor(BaseExecutor):
         yield step
 
 
+@ExecutorFactory.register("manager-reject-once")
+class ManagerRejectOnceExecutor(BaseExecutor):
+    type = "manager-reject-once"
+
+    def __init__(self, config: models.Node, project) -> None:
+        super().__init__(config, project)
+        self._run_counts: Dict[str, int] = {}
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        execution_key = str(inp.execution.id)
+        count = self._run_counts.get(execution_key, 0) + 1
+        self._run_counts[execution_key] = count
+        if count == 1:
+            msg = state.Message(
+                role=models.Role.SYSTEM,
+                text="manager provider request failed",
+            )
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    execution_id=inp.execution.id,
+                    type=state.StepType.REJECTION,
+                    message_id=msg.id,
+                    is_complete=True,
+                ),
+            )
+            yield step
+            return
+
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text="manager recovered",
+        )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
 block_event: asyncio.Event | None = None
 
 
@@ -265,6 +313,53 @@ async def test_manager_emits_final_status_on_runner_stop() -> None:
     assert runner.status == state.RunnerStatus.STOPPED
     assert state.RunnerStatus.RUNNING in status_events
     assert state.RunnerStatus.STOPPED in status_events
+
+
+@pytest.mark.asyncio
+async def test_manager_keeps_stopped_runner_on_stack_and_continue_resumes() -> None:
+    node = models.Node(
+        name="node-reject-resume",
+        type="manager-reject-once",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-manager-reject-resume", graph=graph)
+
+    project = FakeProject()
+    runner = Runner(
+        workflow=workflow,
+        project=project,  # type: ignore[arg-type]
+        initial_message=state.Message(role=models.Role.USER, text="hello"),
+    )
+
+    async def run_event_listener(frame: RunnerFrame, event) -> RunEventResp | None:
+        return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
+
+    manager = BaseManager(project=project, run_event_listener=run_event_listener)  # type: ignore[arg-type]
+    frame = RunnerFrame(
+        workflow_name="wf-manager-reject-resume",
+        runner=runner,
+        initial_message=state.Message(role=models.Role.USER, text="hello"),
+        agen=runner.run(),
+    )
+    manager._runner_stack.append(frame)
+
+    await manager._run_runner_task()
+
+    assert runner.status == state.RunnerStatus.STOPPED
+    assert len(manager.runner_stack) == 1
+    assert manager.runner_stack[0].runner is runner
+    assert frame.agen is None
+
+    resumed_runner = await manager.continue_current_runner()
+    assert resumed_runner is runner
+    driver_task = manager._driver_task
+    assert driver_task is not None
+    await driver_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert manager.runner_stack == []
 
 
 @pytest.mark.asyncio

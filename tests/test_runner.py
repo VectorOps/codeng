@@ -240,6 +240,54 @@ class ToolPromptExecutor(BaseExecutor):
         yield step
 
 
+@ExecutorFactory.register("reject-once")
+class RejectOnceExecutor(BaseExecutor):
+    def __init__(self, config: models.Node, project):
+        super().__init__(config, project)
+        self._run_counts: Dict[str, int] = {}
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        execution_key = str(inp.execution.id)
+        count = self._run_counts.get(execution_key, 0) + 1
+        self._run_counts[execution_key] = count
+        if count == 1:
+            msg = state.Message(
+                role=models.Role.SYSTEM,
+                text="provider request failed",
+            )
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=inp.execution.id,
+                    type=state.StepType.REJECTION,
+                    message_id=msg.id,
+                    is_complete=True,
+                ),
+            )
+            yield step
+            return
+
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text="recovered-output",
+        )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
 @ExecutorFactory.register("preview-usage")
 class PreviewUsageExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
@@ -683,7 +731,7 @@ async def test_runner_execution_flow():
 
     events = await drive_runner(agen, handler, ignore_non_step=True)
 
-    assert runner.status == state.RunnerStatus.FINISHED
+    assert runner.status == state.RunnerStatus.STOPPED
 
     node_execs_by_name: Dict[str, state.NodeExecution] = {}
     for ne in runner.execution.node_executions.values():
@@ -961,7 +1009,7 @@ async def test_runner_stops_after_rejection_step_without_advancing():
         ignore_non_step=True,
     )
 
-    assert runner.status == state.RunnerStatus.FINISHED
+    assert runner.status == state.RunnerStatus.STOPPED
 
     node_execs_by_name: Dict[str, state.NodeExecution] = {}
     for ne in runner.execution.node_executions.values():
@@ -969,6 +1017,7 @@ async def test_runner_stops_after_rejection_step_without_advancing():
 
     assert set(node_execs_by_name.keys()) == {"node1"}
     node1_exec = node_execs_by_name["node1"]
+    assert node1_exec.status == state.RunStatus.STOPPED
     rejection_steps = [
         s
         for s in node1_exec.iter_steps()
@@ -980,6 +1029,78 @@ async def test_runner_stops_after_rejection_step_without_advancing():
     assert not any(
         event.step is not None and event.step.execution.node == "node2"
         for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_continue_after_rejection_re_runs_last_step():
+    node = models.Node(
+        name="node1",
+        type="reject-once",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-rejection-continue", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    first_events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    assert runner.status == state.RunnerStatus.STOPPED
+    assert len(runner.execution.node_executions) == 1
+
+    second_events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert len(runner.execution.node_executions) == 1
+
+    node_exec = next(iter(runner.execution.node_executions.values()))
+    assert node_exec.status == state.RunStatus.FINISHED
+
+    rejection_steps = [
+        s for s in node_exec.iter_steps() if s.type == state.StepType.REJECTION
+    ]
+    output_steps = [
+        s
+        for s in node_exec.iter_steps()
+        if s.type == state.StepType.OUTPUT_MESSAGE and s.is_complete
+    ]
+    assert rejection_steps
+    assert output_steps
+    assert output_steps[-1].message is not None
+    assert output_steps[-1].message.text == "recovered-output"
+    assert any(
+        event.step is not None and event.step.type == state.StepType.REJECTION
+        for event in first_events
+    )
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "recovered-output"
+        for event in second_events
     )
 
 
