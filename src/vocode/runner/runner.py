@@ -684,6 +684,16 @@ class Runner:
                             )
                             if resume_status_event is not None:
                                 _ = yield resume_status_event
+                        if (
+                            persisted_step.llm_usage is not None
+                            and not persisted_step.is_complete
+                        ):
+                            self._preview_llm_usage(persisted_step.llm_usage)
+                            preview_status_event = self.set_status(
+                                self.status,
+                                current_execution=current_execution,
+                            )
+                            _ = yield preview_status_event
                         if persisted_step.is_complete:
                             complete_step_count += 1
                             last_complete_step = persisted_step
@@ -1211,10 +1221,8 @@ class Runner:
             current_execution=current_execution,
         )
 
-    def _apply_llm_usage(self, usage: Optional[state.LLMUsageStats]) -> None:
-        if usage is None:
-            return
-        self.execution.last_step_llm_usage = state.LLMUsageStats(
+    def _clone_llm_usage(self, usage: state.LLMUsageStats) -> state.LLMUsageStats:
+        return state.LLMUsageStats(
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
             cost_dollars=usage.cost_dollars,
@@ -1222,16 +1230,20 @@ class Runner:
             input_token_limit=usage.input_token_limit,
             output_token_limit=usage.output_token_limit,
         )
+
+    def _preview_llm_usage(self, usage: Optional[state.LLMUsageStats]) -> None:
+        if usage is None:
+            return
+        self.execution.last_step_llm_usage = self._clone_llm_usage(usage)
+        self._touch_execution()
+
+    def _apply_llm_usage(self, usage: Optional[state.LLMUsageStats]) -> None:
+        if usage is None:
+            return
+        self.execution.last_step_llm_usage = self._clone_llm_usage(usage)
         execution_usage = self.execution.llm_usage
         if execution_usage is None:
-            self.execution.llm_usage = state.LLMUsageStats(
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-                cost_dollars=usage.cost_dollars,
-                model_name=usage.model_name,
-                input_token_limit=usage.input_token_limit,
-                output_token_limit=usage.output_token_limit,
-            )
+            self.execution.llm_usage = self._clone_llm_usage(usage)
         else:
             execution_usage.prompt_tokens += usage.prompt_tokens
             execution_usage.completion_tokens += usage.completion_tokens

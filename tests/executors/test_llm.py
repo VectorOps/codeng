@@ -295,6 +295,95 @@ async def test_llm_executor_counts_cached_tokens_toward_round_prompt_usage(
 
 
 @pytest.mark.asyncio
+async def test_llm_executor_emits_preview_usage_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"n": 0}
+
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
+        call_count["n"] += 1
+        return FakeAsyncLLMClient(_stream_with_text("preview response"), **kwargs)
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-preview-usage",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-preview-usage", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    agen = executor.run(inp)
+    first_step = await agen.__anext__()
+
+    assert call_count["n"] == 0
+    assert first_step.type == state.StepType.OUTPUT_MESSAGE
+    assert first_step.is_complete is False
+    assert first_step.message is None
+    assert first_step.llm_usage is not None
+    assert first_step.llm_usage.prompt_tokens == 0
+    assert first_step.llm_usage.completion_tokens == 0
+    assert first_step.llm_usage.cost_dollars == 0.0
+    assert first_step.llm_usage.model_name == "gpt-3.5-turbo"
+
+    async for _ in agen:
+        pass
+
+    assert call_count["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_preview_usage_reuses_last_step_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"n": 0}
+
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
+        call_count["n"] += 1
+        return FakeAsyncLLMClient(_stream_with_text("preview response"), **kwargs)
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-preview-prior-usage",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-preview-prior-usage", "Hi")
+    run.last_step_llm_usage = state.LLMUsageStats(
+        prompt_tokens=21,
+        completion_tokens=8,
+        cost_dollars=0.75,
+        model_name="older-model",
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    agen = executor.run(inp)
+    first_step = await agen.__anext__()
+
+    assert call_count["n"] == 0
+    assert first_step.llm_usage is not None
+    assert first_step.llm_usage.prompt_tokens == 21
+    assert first_step.llm_usage.completion_tokens == 8
+    assert first_step.llm_usage.cost_dollars == 0.75
+    assert first_step.llm_usage.model_name == "gpt-3.5-turbo"
+
+    async for _ in agen:
+        pass
+
+    assert call_count["n"] == 1
+
+
+@pytest.mark.asyncio
 async def test_llm_executor_uses_only_current_node_execution_messages_when_reset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
