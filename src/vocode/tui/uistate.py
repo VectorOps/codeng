@@ -1040,7 +1040,7 @@ class TUIState:
         except KeyError:
             component = tool_call_req_component.ToolCallReqComponent(
                 step=step,
-                component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
+                component_style=tui_styles.TOOL_CALL_COMPONENT_STYLE,
             )
             self._step_component_ids.add(step_id)
             message = step.message

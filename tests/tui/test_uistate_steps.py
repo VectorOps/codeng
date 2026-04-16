@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from uuid import uuid4
+import datetime
 
 import pyfiglet
 import pytest
@@ -681,6 +682,131 @@ async def test_tool_request_run_agent_renders_prompt_text() -> None:
     output = buffer.getvalue()
     assert "name=agent1" in output
     assert "text=hello world" in output
+
+
+@pytest.mark.asyncio
+async def test_tool_request_components_do_not_insert_blank_line_between_tools() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    step1 = _make_step(
+        execution,
+        step_id=uuid4(),
+        step_type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[
+                state.ToolCallReq(
+                    id="call_1",
+                    name="list_files",
+                    arguments={"pattern": "*"},
+                    status=state.ToolCallReqStatus.EXECUTING,
+                )
+            ],
+        ),
+    )
+    step2 = _make_step(
+        execution,
+        step_id=uuid4(),
+        step_type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[
+                state.ToolCallReq(
+                    id="call_2",
+                    name="list_files",
+                    arguments={"pattern": "**/*"},
+                    status=state.ToolCallReqStatus.EXECUTING,
+                )
+            ],
+        ),
+    )
+
+    ui_state.handle_step(step1)
+    ui_state.handle_step(step2)
+
+    await ui_state.terminal.render()
+    lines = [line for line in buffer.getvalue().splitlines() if line.strip()]
+    list_lines = [line for line in lines if "List Files" in line]
+
+    assert len(list_lines) == 2
+
+
+@pytest.mark.asyncio
+async def test_tool_request_uses_response_completion_for_inline_status() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    created_at = datetime.datetime.now(datetime.UTC)
+    handled_at = created_at + datetime.timedelta(milliseconds=200)
+    req = state.ToolCallReq(
+        id="call_1",
+        name="list_files",
+        arguments={"pattern": "**/*"},
+        status=state.ToolCallReqStatus.EXECUTING,
+        created_at=created_at,
+        handled_at=handled_at,
+    )
+    resp = state.ToolCallResp(
+        id="call_1",
+        name="list_files",
+        status=state.ToolCallStatus.COMPLETED,
+        result={"items": []},
+    )
+    step = _make_step(
+        execution,
+        step_id=uuid4(),
+        step_type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+            tool_call_responses=[resp],
+        ),
+    )
+
+    ui_state.handle_step(step)
+
+    await ui_state.terminal.render()
+    output = buffer.getvalue()
+    assert "done" in output
+    assert "running" not in output
 
 
 @pytest.mark.asyncio

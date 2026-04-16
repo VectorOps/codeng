@@ -7,11 +7,12 @@ from rich import console as rich_console
 from rich import syntax as rich_syntax
 from rich import text as rich_text
 
+from vocode import state as vocode_state
 from vocode import settings as vocode_settings
-from vocode.tui import styles as tui_styles
 from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui.tcf import render_utils as tcf_render_utils
 
 
 @tui_tcf.ToolCallFormatterManager.register("apply_patch")
@@ -76,58 +77,49 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
 
         return str(result), False
 
-    def format_input(
+    def render(
         self,
         terminal: tui_terminal.Terminal,
-        tool_name: str,
-        arguments: typing.Any,
+        req: typing.Optional[vocode_state.ToolCallReq],
+        resp: typing.Optional[vocode_state.ToolCallResp],
+        context: tui_tcf.ToolCallRenderContext,
         config: vocode_settings.ToolCallFormatter | None,
     ) -> tui_base.Renderable | None:
+        tool_name = "apply_patch"
+        arguments: typing.Any = None
+        result: typing.Any = None
+        if req is not None:
+            tool_name = req.name
+            arguments = req.arguments
+        if resp is not None:
+            tool_name = resp.name
+            result = resp.result
         display_name = self.format_tool_name(tool_name)
         if config is not None and config.title:
             display_name = config.title
 
-        header = rich_text.Text(no_wrap=True)
-        header.append(
-            terminal.unicode.glyph(":circle:"),
-            style=tui_styles.TOOL_CALL_BULLET_STYLE,
+        header = tcf_render_utils.build_tool_line(
+            terminal,
+            display_name,
+            context=context,
+            prefix_icon=context.status_icon,
         )
-        header.append(" ")
-        header.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
 
         content_str = ""
         if isinstance(arguments, dict):
             content_str = str(arguments.get("text", ""))
         elif isinstance(arguments, str):
             content_str = arguments
-
-        body = rich_syntax.Syntax(content_str, "diff")
-
-        return rich_console.Group(header, body)
-
-    def format_output(
-        self,
-        terminal: tui_terminal.Terminal,
-        tool_name: str,
-        result: typing.Any,
-        config: vocode_settings.ToolCallFormatter | None,
-    ) -> tui_base.Renderable | None:
-        display_name = self.format_tool_name(tool_name)
-        if config is not None and config.title:
-            display_name = config.title
-
-        header = rich_text.Text(no_wrap=True)
-        header.append(
-            terminal.unicode.glyph(":circle:"),
-            style=tui_styles.TOOL_CALL_BULLET_STYLE,
-        )
-        header.append(" ")
-        header.append(display_name, style=tui_styles.TOOL_CALL_NAME_STYLE)
-        header.append(" => ", style=tui_styles.TOOL_CALL_META_STYLE)
+        if req is not None and not content_str and resp is None:
+            return header
+        if req is not None and content_str:
+            body = rich_syntax.Syntax(content_str, "diff")
+            return rich_console.Group(header, body)
 
         result_text, is_error = self._extract_text(result)
+        if not result_text.strip():
+            return header
         body = rich_text.Text(result_text, no_wrap=False)
         if is_error:
             body.stylize("red")
-
         return rich_console.Group(header, body)

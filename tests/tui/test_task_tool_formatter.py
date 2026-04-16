@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import types
 
 from rich import console as rich_console
 
@@ -25,17 +26,22 @@ def test_task_tool_formatter_renders_tasks_from_text_payload() -> None:
         ]
     }
     result = json.dumps(payload)
-    rendered = formatter.format_output(
+    rendered = formatter.render(
         terminal=term,
-        tool_name="update_plan",
-        result=result,
+        req=None,
+        resp=types.SimpleNamespace(
+            id="call_1",
+            name="update_plan",
+            result=result,
+        ),
+        context=tui_tcf.ToolCallRenderContext(max_width=term.console.size.width),
         config=vocode_settings.ToolCallFormatter(title="Plan", formatter="tasklist"),
     )
 
     assert rendered is not None
     console.print(rendered)
     output = buffer.getvalue()
-    assert "Plan:" in output
+    assert "Plan" in output
     assert "[ ] Task A" in output
     assert "[>] Task B" in output
     assert "[x] Task C" in output
@@ -53,10 +59,15 @@ def test_task_tool_formatter_disables_execution_stats() -> None:
         ]
     }
     result = json.dumps(payload)
-    rendered = formatter.format_output(
+    rendered = formatter.render(
         terminal=term,
-        tool_name="update_plan",
-        result=result,
+        req=None,
+        resp=types.SimpleNamespace(
+            id="call_1",
+            name="update_plan",
+            result=result,
+        ),
+        context=tui_tcf.ToolCallRenderContext(max_width=term.console.size.width),
         config=vocode_settings.ToolCallFormatter(
             title="Plan",
             formatter="tasklist",

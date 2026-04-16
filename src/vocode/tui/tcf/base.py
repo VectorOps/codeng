@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+import datetime
 import typing
 from abc import ABC, abstractmethod
 from typing import ClassVar
 import re
+
+from pydantic import BaseModel
 
 from vocode.logger import logger
 from vocode import settings as vocode_settings
 from vocode import state as vocode_state
 from vocode.tui import lib as tui_terminal
 from vocode.tui.lib import base as tui_base
+
+
+class ToolCallRenderContext(BaseModel):
+    status: typing.Optional[vocode_state.ToolCallReqStatus] = None
+    duration: typing.Optional[datetime.timedelta] = None
+    status_icon: str = ""
+    max_width: int = 80
+    collapsed: bool = True
+    show_execution_stats: bool = True
 
 
 class BaseToolCallFormatter(ABC):
@@ -30,21 +42,12 @@ class BaseToolCallFormatter(ABC):
         return " ".join(capitalized)
 
     @abstractmethod
-    def format_input(
+    def render(
         self,
         terminal: tui_terminal.Terminal,
-        tool_name: str,
-        arguments: typing.Any,
-        config: vocode_settings.ToolCallFormatter | None,
-    ) -> tui_base.Renderable | None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def format_output(
-        self,
-        terminal: tui_terminal.Terminal,
-        tool_name: str,
-        result: typing.Any,
+        req: typing.Optional[vocode_state.ToolCallReq],
+        resp: typing.Optional[vocode_state.ToolCallResp],
+        context: ToolCallRenderContext,
         config: vocode_settings.ToolCallFormatter | None,
     ) -> tui_base.Renderable | None:
         raise NotImplementedError
@@ -138,32 +141,28 @@ class ToolCallFormatterManager:
         fallback = self._get_instance("generic")
         return fallback, config
 
-    def format_request(
+    def render_tool_call(
         self,
         terminal: tui_terminal.Terminal,
-        req: vocode_state.ToolCallReq,
+        req: typing.Optional[vocode_state.ToolCallReq],
+        resp: typing.Optional[vocode_state.ToolCallResp],
+        context: ToolCallRenderContext,
     ) -> tui_base.Renderable | None:
-        formatter, config = self._resolve(req.name)
-        if formatter is None:
+        tool_name = None
+        if req is not None:
+            tool_name = req.name
+        elif resp is not None:
+            tool_name = resp.name
+        if not tool_name:
             return None
-        return formatter.format_input(
-            terminal=terminal,
-            tool_name=req.name,
-            arguments=req.arguments,
-            config=config,
-        )
 
-    def format_response(
-        self,
-        terminal: tui_terminal.Terminal,
-        resp: vocode_state.ToolCallResp,
-    ) -> tui_base.Renderable | None:
-        formatter, config = self._resolve(resp.name)
+        formatter, config = self._resolve(tool_name)
         if formatter is None:
             return None
-        return formatter.format_output(
+        return formatter.render(
             terminal=terminal,
-            tool_name=resp.name,
-            result=resp.result,
+            req=req,
+            resp=resp,
+            context=context,
             config=config,
         )

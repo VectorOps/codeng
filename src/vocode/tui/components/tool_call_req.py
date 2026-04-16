@@ -6,14 +6,9 @@ import typing
 from typing import Final
 
 from rich import console as rich_console
-from rich import panel as rich_panel
-from rich import padding as rich_padding
-from rich import text as rich_text
-from rich import markup as rich_markup
 
 
 from vocode import state as vocode_state
-from vocode.tui import styles as tui_styles
 from vocode.tui import lib as tui_terminal
 from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib import base as tui_base
@@ -157,18 +152,20 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
 
         return max(handled_times) - min(created_times)
 
-    @staticmethod
-    def _format_duration(duration: datetime.timedelta) -> str:
-        total_seconds = int(duration.total_seconds())
-        if total_seconds < 1:
-            return "< 1s"
-        minutes, seconds = divmod(total_seconds, 60)
-        hours, minutes = divmod(minutes, 60)
-        if hours:
-            return f"{hours}h {minutes}m {seconds}s"
-        if minutes:
-            return f"{minutes}m {seconds}s"
-        return f"{seconds}s"
+    def _resolve_tool_call_status(
+        self,
+        tool_call: vocode_state.ToolCallReq,
+        response: vocode_state.ToolCallResp | None,
+        fallback_status: vocode_state.ToolCallReqStatus | None,
+    ) -> vocode_state.ToolCallReqStatus | None:
+        status = tool_call.status or fallback_status
+        if response is None:
+            return status
+        if response.status is vocode_state.ToolCallStatus.COMPLETED:
+            return vocode_state.ToolCallReqStatus.COMPLETE
+        if response.status is vocode_state.ToolCallStatus.REJECTED:
+            return vocode_state.ToolCallReqStatus.REJECTED
+        return status
 
     def _build_renderable(
         self,
@@ -177,61 +174,42 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         status = self._compute_overall_status()
         self._update_animation(status)
 
-        renderables: list[rich_console.RenderableType] = []
         terminal = self.terminal
         message = self._step.message
-        tool_calls: list[vocode_state.ToolCallReq] = []
-        tool_responses: list[vocode_state.ToolCallResp] = []
-        if message is not None:
-            tool_calls = message.tool_call_requests
-            tool_responses = message.tool_call_responses
+        if terminal is None or message is None:
+            return ""
 
-        if terminal is not None and (tool_calls or tool_responses):
-            manager = tui_tcf.ToolCallFormatterManager.instance()
-            for tool_call in tool_calls:
-                rendered_req = manager.format_request(terminal, tool_call)
-                if rendered_req is not None:
-                    renderables.append(rendered_req)
-            for resp in tool_responses:
-                rendered_resp = manager.format_response(terminal, resp)
-                if rendered_resp is not None:
-                    renderables.append(rendered_resp)
-
-        if not self._show_execution_stats or status is None:
-            if not renderables:
-                return ""
-            if len(renderables) == 1:
-                return renderables[0]
-            return rich_console.Group(*renderables)
-
-        icon = self._render_status_emoji(console, status)
-
-        if status is vocode_state.ToolCallReqStatus.COMPLETE:
-            duration = self._compute_duration()
-            if duration is not None:
-                duration_str = self._format_duration(duration)
-                status_text = f"Completed in {duration_str}"
-            else:
-                status_text = "Completed."
-        else:
-            status_text = self._STATUS_TEXT.get(
-                status,
-                status.value.replace("_", " ").capitalize(),
+        responses_by_id = {
+            response.id: response for response in message.tool_call_responses
+        }
+        manager = tui_tcf.ToolCallFormatterManager.instance()
+        renderables: list[rich_console.RenderableType] = []
+        duration = self._compute_duration()
+        for tool_call in message.tool_call_requests:
+            response = responses_by_id.get(tool_call.id)
+            tool_status = self._resolve_tool_call_status(tool_call, response, status)
+            context = tui_tcf.ToolCallRenderContext(
+                status=tool_status,
+                duration=duration,
+                status_icon=self._render_status_emoji(console, tool_status),
+                max_width=console.size.width,
+                collapsed=self.is_collapsed,
+                show_execution_stats=self._show_execution_stats,
             )
+            rendered = manager.render_tool_call(
+                terminal=terminal,
+                req=tool_call,
+                resp=response,
+                context=context,
+            )
+            if rendered is not None:
+                renderables.append(rendered)
 
-        style = tui_styles.TOOL_CALL_DURATION_STYLE
-        status_line = rich_markup.render(f"  [{style}]{icon} {status_text}[/]")
-        renderables.append(status_line)
-
+        if not renderables:
+            return ""
         if len(renderables) == 1:
             return renderables[0]
-
-        grouped = rich_console.Group(*renderables)
-        return rich_padding.Padding(
-            grouped,
-            pad=(0, 1),
-            style=tui_styles.TOOL_CALL_PANEL_STYLE,
-        )
+        return rich_console.Group(*renderables)
 
     def render(self, options: rich_console.ConsoleOptions) -> tui_base.Lines:
         terminal = self.terminal

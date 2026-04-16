@@ -4,10 +4,7 @@ from vocode.tui.tcf import base as tcf_base
 
 
 class _DummyFormatter(tcf_base.BaseToolCallFormatter):
-    def format_input(self, terminal, tool_name, arguments, config):
-        return None
-
-    def format_output(self, terminal, tool_name, result, config):
+    def render(self, terminal, req, resp, context, config):
         return None
 
 
