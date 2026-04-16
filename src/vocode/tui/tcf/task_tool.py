@@ -4,12 +4,14 @@ import json
 from typing import Any, Dict, List
 
 from rich import text as rich_text
+from rich import console as rich_console
 
 from vocode import settings as vocode_settings
 from vocode.tui import styles as tui_styles
 from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib import base as tui_base
 from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui.tcf import render_utils as tcf_render_utils
 
 
 _STATUS_PENDING = "pending"
@@ -21,29 +23,36 @@ _STATUS_COMPLETED = "completed"
 class TaskToolFormatter(tui_tcf.BaseToolCallFormatter):
     show_execution_stats_default: bool = False
 
-    def format_input(
+    def render(
         self,
         terminal: tui_terminal.Terminal,
-        tool_name: str,
-        arguments: Any,
+        req: Any,
+        resp: Any,
+        context: tui_tcf.ToolCallRenderContext,
         config: vocode_settings.ToolCallFormatter | None,
     ) -> tui_base.Renderable | None:
-        return None
-
-    def format_output(
-        self,
-        terminal: tui_terminal.Terminal,
-        tool_name: str,
-        result: Any,
-        config: vocode_settings.ToolCallFormatter | None,
-    ) -> tui_base.Renderable | None:
+        tool_name = "update_plan"
+        result: Any = None
+        if req is not None:
+            tool_name = req.name
+        if resp is not None:
+            tool_name = resp.name
+            result = resp.result
         title = self.format_tool_name(tool_name)
         if config is not None and config.title:
             title = config.title
 
         tasks = self._parse_tasks_from_result(result)
         if tasks:
-            return self._format_tasks(tasks, title)
+            return self._format_tasks(tasks, title, terminal, context)
+
+        if req is not None and result is None:
+            return tcf_render_utils.build_tool_line(
+                terminal,
+                title,
+                context=context,
+                prefix_icon=context.status_icon,
+            )
 
         payload: str
         if isinstance(result, str):
@@ -54,11 +63,14 @@ class TaskToolFormatter(tui_tcf.BaseToolCallFormatter):
             except Exception:
                 payload = str(result)
 
-        text = rich_text.Text(no_wrap=False)
-        text.append(f"{title}:", style=tui_styles.TOOL_CALL_NAME_STYLE)
-        text.append("\n")
-        text.append(payload)
-        return text
+        line = tcf_render_utils.build_tool_line(
+            terminal,
+            title,
+            context=context,
+            prefix_icon=context.status_icon,
+        )
+        body = rich_text.Text(payload, no_wrap=False)
+        return rich_console.Group(line, body)
 
     @staticmethod
     def _parse_tasks_sequence(raw: Any) -> List[Dict[str, str]]:
@@ -121,9 +133,17 @@ class TaskToolFormatter(tui_tcf.BaseToolCallFormatter):
         self,
         tasks: List[Dict[str, str]],
         title: str,
+        terminal: tui_terminal.Terminal,
+        context: tui_tcf.ToolCallRenderContext,
     ) -> tui_base.Renderable:
         text = rich_text.Text(no_wrap=False)
-        text.append(f"{title}:", style=tui_styles.TOOL_CALL_NAME_STYLE)
+        line = tcf_render_utils.build_tool_line(
+            terminal,
+            title,
+            context=context,
+            prefix_icon=context.status_icon,
+        )
+        text.append_text(line)
         text.append("\n")
 
         for task in tasks:

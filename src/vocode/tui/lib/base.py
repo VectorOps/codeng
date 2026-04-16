@@ -79,6 +79,7 @@ class ComponentStyle:
     panel_padding: int | tuple[int, int] | tuple[int, int, int, int] | None = None
     padding_pad: int | tuple[int, int] | tuple[int, int, int, int] | None = None
     padding_style: rich_style.Style | str | None = None
+    margin_top: int | None = None
     margin_bottom: int | None = None
 
 
@@ -164,6 +165,12 @@ class Component(ABC):
             if style.padding_style is not None:
                 padding_kwargs["style"] = style.padding_style
             current = rich_padding.Padding(current, **padding_kwargs)
+
+        if style.margin_top is not None and style.margin_top > 0:
+            current = rich_padding.Padding(
+                current,
+                pad=(style.margin_top, 0, 0, 0),
+            )
 
         if style.margin_bottom is not None and style.margin_bottom > 0:
             current = rich_padding.Padding(

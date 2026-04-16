@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import io
+import types
 
 from rich import console as rich_console
 
 from vocode import settings as vocode_settings
+from vocode import state as vocode_state
+from vocode.tui import tcf as tui_tcf
 from vocode.tui.tcf import apply_patch
 from vocode.tui.lib import terminal as tui_terminal
 
@@ -20,10 +23,15 @@ def test_apply_patch_formatter_renders_markdown_input() -> None:
     text_content = "# Title\n- Item 1\n- Item 2"
     arguments = {"text": text_content}
 
-    rendered = formatter.format_input(
+    rendered = formatter.render(
         terminal=term,
-        tool_name="apply_patch",
-        arguments=arguments,
+        req=vocode_state.ToolCallReq(
+            id="call_1",
+            name="apply_patch",
+            arguments=arguments,
+        ),
+        resp=None,
+        context=tui_tcf.ToolCallRenderContext(max_width=term.console.size.width),
         config=vocode_settings.ToolCallFormatter(title="Apply Patch"),
     )
 
@@ -45,10 +53,15 @@ def test_apply_patch_formatter_renders_output_unstyled() -> None:
 
     result = "Applied patch successfully.\nAdded file: foo.py"
 
-    rendered = formatter.format_output(
+    rendered = formatter.render(
         terminal=term,
-        tool_name="apply_patch",
-        result=result,
+        req=None,
+        resp=types.SimpleNamespace(
+            id="call_1",
+            name="apply_patch",
+            result=result,
+        ),
+        context=tui_tcf.ToolCallRenderContext(max_width=term.console.size.width),
         # config with show_output=False to verify we ignore it
         config=vocode_settings.ToolCallFormatter(
             title="Apply Patch", show_output=False
@@ -60,7 +73,6 @@ def test_apply_patch_formatter_renders_output_unstyled() -> None:
     output = buffer.getvalue()
 
     assert "Apply Patch" in output
-    assert "=>" in output
     assert "Applied patch successfully." in output
     assert "Added file: foo.py" in output
 
@@ -75,10 +87,15 @@ def test_apply_patch_formatter_renders_output_from_json_payload() -> None:
     # Simulates tool result being a dict that contains a JSON-encoded string.
     result = {"text": '{"message": "Applied patch successfully.\\nAdded file: foo.py"}'}
 
-    rendered = formatter.format_output(
+    rendered = formatter.render(
         terminal=term,
-        tool_name="apply_patch",
-        result=result,
+        req=None,
+        resp=types.SimpleNamespace(
+            id="call_1",
+            name="apply_patch",
+            result=result,
+        ),
+        context=tui_tcf.ToolCallRenderContext(max_width=term.console.size.width),
         config=vocode_settings.ToolCallFormatter(title="Apply Patch"),
     )
 
@@ -100,10 +117,15 @@ def test_apply_patch_formatter_renders_error_from_json_payload() -> None:
     # Simulates tool error coming as a JSON string.
     result = '{"error": "Patch failed"}'
 
-    rendered = formatter.format_output(
+    rendered = formatter.render(
         terminal=term,
-        tool_name="apply_patch",
-        result=result,
+        req=None,
+        resp=types.SimpleNamespace(
+            id="call_1",
+            name="apply_patch",
+            result=result,
+        ),
+        context=tui_tcf.ToolCallRenderContext(max_width=term.console.size.width),
         config=vocode_settings.ToolCallFormatter(title="Apply Patch"),
     )
 
