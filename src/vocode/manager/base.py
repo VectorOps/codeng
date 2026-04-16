@@ -289,9 +289,15 @@ class BaseManager:
                     else:
                         event = await agen.asend(send)
                 except StopAsyncIteration:
+                    finished_frame = self._runner_stack[-1]
+                    finished_frame.agen = None
+
+                    if finished_frame.runner.status == state.RunnerStatus.STOPPED:
+                        self.project.current_workflow = finished_frame.workflow_name
+                        break
+
                     # If runner generator finished, pop it from the stack
                     finished_frame = self._runner_stack.pop()
-                    finished_frame.agen = None
 
                     # If we still have the runners in the stack, then pass back last final message
                     final_message = finished_frame.runner.last_final_message
