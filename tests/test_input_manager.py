@@ -53,6 +53,34 @@ async def test_input_manager_delivers_directly_to_waiter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_input_manager_only_new_wait_ignores_queued_messages() -> None:
+    manager = InputManager()
+    queued_message = state.Message(role=models.Role.USER, text="queued")
+    fresh_message = state.Message(role=models.Role.USER, text="fresh")
+
+    accepted = await manager.publish(
+        queued_message,
+        queue=True,
+    )
+    assert accepted is True
+
+    task = asyncio.create_task(manager.wait_for_input(only_new=True))
+    await asyncio.sleep(0)
+
+    accepted = await manager.publish(
+        fresh_message,
+        queue=False,
+    )
+    received = await task
+
+    assert accepted is True
+    assert received == fresh_message
+
+    snapshot = await manager.snapshot()
+    assert [message.text for message in snapshot.queued_messages] == ["queued"]
+
+
+@pytest.mark.asyncio
 async def test_input_manager_snapshot_and_dequeue_reflect_queued_messages() -> None:
     manager = InputManager()
     first = state.Message(role=models.Role.USER, text="one")

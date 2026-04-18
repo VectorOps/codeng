@@ -1028,8 +1028,10 @@ async def test_llm_executor_surfaces_structured_connect_error_metadata(
     async for step in executor.run(inp):
         steps.append(step)
 
-    assert len(steps) == 1
-    rejection = steps[0]
+    assert len(steps) == 2
+    assert steps[0].type == state.StepType.OUTPUT_MESSAGE
+    assert steps[0].is_complete is False
+    rejection = steps[-1]
     assert rejection.type == state.StepType.REJECTION
     assert rejection.message is not None
     assert "provider=chatgpt" in rejection.message.text

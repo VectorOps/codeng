@@ -17,6 +17,10 @@ class HTTPInputNode(models.Node):
         default="/input",
         description="HTTP path used to receive external input messages.",
     )
+    only_new_input: bool = Field(
+        default=False,
+        description="When true, ignore queued input and wait only for fresh external input.",
+    )
     message: Optional[str] = Field(
         default=None,
         description="Optional status message emitted while waiting for HTTP input.",
@@ -112,7 +116,9 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
         )
         yield waiting_step
 
-        message = await self.project.input_manager.wait_for_input()
+        message = await self.project.input_manager.wait_for_input(
+            self.config.only_new_input
+        )
         history.upsert_message(inp.run, message)
         output_step = history.upsert_step(
             inp.run,

@@ -46,10 +46,10 @@ class InputManager:
             self._state.queued_messages.append(message)
             return True
 
-    async def wait_for_input(self) -> state.Message:
+    async def wait_for_input(self, only_new: bool = False) -> state.Message:
         waiter: Optional[asyncio.Future[state.Message]] = None
         async with self._lock:
-            if self._state.queued_messages:
+            if not only_new and self._state.queued_messages:
                 message = self._state.queued_messages.popleft()
                 return message
             loop = asyncio.get_running_loop()

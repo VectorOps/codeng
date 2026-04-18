@@ -360,7 +360,7 @@ class PersistentShellProcessor(ShellProcessor):
         # Emit a single marker line as "<marker>:<rc>"
         return (
             "__rc=127; "
-            f"{{ {inner} < /dev/null; __rc=$?; }}; "
+            f"{{ {inner} < /dev/null 2>&1; __rc=$?; }}; "
             "printf '\\n%s:%s\\n' \"" + shlex.quote(marker) + '" "$__rc";\n'
         )
 
