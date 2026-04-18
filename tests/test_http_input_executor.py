@@ -395,7 +395,7 @@ async def test_http_input_executor_only_new_input_ignores_queued_messages(
 
 
 @pytest.mark.asyncio
-async def test_http_input_executor_stop_resets_queued_input(tmp_path) -> None:
+async def test_http_input_executor_stop_preserves_queued_input(tmp_path) -> None:
     settings = vocode_settings.Settings(
         internal_http=vocode_settings.InternalHTTPSettings(host="127.0.0.1", port=0)
     )
@@ -439,6 +439,11 @@ async def test_http_input_executor_stop_resets_queued_input(tmp_path) -> None:
     stop_event = await agen.athrow(RunnerStopped())
     assert stop_event.stats is not None
     assert stop_event.stats.status == state.RunnerStatus.STOPPED
+
+    snapshot = await project.input_manager.snapshot()
+    assert [message.text for message in snapshot.queued_messages] == [
+        "stale-http-input"
+    ]
 
     accepted_after_stop = await project.input_manager.publish(
         state.Message(role=models.Role.USER, text="fresh-http-input"),
