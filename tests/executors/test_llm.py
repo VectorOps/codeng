@@ -61,6 +61,27 @@ class FakeAsyncLLMClient:
         return self._stream_handle
 
 
+class RecordingAsyncLLMClient(FakeAsyncLLMClient):
+    def __init__(
+        self, stream_handles: List[FakeStreamHandle], requests: List[Any], **kwargs: Any
+    ) -> None:
+        self._stream_handles = stream_handles
+        self._requests = requests
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def stream(self, model: str, request: Any, options: Any = None):
+        self._requests.append(request)
+        if not self._stream_handles:
+            raise RuntimeError("missing stream handle")
+        return self._stream_handles.pop(0)
+
+
 class FailingAsyncLLMClient:
     def __init__(self, error: connect.ConnectError, **kwargs: Any) -> None:
         self._error = error
@@ -235,6 +256,56 @@ async def test_llm_executor_with_connect_mock_response(
     for s in output_steps[:-1]:
         assert s.is_complete is False
     assert final_message_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_outcome_tag_selection_strips_only_trailing_valid_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            _stream_with_text(
+                "Earlier reference\nOUTCOME: maybe\nFinal answer\nOUTCOME: success"
+            ),
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-outcome-tag-tight-strip",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        outcomes=[
+            models.OutcomeSlot(name="success"),
+            models.OutcomeSlot(name="failure"),
+        ],
+        outcome_strategy=models.OutcomeStrategy.TAG,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input(
+        "node-outcome-tag-tight-strip",
+        "Hi",
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    final_message_step = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert final_message_step.message is not None
+    assert (
+        final_message_step.message.text
+        == "Earlier reference\nOUTCOME: maybe\nFinal answer"
+    )
+    assert final_message_step.outcome_name == "success"
 
 
 @pytest.mark.asyncio
@@ -890,6 +961,445 @@ async def test_llm_executor_outcome_tag_selection(
     for s in output_steps[:-1]:
         assert s.is_complete is False
     assert final_message_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_requires_final_message_after_outcome_tool_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: List[Any] = []
+    first_tool_call = connect.ToolCallBlock(
+        id="call_outcome_1",
+        name=llm_helpers.CHOOSE_OUTCOME_TOOL_NAME,
+        arguments={"outcome": "success"},
+    )
+    first_response = _assistant_response("", tool_calls=[first_tool_call])
+    second_response = _assistant_response("Final answer after outcome")
+    stream_handles = [
+        FakeStreamHandle(
+            [connect.ResponseEndEvent(response=first_response)],
+            final_response=first_response,
+        ),
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(index=0, delta="Final answer after outcome"),
+                connect.ResponseEndEvent(response=second_response),
+            ],
+            final_response=second_response,
+        ),
+    ]
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: RecordingAsyncLLMClient(
+            stream_handles,
+            requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-outcome-function-followup",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        outcomes=[
+            models.OutcomeSlot(name="success"),
+            models.OutcomeSlot(name="failure"),
+        ],
+        outcome_strategy=models.OutcomeStrategy.FUNCTION,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input(
+        "node-outcome-function-followup",
+        "Hi",
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(requests) == 2
+    second_request = requests[1]
+    assert any(
+        isinstance(message, connect.ToolResultMessage)
+        and message.tool_name == llm_helpers.CHOOSE_OUTCOME_TOOL_NAME
+        and message.content[0].text == "outcome accepted"
+        for message in second_request.messages
+    )
+
+    final_message_step = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert final_message_step.message is not None
+    assert final_message_step.message.text == "Final answer after outcome"
+    assert final_message_step.outcome_name == "success"
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_retries_when_outcome_tool_call_is_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: List[Any] = []
+    first_tool_call = connect.ToolCallBlock(
+        id="call_outcome_invalid",
+        name=llm_helpers.CHOOSE_OUTCOME_TOOL_NAME,
+        arguments={"outcome": "unknown"},
+    )
+    first_response = _assistant_response("Bad answer", tool_calls=[first_tool_call])
+    second_tool_call = connect.ToolCallBlock(
+        id="call_outcome_valid",
+        name=llm_helpers.CHOOSE_OUTCOME_TOOL_NAME,
+        arguments={"outcome": "success"},
+    )
+    second_response = _assistant_response(
+        "Corrected final answer",
+        tool_calls=[second_tool_call],
+    )
+    stream_handles = [
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(index=0, delta="Bad answer"),
+                connect.ResponseEndEvent(response=first_response),
+            ],
+            final_response=first_response,
+        ),
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(index=0, delta="Corrected final answer"),
+                connect.ResponseEndEvent(response=second_response),
+            ],
+            final_response=second_response,
+        ),
+    ]
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: RecordingAsyncLLMClient(
+            stream_handles,
+            requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-outcome-function-invalid",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        outcomes=[
+            models.OutcomeSlot(name="success"),
+            models.OutcomeSlot(name="failure"),
+        ],
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input(
+        "node-outcome-function-invalid",
+        "Hi",
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(requests) == 2
+    second_request = requests[1]
+    assert any(
+        isinstance(message, connect.ToolResultMessage)
+        and message.content[0].text
+        == "invalid outcome, possible options: success, failure"
+        for message in second_request.messages
+    )
+    assert any(
+        isinstance(message, connect.UserMessage)
+        and "You must provide the final response again AND choose an outcome."
+        in message.content
+        for message in second_request.messages
+    )
+
+    final_message_step = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert final_message_step.message is not None
+    assert final_message_step.message.text == "Corrected final answer"
+    assert final_message_step.outcome_name == "success"
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_retries_when_tag_outcome_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: List[Any] = []
+    first_response = _assistant_response("Tagless answer")
+    second_response = _assistant_response("Tagged answer again\nOUTCOME: success")
+    stream_handles = [
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(index=0, delta="Tagless answer"),
+                connect.ResponseEndEvent(response=first_response),
+            ],
+            final_response=first_response,
+        ),
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(
+                    index=0, delta="Tagged answer again\nOUTCOME: success"
+                ),
+                connect.ResponseEndEvent(response=second_response),
+            ],
+            final_response=second_response,
+        ),
+    ]
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: RecordingAsyncLLMClient(
+            stream_handles,
+            requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-outcome-tag-retry",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        outcomes=[
+            models.OutcomeSlot(name="success"),
+            models.OutcomeSlot(name="failure"),
+        ],
+        outcome_strategy=models.OutcomeStrategy.TAG,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-outcome-tag-retry", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(requests) == 2
+    assert any(
+        isinstance(message, connect.UserMessage)
+        and "Append a final line exactly as OUTCOME: <outcome_name>." in message.content
+        for message in requests[1].messages
+    )
+
+    final_message_step = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert final_message_step.message is not None
+    assert final_message_step.message.text == "Tagged answer again"
+    assert final_message_step.outcome_name == "success"
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_persists_cached_outcome_across_tool_rounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_call = connect.ToolCallBlock(
+        id="call_tool_1",
+        name="echo",
+        arguments={"x": 1},
+    )
+    outcome_call = connect.ToolCallBlock(
+        id="call_outcome_1",
+        name=llm_helpers.CHOOSE_OUTCOME_TOOL_NAME,
+        arguments={"outcome": "success"},
+    )
+    first_response = _assistant_response(
+        "Using a tool first",
+        tool_calls=[tool_call, outcome_call],
+    )
+    second_response = _assistant_response("Final answer after tool")
+    responses = [first_response, second_response]
+
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
+        if not responses:
+            raise RuntimeError("missing response")
+        response = responses.pop(0)
+        events: List[connect.StreamEvent] = [
+            connect.ResponseEndEvent(response=response)
+        ]
+        if (
+            response.content
+            and response.content[0].type == "text"
+            and response.content[0].text
+        ):
+            events.insert(
+                0, connect.TextDeltaEvent(index=0, delta=response.content[0].text)
+            )
+        return FakeAsyncLLMClient(
+            FakeStreamHandle(events, final_response=response),
+            **kwargs,
+        )
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-outcome-tool-round",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        outcomes=[
+            models.OutcomeSlot(name="success"),
+            models.OutcomeSlot(name="failure"),
+        ],
+        tools=[vocode_settings.ToolSpec(name="echo", enabled=True)],
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-outcome-tool-round", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    first_steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        first_steps.append(step)
+
+    first_final = [s for s in first_steps if s.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert first_final.message is not None
+    assert len(first_final.message.tool_call_requests) == 1
+    assert first_final.message.tool_call_requests[0].name == "echo"
+    assert first_final.outcome_name == "success"
+    assert execution.state is not None
+
+    tool_resp = state.ToolCallResp(
+        id="call_tool_1",
+        name="echo",
+        status=state.ToolCallStatus.COMPLETED,
+        result={"ok": True},
+    )
+    first_final.message.tool_call_responses = [tool_resp]
+    project.history.upsert_message(run, first_final.message)
+    project.history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=first_final.message.id,
+            is_complete=True,
+            outcome_name=first_final.outcome_name,
+        ),
+    )
+
+    second_steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        second_steps.append(step)
+
+    second_final = [s for s in second_steps if s.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert second_final.message is not None
+    assert second_final.message.text == "Final answer after tool"
+    assert second_final.outcome_name == "success"
+
+
+def test_llm_node_defaults_to_function_outcome_strategy() -> None:
+    node = LLMNode(
+        name="node-default-outcome-strategy",
+        type="llm",
+        model="gpt-3.5-turbo",
+    )
+
+    assert node.outcome_strategy == models.OutcomeStrategy.FUNCTION
+
+
+def test_llm_build_system_prompt_uses_custom_outcome_instruction() -> None:
+    node = LLMNode(
+        name="node-custom-outcome-instruction",
+        type="llm",
+        model="gpt-3.5-turbo",
+        outcomes=[
+            models.OutcomeSlot(name="success", description="Works"),
+            models.OutcomeSlot(name="failure", description="Fails"),
+        ],
+        outcome_selection_instruction=(
+            "Pick from {outcome_list} using {choose_outcome_tool_name}.\n{outcome_desc_bullets}"
+        ),
+    )
+
+    system_prompt = llm_helpers.build_system_prompt(node)
+
+    assert system_prompt is not None
+    assert "Pick from success, failure using __choose_outcome__." in system_prompt
+    assert "- success: Works" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_uses_custom_missing_outcome_retry_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: List[Any] = []
+    first_response = _assistant_response("No outcome yet")
+    second_response = _assistant_response("Fixed answer\nOUTCOME: success")
+    stream_handles = [
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(index=0, delta="No outcome yet"),
+                connect.ResponseEndEvent(response=first_response),
+            ],
+            final_response=first_response,
+        ),
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(index=0, delta="Fixed answer\nOUTCOME: success"),
+                connect.ResponseEndEvent(response=second_response),
+            ],
+            final_response=second_response,
+        ),
+    ]
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: RecordingAsyncLLMClient(
+            stream_handles,
+            requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-custom-retry-instruction",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        outcomes=[
+            models.OutcomeSlot(name="success"),
+            models.OutcomeSlot(name="failure"),
+        ],
+        outcome_strategy=models.OutcomeStrategy.TAG,
+        outcome_retry_instruction="Retry with outcome from {outcome_list}.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input(
+        "node-custom-retry-instruction",
+        "Hi",
+    )
+    inp = ExecutorInput(execution=execution, run=run)
+
+    async for _ in executor.run(inp):
+        pass
+
+    assert any(
+        isinstance(message, connect.UserMessage)
+        and message.content == "Retry with outcome from success, failure."
+        for message in requests[1].messages
+    )
 
 
 @pytest.mark.asyncio

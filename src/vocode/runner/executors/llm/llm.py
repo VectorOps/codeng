@@ -39,6 +39,10 @@ class LLMStepState(BaseModel):
     reasoning_signature: Optional[str] = None
 
 
+class LLMExecutionState(BaseModel):
+    selected_outcome: Optional[str] = None
+
+
 @runner_base.ExecutorFactory.register("llm")
 class LLMExecutor(runner_base.BaseExecutor):
     async def init(self):
@@ -318,6 +322,47 @@ class LLMExecutor(runner_base.BaseExecutor):
             copied_protocol_state = dict(protocol_state)
         return copied_provider_meta, copied_protocol_state
 
+    def _get_execution_state(
+        self,
+        execution: state.NodeExecution,
+    ) -> LLMExecutionState:
+        existing_state = execution.state
+        if isinstance(existing_state, LLMExecutionState):
+            execution_state = existing_state
+        else:
+            execution_state = LLMExecutionState()
+        last_complete_step = next(
+            (step for step in execution.iter_steps_reversed() if step.is_complete),
+            None,
+        )
+        if (
+            last_complete_step is not None
+            and last_complete_step.type == state.StepType.INPUT_MESSAGE
+        ):
+            execution_state.selected_outcome = None
+        execution.state = execution_state
+        return execution_state
+
+    def _build_followup_assistant_message(
+        self,
+        assistant_text: str,
+        tool_calls: List[connect.ToolCallBlock],
+        provider_meta: Dict[str, Any],
+        protocol_state: Dict[str, Any],
+    ) -> Optional[connect.AssistantMessage]:
+        content: List[connect.AssistantContentBlock] = []
+        if assistant_text:
+            content.append(connect.TextBlock(text=assistant_text))
+        for tool_call in tool_calls:
+            content.append(tool_call)
+        if not content:
+            return None
+        return connect.AssistantMessage(
+            content=content,
+            provider_meta=provider_meta,
+            protocol_meta=protocol_state,
+        )
+
     def _format_connect_error_message(self, error: connect.ConnectError) -> str:
         error_info = error.error
         parts = [f"LLM error: {error_info.message}"]
@@ -362,6 +407,7 @@ class LLMExecutor(runner_base.BaseExecutor):
 
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
+        execution_state = self._get_execution_state(inp.execution)
         auth_error = await self._ensure_provider_authorization()
         if auth_error is not None:
             error_step = self.project.history.upsert_step(
@@ -454,338 +500,407 @@ class LLMExecutor(runner_base.BaseExecutor):
         )
 
         max_retries = 3
-        attempt = 0
-        assistant_partial = ""
-        final_response: Optional[connect.AssistantMessage] = None
-
         while True:
-            try:
-                assistant_partial = ""
-                final_response = None
-                request = connect.GenerateRequest(
-                    messages=connect_messages,
-                    system_prompt=system_prompt,
-                    tools=tools or [],
-                    tool_choice="auto" if tools else None,
-                    temperature=cfg.temperature,
-                    max_output_tokens=cfg.max_tokens,
-                    reasoning=(
-                        connect.ReasoningConfig(effort=cfg.reasoning_effort)
-                        if cfg.reasoning_effort is not None
-                        else None
-                    ),
-                )
-                options = connect.RequestOptions(
-                    provider_options=dict(cfg.extra or {}),
-                )
+            attempt = 0
+            assistant_partial = ""
+            final_response: Optional[connect.AssistantMessage] = None
 
-                loop = asyncio.get_running_loop()
-                start_deadline: Optional[float] = None
-                if cfg.start_timeout is not None:
-                    start_deadline = loop.time() + float(cfg.start_timeout)
-                response_deadline: Optional[float] = None
-                if cfg.response_timeout is not None:
-                    response_deadline = loop.time() + float(cfg.response_timeout)
-
-                async def _await_with_deadline(
-                    awaitable: Awaitable[Any], deadline: Optional[float]
-                ) -> Any:
-                    if deadline is None:
-                        return await awaitable
-                    remaining = deadline - loop.time()
-                    if remaining <= 0:
-                        raise asyncio.TimeoutError()
-                    return await asyncio.wait_for(awaitable, timeout=remaining)
-
-                has_visible_content = False
-
-                async with connect.AsyncLLMClient(
-                    credential_manager=self.project.credentials
-                ) as client:
-                    stream_handle = client.stream(
-                        cfg.model,
-                        request,
-                        options=options,
-                    )
-                    stream_iter = stream_handle.__aiter__()
-
-                    def _effective_deadline() -> Optional[float]:
-                        if has_visible_content:
-                            return response_deadline
-                        return _min_deadline(start_deadline, response_deadline)
-
-                    while True:
-                        try:
-                            event = await _await_with_deadline(
-                                stream_iter.__anext__(), _effective_deadline()
-                            )
-                        except StopAsyncIteration:
-                            break
-
-                        if event.type == "error":
-                            raise connect.exception_from_error_info(event.error)
-
-                        if event.type == "response_end":
-                            final_response = event.response
-                            break
-
-                        if event.type == "text_delta" and event.delta:
-                            if not has_visible_content:
-                                has_visible_content = True
-                            assistant_partial += event.delta
-                            interim_step = self._build_step_from_message(
-                                step,
-                                role=models.Role.ASSISTANT,
-                                step_type=state.StepType.OUTPUT_MESSAGE,
-                                text=assistant_partial,
-                            )
-                            step = interim_step
-                            yield interim_step
-                            continue
-
-                        if (
-                            event.type == "text_end"
-                            and event.text
-                            and not assistant_partial
-                        ):
-                            if not has_visible_content:
-                                has_visible_content = True
-                            assistant_partial = event.text
-                            interim_step = self._build_step_from_message(
-                                step,
-                                role=models.Role.ASSISTANT,
-                                step_type=state.StepType.OUTPUT_MESSAGE,
-                                text=assistant_partial,
-                            )
-                            step = interim_step
-                            yield interim_step
-                            continue
-
-                        if event.type in {
-                            "reasoning_delta",
-                            "reasoning_end",
-                            "tool_call_delta",
-                            "tool_call_end",
-                        }:
-                            has_visible_content = True
-
-                    if final_response is None:
-                        final_response = await _await_with_deadline(
-                            stream_handle.final_response(),
-                            response_deadline,
-                        )
-
-                break
-            except asyncio.TimeoutError as e:
-                logger.error("LLM timeout", err=e)
-                if attempt < max_retries:
-                    attempt += 1
-                    continue
-
-                error_step = self._build_step_from_message(
-                    step,
-                    role=models.Role.SYSTEM,
-                    step_type=state.StepType.REJECTION,
-                    text="LLM timeout",
-                    is_complete=True,
-                )
-                yield error_step
-                return
-            except connect.RateLimitError as e:
-                logger.warning("LLM rate limit retry", exc=e)
-                if attempt < max_retries:
-                    attempt += 1
-                    await asyncio.sleep(60)
-                    continue
-
-                error_step = self._build_step_from_message(
-                    step,
-                    role=models.Role.SYSTEM,
-                    step_type=state.StepType.REJECTION,
-                    text=f"LLM error: {e}",
-                    is_complete=True,
-                )
-                yield error_step
-                return
-            except connect.ConnectError as e:
-                if e.error.retryable and attempt < max_retries:
-                    attempt += 1
-                    await asyncio.sleep(1 * (2 ** (attempt - 1)))
-                    logger.warning(
-                        "LLM retry",
-                        attempt=attempt,
-                        max_retries=max_retries,
-                        status_code=e.error.status_code,
-                        err=str(e),
-                    )
-                    continue
-
-                rejection_text = self._format_connect_error_message(e)
-                logger.error(
-                    "LLM error",
-                    status_code=e.error.status_code,
-                    code=e.error.code,
-                    provider=e.error.provider,
-                    api_family=e.error.api_family,
-                    err=e,
-                )
-
-                error_step = self._build_step_from_message(
-                    step,
-                    role=models.Role.SYSTEM,
-                    step_type=state.StepType.REJECTION,
-                    text=rejection_text,
-                    is_complete=True,
-                )
-                yield error_step
-                return
-            except Exception as e:
-                logger.error("LLM error", err=e)
-
-                error_step = self._build_step_from_message(
-                    step,
-                    role=models.Role.SYSTEM,
-                    step_type=state.StepType.REJECTION,
-                    text=f"LLM error: {e}",
-                    is_complete=True,
-                )
-                yield error_step
-                return
-
-        if final_response is None:
-            raise RuntimeError("LLM response missing final response")
-
-        logger.debug("LLM response", response=final_response)
-
-        # Prefer the streamed text as the final assistant message,
-        # but capture the assembled content for comparison / fallback.
-        response_text = "".join(
-            block.text for block in final_response.content if block.type == "text"
-        )
-
-        # Debug comparison of streamed vs assembled text
-        if assistant_partial != response_text:
-            logger.info(
-                "LLM message text comparison",
-                streamed=assistant_partial,
-                assembled=response_text,
-            )
-
-        # Use streamed text as canonical; fall back to assembled if stream was empty
-        assistant_text = assistant_partial if assistant_partial else response_text
-
-        outcome_name: Optional[str] = None
-        tool_call_reqs: List[state.ToolCallReq] = []
-        tool_calls_data = [
-            block for block in final_response.content if block.type == "tool_call"
-        ]
-        response_provider_meta, response_protocol_state = self._copy_metadata(
-            final_response.provider_meta,
-            final_response.protocol_state,
-        )
-        step_state = LLMStepState(
-            provider_meta=response_provider_meta,
-            protocol_state=response_protocol_state,
-            reasoning_signature=next(
-                (
-                    block.signature
-                    for block in final_response.content
-                    if block.type == "reasoning" and block.signature
-                ),
-                None,
-            ),
-        )
-
-        if (
-            len(outcome_names) > 1
-            and cfg.outcome_strategy == models.OutcomeStrategy.TAG
-        ):
-            parsed_outcome = llm_helpers.parse_outcome_from_text(
-                assistant_text,
-                outcome_names,
-            )
-            if parsed_outcome:
-                outcome_name = parsed_outcome
-                assistant_text = llm_helpers.strip_outcome_line(assistant_text)
-
-        for tc in tool_calls_data:
-            tc_id = tc.id
-            tc_type = "function"
-            func_name = tc.name
-            arguments = dict(tc.arguments)
-            if (
-                len(outcome_names) > 1
-                and cfg.outcome_strategy == models.OutcomeStrategy.FUNCTION
-                and func_name == llm_helpers.CHOOSE_OUTCOME_TOOL_NAME
-            ):
-                cand = arguments.get("outcome")
-                if isinstance(cand, str) and cand in outcome_names:
-                    outcome_name = cand
-                continue
-
-            tool_spec = effective_specs.get(func_name)
-            tool_provider_meta, tool_protocol_state = self._copy_metadata(
-                tc.provider_meta,
-                tc.protocol_meta,
-            )
-
-            tool_call_reqs.append(
-                state.ToolCallReq(
-                    id=tc_id,
-                    type=tc_type,
-                    name=func_name,
-                    arguments=arguments,
-                    tool_spec=tool_spec,
-                    state=ToolCallProviderState(
-                        provider_meta=tool_provider_meta,
-                        protocol_state=tool_protocol_state,
-                        reasoning_signature=(
-                            tc.annotations.get("reasoning_signature")
-                            if isinstance(tc.annotations, dict)
+            while True:
+                try:
+                    assistant_partial = ""
+                    final_response = None
+                    request = connect.GenerateRequest(
+                        messages=connect_messages,
+                        system_prompt=system_prompt,
+                        tools=tools or [],
+                        tool_choice="auto" if tools else None,
+                        temperature=cfg.temperature,
+                        max_output_tokens=cfg.max_tokens,
+                        reasoning=(
+                            connect.ReasoningConfig(effort=cfg.reasoning_effort)
+                            if cfg.reasoning_effort is not None
                             else None
                         ),
-                    ),
-                )
+                    )
+                    options = connect.RequestOptions(
+                        provider_options=dict(cfg.extra or {}),
+                    )
+
+                    loop = asyncio.get_running_loop()
+                    start_deadline: Optional[float] = None
+                    if cfg.start_timeout is not None:
+                        start_deadline = loop.time() + float(cfg.start_timeout)
+                    response_deadline: Optional[float] = None
+                    if cfg.response_timeout is not None:
+                        response_deadline = loop.time() + float(cfg.response_timeout)
+
+                    async def _await_with_deadline(
+                        awaitable: Awaitable[Any], deadline: Optional[float]
+                    ) -> Any:
+                        if deadline is None:
+                            return await awaitable
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            raise asyncio.TimeoutError()
+                        return await asyncio.wait_for(awaitable, timeout=remaining)
+
+                    has_visible_content = False
+
+                    async with connect.AsyncLLMClient(
+                        credential_manager=self.project.credentials
+                    ) as client:
+                        stream_handle = client.stream(
+                            cfg.model,
+                            request,
+                            options=options,
+                        )
+                        stream_iter = stream_handle.__aiter__()
+
+                        def _effective_deadline() -> Optional[float]:
+                            if has_visible_content:
+                                return response_deadline
+                            return _min_deadline(start_deadline, response_deadline)
+
+                        while True:
+                            try:
+                                event = await _await_with_deadline(
+                                    stream_iter.__anext__(), _effective_deadline()
+                                )
+                            except StopAsyncIteration:
+                                break
+
+                            if event.type == "error":
+                                raise connect.exception_from_error_info(event.error)
+
+                            if event.type == "response_end":
+                                final_response = event.response
+                                break
+
+                            if event.type == "text_delta" and event.delta:
+                                if not has_visible_content:
+                                    has_visible_content = True
+                                assistant_partial += event.delta
+                                interim_step = self._build_step_from_message(
+                                    step,
+                                    role=models.Role.ASSISTANT,
+                                    step_type=state.StepType.OUTPUT_MESSAGE,
+                                    text=assistant_partial,
+                                )
+                                step = interim_step
+                                yield interim_step
+                                continue
+
+                            if (
+                                event.type == "text_end"
+                                and event.text
+                                and not assistant_partial
+                            ):
+                                if not has_visible_content:
+                                    has_visible_content = True
+                                assistant_partial = event.text
+                                interim_step = self._build_step_from_message(
+                                    step,
+                                    role=models.Role.ASSISTANT,
+                                    step_type=state.StepType.OUTPUT_MESSAGE,
+                                    text=assistant_partial,
+                                )
+                                step = interim_step
+                                yield interim_step
+                                continue
+
+                            if event.type in {
+                                "reasoning_delta",
+                                "reasoning_end",
+                                "tool_call_delta",
+                                "tool_call_end",
+                            }:
+                                has_visible_content = True
+
+                        if final_response is None:
+                            final_response = await _await_with_deadline(
+                                stream_handle.final_response(),
+                                response_deadline,
+                            )
+
+                    break
+                except asyncio.TimeoutError as e:
+                    logger.error("LLM timeout", err=e)
+                    if attempt < max_retries:
+                        attempt += 1
+                        continue
+
+                    error_step = self._build_step_from_message(
+                        step,
+                        role=models.Role.SYSTEM,
+                        step_type=state.StepType.REJECTION,
+                        text="LLM timeout",
+                        is_complete=True,
+                    )
+                    yield error_step
+                    return
+                except connect.RateLimitError as e:
+                    logger.warning("LLM rate limit retry", exc=e)
+                    if attempt < max_retries:
+                        attempt += 1
+                        await asyncio.sleep(60)
+                        continue
+
+                    error_step = self._build_step_from_message(
+                        step,
+                        role=models.Role.SYSTEM,
+                        step_type=state.StepType.REJECTION,
+                        text=f"LLM error: {e}",
+                        is_complete=True,
+                    )
+                    yield error_step
+                    return
+                except connect.ConnectError as e:
+                    if e.error.retryable and attempt < max_retries:
+                        attempt += 1
+                        await asyncio.sleep(1 * (2 ** (attempt - 1)))
+                        logger.warning(
+                            "LLM retry",
+                            attempt=attempt,
+                            max_retries=max_retries,
+                            status_code=e.error.status_code,
+                            err=str(e),
+                        )
+                        continue
+
+                    rejection_text = self._format_connect_error_message(e)
+                    logger.error(
+                        "LLM error",
+                        status_code=e.error.status_code,
+                        code=e.error.code,
+                        provider=e.error.provider,
+                        api_family=e.error.api_family,
+                        err=e,
+                    )
+
+                    error_step = self._build_step_from_message(
+                        step,
+                        role=models.Role.SYSTEM,
+                        step_type=state.StepType.REJECTION,
+                        text=rejection_text,
+                        is_complete=True,
+                    )
+                    yield error_step
+                    return
+                except Exception as e:
+                    logger.error("LLM error", err=e)
+
+                    error_step = self._build_step_from_message(
+                        step,
+                        role=models.Role.SYSTEM,
+                        step_type=state.StepType.REJECTION,
+                        text=f"LLM error: {e}",
+                        is_complete=True,
+                    )
+                    yield error_step
+                    return
+
+            if final_response is None:
+                raise RuntimeError("LLM response missing final response")
+
+            logger.debug("LLM response", response=final_response)
+
+            response_text = "".join(
+                block.text for block in final_response.content if block.type == "text"
             )
 
-        # Collect usage stats
-        usage_obj = final_response.usage
-        prompt_tokens = int(usage_obj.input_tokens or 0) + int(
-            usage_obj.cache_read_tokens or 0
-        )
-        completion_tokens = int(usage_obj.output_tokens or 0)
+            if assistant_partial != response_text:
+                logger.info(
+                    "LLM message text comparison",
+                    streamed=assistant_partial,
+                    assembled=response_text,
+                )
 
-        round_cost = 0.0
-        try:
-            model_spec = connect.default_model_registry.resolve(cfg.model)
-            cost_val = connect.estimate_cost(model_spec, usage_obj)
-            if cost_val is not None:
-                round_cost = float(cost_val.total_cost)
-        except Exception:
+            assistant_text = assistant_partial if assistant_partial else response_text
+            selected_outcome = execution_state.selected_outcome
+            tool_call_reqs: List[state.ToolCallReq] = []
+            tool_calls_data = [
+                block for block in final_response.content if block.type == "tool_call"
+            ]
+            response_provider_meta, response_protocol_state = self._copy_metadata(
+                final_response.provider_meta,
+                final_response.protocol_state,
+            )
+            step_state = LLMStepState(
+                provider_meta=response_provider_meta,
+                protocol_state=response_protocol_state,
+                reasoning_signature=next(
+                    (
+                        block.signature
+                        for block in final_response.content
+                        if block.type == "reasoning" and block.signature
+                    ),
+                    None,
+                ),
+            )
+
+            if (
+                len(outcome_names) > 1
+                and cfg.outcome_strategy == models.OutcomeStrategy.TAG
+            ):
+                parsed_outcome = llm_helpers.parse_outcome_from_text(
+                    assistant_text,
+                    outcome_names,
+                )
+                if parsed_outcome is not None:
+                    selected_outcome = parsed_outcome
+                    assistant_text = llm_helpers.strip_outcome_line(
+                        assistant_text,
+                        parsed_outcome,
+                    )
+
+            intercepted_tool_calls: List[connect.ToolCallBlock] = []
+            intercepted_tool_results: List[connect.ToolResultMessage] = []
+
+            for tc in tool_calls_data:
+                tc_id = tc.id
+                tc_type = "function"
+                func_name = tc.name
+                arguments = dict(tc.arguments)
+                if (
+                    len(outcome_names) > 1
+                    and func_name == llm_helpers.CHOOSE_OUTCOME_TOOL_NAME
+                ):
+                    intercepted_tool_calls.append(tc)
+                    candidate_outcome = arguments.get("outcome")
+                    accepted_outcome: Optional[str] = None
+                    if (
+                        isinstance(candidate_outcome, str)
+                        and candidate_outcome in outcome_names
+                    ):
+                        accepted_outcome = candidate_outcome
+                        selected_outcome = candidate_outcome
+                    intercepted_tool_results.append(
+                        connect.ToolResultMessage(
+                            tool_call_id=tc_id,
+                            tool_name=func_name,
+                            content=[
+                                connect.TextBlock(
+                                    text=llm_helpers.build_outcome_tool_result_text(
+                                        accepted_outcome,
+                                        outcome_names,
+                                    )
+                                )
+                            ],
+                        )
+                    )
+                    continue
+
+                tool_spec = effective_specs.get(func_name)
+                tool_provider_meta, tool_protocol_state = self._copy_metadata(
+                    tc.provider_meta,
+                    tc.protocol_meta,
+                )
+
+                tool_call_reqs.append(
+                    state.ToolCallReq(
+                        id=tc_id,
+                        type=tc_type,
+                        name=func_name,
+                        arguments=arguments,
+                        tool_spec=tool_spec,
+                        state=ToolCallProviderState(
+                            provider_meta=tool_provider_meta,
+                            protocol_state=tool_protocol_state,
+                            reasoning_signature=(
+                                tc.annotations.get("reasoning_signature")
+                                if isinstance(tc.annotations, dict)
+                                else None
+                            ),
+                        ),
+                    )
+                )
+
+            execution_state.selected_outcome = selected_outcome
+
+            usage_obj = final_response.usage
+            prompt_tokens = int(usage_obj.input_tokens or 0) + int(
+                usage_obj.cache_read_tokens or 0
+            )
+            completion_tokens = int(usage_obj.output_tokens or 0)
+
             round_cost = 0.0
+            try:
+                model_spec = connect.default_model_registry.resolve(cfg.model)
+                cost_val = connect.estimate_cost(model_spec, usage_obj)
+                if cost_val is not None:
+                    round_cost = float(cost_val.total_cost)
+            except Exception:
+                round_cost = 0.0
 
-        model_input_token_limit = llm_helpers.resolve_model_token_limit(cfg)
+            model_input_token_limit = llm_helpers.resolve_model_token_limit(cfg)
 
-        usage_stats = state.LLMUsageStats(
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            cost_dollars=round_cost,
-            model_name=cfg.model,
-            input_token_limit=model_input_token_limit,
-            output_token_limit=cfg.max_tokens,
-        )
+            usage_stats = state.LLMUsageStats(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_dollars=round_cost,
+                model_name=cfg.model,
+                input_token_limit=model_input_token_limit,
+                output_token_limit=cfg.max_tokens,
+            )
 
-        final_outcome_name = outcome_name if len(outcome_names) > 1 else None
+            final_outcome_name = (
+                execution_state.selected_outcome if len(outcome_names) > 1 else None
+            )
 
-        message_step = self._build_step_from_message(
-            step,
-            role=models.Role.ASSISTANT,
-            step_type=state.StepType.OUTPUT_MESSAGE,
-            text=assistant_text,
-            usage=usage_stats,
-            tool_call_requests=tool_call_reqs or None,
-            is_complete=True,
-            outcome_name=final_outcome_name,
-            step_state=step_state,
-        )
-        yield message_step
+            if tool_call_reqs:
+                message_step = self._build_step_from_message(
+                    step,
+                    role=models.Role.ASSISTANT,
+                    step_type=state.StepType.OUTPUT_MESSAGE,
+                    text=assistant_text,
+                    usage=usage_stats,
+                    tool_call_requests=tool_call_reqs or None,
+                    is_complete=True,
+                    outcome_name=final_outcome_name,
+                    step_state=step_state,
+                )
+                yield message_step
+                return
+
+            if len(outcome_names) > 1 and final_outcome_name is None:
+                followup_message = self._build_followup_assistant_message(
+                    assistant_text,
+                    intercepted_tool_calls,
+                    response_provider_meta,
+                    response_protocol_state,
+                )
+                if followup_message is not None:
+                    connect_messages.append(followup_message)
+                connect_messages.extend(intercepted_tool_results)
+                connect_messages.append(
+                    connect.UserMessage(
+                        content=llm_helpers.build_missing_outcome_retry_instruction(cfg)
+                    )
+                )
+                continue
+
+            if intercepted_tool_calls and not assistant_text:
+                followup_message = self._build_followup_assistant_message(
+                    assistant_text,
+                    intercepted_tool_calls,
+                    response_provider_meta,
+                    response_protocol_state,
+                )
+                if followup_message is not None:
+                    connect_messages.append(followup_message)
+                connect_messages.extend(intercepted_tool_results)
+                continue
+
+            message_step = self._build_step_from_message(
+                step,
+                role=models.Role.ASSISTANT,
+                step_type=state.StepType.OUTPUT_MESSAGE,
+                text=assistant_text,
+                usage=usage_stats,
+                tool_call_requests=None,
+                is_complete=True,
+                outcome_name=final_outcome_name,
+                step_state=step_state,
+            )
+            yield message_step
+            return

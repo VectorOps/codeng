@@ -21,7 +21,23 @@ class LLMNode(models.Node):
     )
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
-    outcome_strategy: models.OutcomeStrategy = Field(default=models.OutcomeStrategy.TAG)
+    outcome_strategy: models.OutcomeStrategy = Field(
+        default=models.OutcomeStrategy.FUNCTION
+    )
+    outcome_selection_instruction: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional override for multi-outcome selection instructions appended to the system prompt. "
+            "Supports format keys: {outcome_names}, {outcome_list}, {outcome_desc_bullets}, {choose_outcome_tool_name}."
+        ),
+    )
+    outcome_retry_instruction: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional override for the follow-up prompt used when the model fails to provide an outcome. "
+            "Supports format keys: {outcome_names}, {outcome_list}, {outcome_desc_bullets}, {choose_outcome_tool_name}."
+        ),
+    )
     # Structured tool specs with short-hand coercion from strings
     tools: List[settings.ToolSpec] = Field(
         default_factory=list,

@@ -24,13 +24,13 @@ def build_system_prompt(cfg: LLMNode) -> Optional[str]:
     if cfg.system_append:
         system_parts.append(cfg.system_append)
     outcome_names = get_outcome_names(cfg)
-    if len(outcome_names) > 1 and cfg.outcome_strategy == "tag":
+    if len(outcome_names) > 1:
         outcome_desc_bullets = get_outcome_desc_bullets(cfg)
-        tag_instruction = build_tag_system_instruction(
-            outcome_names,
+        outcome_instruction = build_outcome_system_instruction(
+            cfg,
             outcome_desc_bullets,
         )
-        system_parts.append(tag_instruction)
+        system_parts.append(outcome_instruction)
     system_prompt = "\n\n".join(part for part in system_parts if part).strip()
     return system_prompt or None
 
@@ -46,10 +46,18 @@ def parse_outcome_from_text(text: str, valid_outcomes: List[str]) -> Optional[st
     return None
 
 
-def strip_outcome_line(text: str) -> str:
-    return "\n".join(
-        [ln for ln in text.splitlines() if not OUTCOME_LINE_PREFIX_RE.match(ln.strip())]
-    ).rstrip()
+def strip_outcome_line(text: str, outcome_name: str) -> str:
+    lines = text.splitlines()
+    target_line = f"OUTCOME: {outcome_name}"
+    remove_index: Optional[int] = None
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].strip() == target_line:
+            remove_index = index
+            break
+    if remove_index is None:
+        return text.rstrip()
+    updated_lines = [line for index, line in enumerate(lines) if index != remove_index]
+    return "\n".join(updated_lines).rstrip()
 
 
 def build_choose_outcome_tool(
@@ -83,12 +91,87 @@ def build_tag_system_instruction(
     outcome_desc_bullets: str,
 ) -> str:
     return (
-        "Consider the available outcomes and pick the best fit based on the conversation:\n"
+        "You must choose exactly one outcome before finishing. Consider the available outcomes and pick the best fit based on the conversation:\n"
         f"{outcome_desc_bullets}\n\n"
         "After producing your final answer, append a last line exactly as:\n"
         f"OUTCOME: <one of {outcomes}>\n"
-        "Only output the outcome name on that line and nothing else."
+        "Only output the outcome name on that line and nothing else. Do not finish without including that line."
     )
+
+
+def build_function_system_instruction(
+    outcomes: List[str],
+    outcome_desc_bullets: str,
+) -> str:
+    return (
+        "You must choose exactly one outcome before finishing. Consider the available outcomes and pick the best fit based on the conversation:\n"
+        f"{outcome_desc_bullets}\n\n"
+        f"Use the tool {CHOOSE_OUTCOME_TOOL_NAME} to select one of {outcomes}. "
+        "If you need other tools, use them first, then call the outcome tool before your final response. "
+        "Do not finish without selecting an outcome."
+    )
+
+
+def _format_outcome_template(
+    template: str,
+    outcome_names: List[str],
+    outcome_desc_bullets: str,
+) -> str:
+    format_values = {
+        "outcome_names": outcome_names,
+        "outcome_list": ", ".join(outcome_names),
+        "outcome_desc_bullets": outcome_desc_bullets,
+        "choose_outcome_tool_name": CHOOSE_OUTCOME_TOOL_NAME,
+    }
+    with contextlib.suppress(Exception):
+        return template.format(**format_values).strip()
+    return template.strip()
+
+
+def build_outcome_system_instruction(
+    cfg: LLMNode,
+    outcome_desc_bullets: str,
+) -> str:
+    outcome_names = get_outcome_names(cfg)
+    if cfg.outcome_selection_instruction:
+        return _format_outcome_template(
+            cfg.outcome_selection_instruction,
+            outcome_names,
+            outcome_desc_bullets,
+        )
+    if cfg.outcome_strategy == "tag":
+        return build_tag_system_instruction(outcome_names, outcome_desc_bullets)
+    return build_function_system_instruction(outcome_names, outcome_desc_bullets)
+
+
+def build_missing_outcome_retry_instruction(cfg: LLMNode) -> str:
+    outcome_names = get_outcome_names(cfg)
+    outcome_desc_bullets = get_outcome_desc_bullets(cfg)
+    if cfg.outcome_retry_instruction:
+        return _format_outcome_template(
+            cfg.outcome_retry_instruction,
+            outcome_names,
+            outcome_desc_bullets,
+        )
+    if cfg.outcome_strategy == "tag":
+        return (
+            "You must provide the final response again AND choose an outcome. "
+            f"Choose exactly one of: {', '.join(outcome_names)}. "
+            "Append a final line exactly as OUTCOME: <outcome_name>."
+        )
+    return (
+        "You must provide the final response again AND choose an outcome. "
+        f"Choose exactly one of: {', '.join(outcome_names)} by calling the tool {CHOOSE_OUTCOME_TOOL_NAME}."
+    )
+
+
+def build_outcome_tool_result_text(
+    outcome_name: Optional[str],
+    valid_outcomes: List[str],
+) -> str:
+    if outcome_name is not None and outcome_name in valid_outcomes:
+        return "outcome accepted"
+    return "invalid outcome, possible options: " + ", ".join(valid_outcomes)
 
 
 def get_outcome_names(cfg: LLMNode) -> List[str]:
