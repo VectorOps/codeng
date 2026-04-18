@@ -473,6 +473,7 @@ class Runner:
         self,
         req: RunEventReq,
         resp: Optional[RunEventResp],
+        only_new: bool = False,
     ) -> Optional[state.Step]:
         if resp is not None and resp.resp_type != RunEventResponseType.NOOP:
             return self._handle_run_event_response(req, resp)
@@ -481,7 +482,9 @@ class Runner:
         if step is None:
             return None
 
-        message = await self.project.input_manager.wait_for_input()
+        message = await self.project.input_manager.wait_for_input(
+            only_new=only_new,
+        )
         managed_resp: Optional[RunEventResp] = None
 
         if step.type == state.StepType.PROMPT:
@@ -582,7 +585,10 @@ class Runner:
                     step=persisted_prompt,
                 )
                 resp = yield req
-                response_step = await self._wait_for_managed_input_response(req, resp)
+                response_step = await self._wait_for_managed_input_response(
+                    req,
+                    resp,
+                )
                 response_event = self._build_response_event(response_step)
                 if response_event is not None:
                     _ = yield response_event
@@ -813,7 +819,9 @@ class Runner:
                                 break
 
                             response_step = await self._wait_for_managed_input_response(
-                                req_event, resp_event
+                                req_event,
+                                resp_event,
+                                only_new=True,
                             )
                             response_event = self._build_response_event(response_step)
                             if response_event is not None:
@@ -1002,7 +1010,9 @@ class Runner:
                         )
                         resp_event = yield req_event
                         response_step = await self._wait_for_managed_input_response(
-                            req_event, resp_event
+                            req_event,
+                            resp_event,
+                            only_new=True,
                         )
                         response_event = self._build_response_event(response_step)
                         if response_event is not None:

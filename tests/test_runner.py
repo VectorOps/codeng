@@ -731,7 +731,7 @@ async def test_runner_execution_flow():
 
     events = await drive_runner(agen, handler, ignore_non_step=True)
 
-    assert runner.status == state.RunnerStatus.STOPPED
+    assert runner.status == state.RunnerStatus.FINISHED
 
     node_execs_by_name: Dict[str, state.NodeExecution] = {}
     for ne in runner.execution.node_executions.values():
@@ -2768,6 +2768,172 @@ async def test_runner_initial_input_uses_queued_input_manager_message() -> None:
         and event.step.type == state.StepType.INPUT_MESSAGE
         and event.step.message is not None
         and event.step.message.text == "queued-input"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_confirmation_wait_uses_only_new_input() -> None:
+    node = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.MANUAL,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    project = StubProject()
+    runner = Runner(
+        workflow=DummyWorkflow(name="wf-confirm-only-new", graph=graph),
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    accepted = await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-input"),
+        queue=True,
+    )
+    assert accepted is True
+
+    original_wait_for_input = project.input_manager.wait_for_input
+    wait_flags: list[bool] = []
+
+    async def wait_for_input(only_new: bool = False) -> state.Message:
+        wait_flags.append(only_new)
+        return await original_wait_for_input(only_new=only_new)
+
+    project.input_manager.wait_for_input = wait_for_input
+
+    agen = runner.run()
+    publish_task: asyncio.Task[None] | None = None
+    events: list[RunEvent] = []
+    send: RunEventResp | None = None
+
+    async def publish_input() -> None:
+        accepted_local = await project.input_manager.publish(
+            state.Message(role=models.Role.USER, text=""),
+            queue=False,
+        )
+        assert accepted_local is True
+
+    while True:
+        try:
+            if send is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(send)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        if (
+            event.step is not None
+            and event.step.type == state.StepType.PROMPT_CONFIRM
+            and publish_task is None
+        ):
+            publish_task = asyncio.create_task(publish_input())
+        send = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    if publish_task is not None:
+        await publish_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert True in wait_flags
+    assert any(
+        event.step is not None and event.step.type == state.StepType.APPROVAL
+        for event in events
+    )
+    assert not any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "queued-input"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_tool_confirmation_wait_uses_only_new_input() -> None:
+    node = models.Node(
+        name="tool-node",
+        type="tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    project = StubProject()
+    runner = Runner(
+        workflow=DummyWorkflow(name="wf-tool-confirm-only-new", graph=graph),
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    accepted = await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-rejection"),
+        queue=True,
+    )
+    assert accepted is True
+
+    original_wait_for_input = project.input_manager.wait_for_input
+    wait_flags: list[bool] = []
+
+    async def wait_for_input(only_new: bool = False) -> state.Message:
+        wait_flags.append(only_new)
+        return await original_wait_for_input(only_new=only_new)
+
+    project.input_manager.wait_for_input = wait_for_input
+
+    agen = runner.run()
+    publish_task: asyncio.Task[None] | None = None
+    events: list[RunEvent] = []
+    send: RunEventResp | None = None
+
+    async def publish_input() -> None:
+        accepted_local = await project.input_manager.publish(
+            state.Message(role=models.Role.USER, text=""),
+            queue=False,
+        )
+        assert accepted_local is True
+
+    while True:
+        try:
+            if send is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(send)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        if (
+            event.step is not None
+            and event.step.type == state.StepType.TOOL_REQUEST
+            and event.step.message is not None
+            and event.step.message.tool_call_requests
+            and publish_task is None
+        ):
+            publish_task = asyncio.create_task(publish_input())
+        send = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    if publish_task is not None:
+        await publish_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert True in wait_flags
+    assert not any(
+        event.step is not None
+        and event.step.type == state.StepType.REJECTION
+        and event.step.message is not None
+        and event.step.message.text == "queued-rejection"
         for event in events
     )
 

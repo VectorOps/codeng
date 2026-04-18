@@ -361,11 +361,17 @@ def test_build_connect_messages_uses_active_history_view_after_user_input_edit()
 
     _, messages = executor.build_connect_messages(inp)
 
-    assert len(messages) == 2
-    assert isinstance(messages[0], connect.AssistantMessage)
-    assert messages[0].content[0].text == "prompt"
-    assert isinstance(messages[1], connect.UserMessage)
-    assert messages[1].content == "new user input"
+    assert len(messages) == 5
+    assert isinstance(messages[0], connect.UserMessage)
+    assert messages[0].content == "initial input"
+    assert isinstance(messages[1], connect.AssistantMessage)
+    assert messages[1].content[0].text == "prompt"
+    assert isinstance(messages[2], connect.UserMessage)
+    assert messages[2].content == "old user input"
+    assert isinstance(messages[3], connect.AssistantMessage)
+    assert messages[3].content[0].text == "old output"
+    assert isinstance(messages[4], connect.UserMessage)
+    assert messages[4].content == "new user input"
 
 
 def test_build_step_from_message_reuses_existing_message_id_for_updates() -> None:
@@ -475,10 +481,11 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     async for step in executor.run(inp):
         steps.append(step)
 
-    assert len(steps) == 3
-    assert steps[0].message_id is not None
-    assert steps[1].message_id == steps[0].message_id
-    assert steps[2].message_id == steps[0].message_id
+    assert len(steps) == 4
+    assert steps[0].message_id is None
+    assert steps[1].message_id is not None
+    assert steps[2].message_id == steps[1].message_id
+    assert steps[3].message_id == steps[1].message_id
     assert len(run.messages_by_id) == 2
-    message = run.get_message(steps[0].message_id)
+    message = run.get_message(steps[1].message_id)
     assert message.text == "Why do"

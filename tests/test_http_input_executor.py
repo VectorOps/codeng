@@ -312,6 +312,89 @@ async def test_http_input_executor_consumes_queued_input_before_waiting(
 
 
 @pytest.mark.asyncio
+async def test_http_input_executor_only_new_input_ignores_queued_messages(
+    tmp_path,
+) -> None:
+    settings = vocode_settings.Settings(
+        internal_http=vocode_settings.InternalHTTPSettings(host="127.0.0.1", port=0)
+    )
+    http_server.configure_internal_http(settings.internal_http)  # type: ignore[arg-type]
+
+    project = StubProject(settings=settings)
+
+    node = HTTPInputNode(
+        name="http-input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        path="/http-input-test-only-new",
+        message="Waiting for external input",
+        only_new_input=True,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+
+    class Workflow:
+        def __init__(self) -> None:
+            self.name = "wf-http-input-only-new"
+            self.graph = graph
+            self.need_input = False
+            self.need_input_prompt = None
+
+    runner = Runner(
+        workflow=Workflow(),
+        project=project,
+        initial_message=None,
+    )
+
+    accepted = await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-http-input"),
+        queue=True,
+    )
+    assert accepted is True
+
+    agen = runner.run()
+
+    async def send_request() -> None:
+        await asyncio.sleep(0.05)
+        while not http_server.is_running():
+            await asyncio.sleep(0.01)
+        srv = http_server.get_internal_http_server()
+        runner_http = srv._runner
+        assert runner_http is not None
+        sites = list(runner_http.sites)
+        assert sites
+        site = sites[0]
+        sockets = list(site._server.sockets) if site._server is not None else []
+        assert sockets
+        host, port = sockets[0].getsockname()[:2]
+        async with ClientSession() as session:
+            async with session.post(
+                f"http://{host}:{port}{node.path}",
+                json={"text": "fresh-http-input"},
+            ) as resp:
+                assert resp.status == 200
+
+    sender_task = asyncio.create_task(send_request())
+    events = await _drive_runner(agen)
+    await sender_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "```\nfresh-http-input\n```"
+        for event in events
+    )
+    assert not any(
+        event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "queued-http-input"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_http_input_executor_stop_resets_queued_input(tmp_path) -> None:
     settings = vocode_settings.Settings(
         internal_http=vocode_settings.InternalHTTPSettings(host="127.0.0.1", port=0)

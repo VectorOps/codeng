@@ -4,6 +4,7 @@ import pytest
 
 from vocode import models, state
 from vocode.history.manager import HistoryManager
+from vocode.input_manager import InputManager
 from vocode.manager.base import BaseManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.project import ProjectState
@@ -20,6 +21,7 @@ class NestedWorkflowTestProject:
         self.tools: dict[str, tools_base.BaseTool] = {}
         self.current_workflow: str | None = None
         self.history = HistoryManager()
+        self.input_manager = InputManager()
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
         self.project_state = ProjectState()
 
@@ -27,6 +29,7 @@ class NestedWorkflowTestProject:
         return None
 
     async def shutdown(self) -> None:
+        await self.input_manager.reset_all()
         return None
 
     def add_llm_usage(
