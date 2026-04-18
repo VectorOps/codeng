@@ -99,7 +99,6 @@ class InputManager:
 
     async def reset(self) -> None:
         async with self._lock:
-            self._state.queued_messages.clear()
             for waiter in self._state.waiters:
                 if waiter.done():
                     continue
@@ -107,4 +106,10 @@ class InputManager:
             self._state.waiters.clear()
 
     async def reset_all(self) -> None:
-        await self.reset()
+        async with self._lock:
+            self._state.queued_messages.clear()
+            for waiter in self._state.waiters:
+                if waiter.done():
+                    continue
+                waiter.cancel()
+            self._state.waiters.clear()

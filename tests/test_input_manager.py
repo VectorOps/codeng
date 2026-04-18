@@ -122,9 +122,15 @@ async def test_input_manager_cleans_up_canceled_waiter() -> None:
 
 
 @pytest.mark.asyncio
-async def test_input_manager_reset_clears_queue_and_cancels_waiter() -> None:
+async def test_input_manager_reset_preserves_queue_and_cancels_waiter() -> None:
     manager = InputManager()
-    waiter = asyncio.create_task(manager.wait_for_input())
+    accepted = await manager.publish(
+        state.Message(role=models.Role.USER, text="queued"),
+        queue=True,
+    )
+    assert accepted is True
+
+    waiter = asyncio.create_task(manager.wait_for_input(only_new=True))
     await asyncio.sleep(0)
 
     await manager.reset()
@@ -132,13 +138,36 @@ async def test_input_manager_reset_clears_queue_and_cancels_waiter() -> None:
     with pytest.raises(asyncio.CancelledError):
         await waiter
 
+    snapshot = await manager.snapshot()
+    assert [message.text for message in snapshot.queued_messages] == ["queued"]
+
+    accepted_after_reset = await manager.publish(
+        state.Message(role=models.Role.USER, text="hello"),
+        queue=False,
+    )
+
+    assert accepted_after_reset is False
+
+
+@pytest.mark.asyncio
+async def test_input_manager_reset_all_clears_queue_and_cancels_waiter() -> None:
+    manager = InputManager()
     accepted = await manager.publish(
         state.Message(role=models.Role.USER, text="queued"),
         queue=True,
     )
     assert accepted is True
 
-    await manager.reset()
+    waiter = asyncio.create_task(manager.wait_for_input(only_new=True))
+    await asyncio.sleep(0)
+
+    await manager.reset_all()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    snapshot = await manager.snapshot()
+    assert list(snapshot.queued_messages) == []
 
     accepted_after_reset = await manager.publish(
         state.Message(role=models.Role.USER, text="hello"),
