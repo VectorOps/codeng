@@ -13,7 +13,7 @@ dependencies = [
     "gitpython==3.1.46",
     "structlog==25.5.0",
     "json5==0.13.0",
-    "knowlt @ git+https://github.com/vectorops/knowlt.git@11b72cea2681aa17da06a550992a0c7fb0bf3c13",
+    "knowlt @ git+https://github.com/vectorops/knowlt.git@d685baf585e7b8e1ad47c1758db78b512b134357",
     "rich==14.3.3",
     "pyfiglet==1.0.4",
     "aiohttp==3.13.5",
