@@ -61,6 +61,12 @@ class MCPService:
             return {}
         return dict(cached)
 
+    def list_tool_cache(self) -> Dict[str, Dict[str, mcp_models.MCPToolDescriptor]]:
+        out: Dict[str, Dict[str, mcp_models.MCPToolDescriptor]] = {}
+        for source_name, descriptors in self._tool_cache.items():
+            out[source_name] = dict(descriptors)
+        return out
+
     def cache_tool_descriptors(
         self,
         source_name: str,
@@ -85,6 +91,17 @@ class MCPService:
             raise MCPServiceError(f"no active session for mcp source: {source_name}")
         payloads = await session.list_all_tools()
         return self.cache_tool_descriptors(source_name, payloads)
+
+    async def call_tool(
+        self,
+        source_name: str,
+        tool_name: str,
+        arguments: Optional[Dict[str, object]] = None,
+    ) -> Dict[str, object]:
+        session = self._sessions.get(source_name)
+        if session is None:
+            raise MCPServiceError(f"no active session for mcp source: {source_name}")
+        return await session.call_tool(tool_name, arguments or {})
 
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
         existing = self._sessions.get(source_name)

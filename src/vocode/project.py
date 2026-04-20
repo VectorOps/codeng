@@ -24,6 +24,7 @@ from .connect_auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 from vocode.mcp.service import MCPService
+from vocode.tools.mcp_tool import MCPToolAdapter
 
 
 class Project:
@@ -121,6 +122,18 @@ class Project:
             for t in self.know.pm.get_enabled_tools():
                 if t.tool_name not in disabled_tool_names:
                     self.tools[t.tool_name] = convert_know_tool(self, t)
+
+        if self.mcp is not None:
+            for source_name, descriptors in self.mcp.list_tool_cache().items():
+                for descriptor in descriptors.values():
+                    internal_name = f"mcp__{source_name}__{descriptor.tool_name}"
+                    if internal_name in disabled_tool_names:
+                        continue
+                    self.tools[internal_name] = MCPToolAdapter(
+                        self,
+                        descriptor,
+                        internal_name,
+                    )
 
     # LLM usage totals
     def add_llm_usage(
