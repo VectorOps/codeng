@@ -24,6 +24,7 @@ from .connect_auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 from vocode.mcp.service import MCPService
+from vocode.mcp import tool_resolution
 from vocode.tools.mcp_tool import MCPToolAdapter
 
 
@@ -159,22 +160,11 @@ class Project:
         workflow = self.settings.workflows.get(self.current_workflow)
         if workflow is None or workflow.mcp is None:
             return False
-        workflow_mcp = workflow.mcp
-
-        for selector in workflow_mcp.disabled_tools:
-            if selector.source != source_name:
-                continue
-            if selector.tool == "*" or selector.tool == tool_name:
-                return False
-
-        if not workflow_mcp.tools:
-            return False
-        for selector in workflow_mcp.tools:
-            if selector.source != source_name:
-                continue
-            if selector.tool == "*" or selector.tool == tool_name:
-                return True
-        return False
+        return tool_resolution.is_workflow_tool_enabled(
+            workflow.mcp,
+            source_name,
+            tool_name,
+        )
 
     # LLM usage totals
     def add_llm_usage(
@@ -190,16 +180,28 @@ class Project:
         self.current_workflow = workflow_name
         if self.mcp is None:
             return
-        await self.mcp.start_workflow(workflow_name)
-        for source_name in self.mcp.list_sessions().keys():
+        workflow = None
+        if self.settings is not None:
+            workflow = self.settings.workflows.get(workflow_name)
+        change = await self.mcp.start_workflow(workflow_name, workflow)
+        for source_name in change.started_sources:
             await self.mcp.refresh_tools(source_name)
-        self.refresh_tools_from_registry()
+        if change.started_sources or change.stopped_sources:
+            self.refresh_tools_from_registry()
 
-    async def on_workflow_finished(self, workflow_name: str) -> None:
+    async def on_workflow_finished(
+        self,
+        workflow_name: str,
+        keep_mcp_sessions: bool = False,
+    ) -> None:
         if self.mcp is None:
             return
-        await self.mcp.finish_workflow(workflow_name)
-        self.refresh_tools_from_registry()
+        change = await self.mcp.finish_workflow(
+            workflow_name,
+            keep_mcp_sessions,
+        )
+        if change.started_sources or change.stopped_sources:
+            self.refresh_tools_from_registry()
 
     # Lifecycle management
     async def start(self) -> None:

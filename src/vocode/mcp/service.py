@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 from vocode import settings as vocode_settings
@@ -7,11 +8,18 @@ from vocode.mcp import client as mcp_client
 from vocode.mcp import converters as mcp_converters
 from vocode.mcp import models as mcp_models
 from vocode.mcp import registry as mcp_registry
+from vocode.mcp import tool_resolution
 from vocode.mcp import transports as mcp_transports
 
 
 class MCPServiceError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class MCPWorkflowSessionChange:
+    started_sources: list[str]
+    stopped_sources: list[str]
 
 
 class MCPService:
@@ -133,25 +141,46 @@ class MCPService:
         self._sessions[source_name] = session
         return session
 
-    async def start_workflow(self, workflow_name: str) -> None:
+    async def start_workflow(
+        self,
+        workflow_name: str,
+        workflow: Optional[vocode_settings.WorkflowConfig] = None,
+    ) -> MCPWorkflowSessionChange:
         if self._settings is None or not self._settings.enabled:
-            return
-        for name, source in self._settings.sources.items():
-            if source.scope.value != "workflow":
+            return MCPWorkflowSessionChange([], [])
+        desired_names = self._resolve_workflow_source_names(workflow)
+        current_names = self._list_workflow_session_names()
+        started_sources: list[str] = []
+        stopped_sources: list[str] = []
+        for name in current_names:
+            if name in desired_names:
+                continue
+            await self.close_session(name)
+            stopped_sources.append(name)
+        for name in desired_names:
+            if name in current_names:
                 continue
             await self.start_session(name)
+            started_sources.append(name)
+        return MCPWorkflowSessionChange(
+            started_sources=started_sources,
+            stopped_sources=stopped_sources,
+        )
 
-    async def finish_workflow(self, workflow_name: str) -> None:
+    async def finish_workflow(
+        self,
+        workflow_name: str,
+        keep_sessions: bool = False,
+    ) -> MCPWorkflowSessionChange:
         if self._settings is None or not self._settings.enabled:
-            return
-        names_to_close: list[str] = []
-        for name, source in self._settings.sources.items():
-            if source.scope.value != "workflow":
-                continue
-            if name in self._sessions:
-                names_to_close.append(name)
-        for name in names_to_close:
+            return MCPWorkflowSessionChange([], [])
+        if keep_sessions:
+            return MCPWorkflowSessionChange([], [])
+        stopped_sources: list[str] = []
+        for name in self._list_workflow_session_names():
             await self.close_session(name)
+            stopped_sources.append(name)
+        return MCPWorkflowSessionChange([], stopped_sources)
 
     async def close_session(self, source_name: str) -> None:
         session = self._sessions.pop(source_name, None)
@@ -164,3 +193,26 @@ class MCPService:
         names = list(self._sessions.keys())
         for name in names:
             await self.close_session(name)
+
+    def _list_workflow_session_names(self) -> list[str]:
+        names: list[str] = []
+        for name, session in self._sessions.items():
+            if session.source.scope != "workflow":
+                continue
+            names.append(name)
+        return names
+
+    def _resolve_workflow_source_names(
+        self,
+        workflow: Optional[vocode_settings.WorkflowConfig],
+    ) -> list[str]:
+        if self._settings is None:
+            return []
+        if workflow is None:
+            names: list[str] = []
+            for name, source in self._settings.sources.items():
+                if source.scope.value != "workflow":
+                    continue
+                names.append(name)
+            return names
+        return tool_resolution.resolve_workflow_source_names(self._settings, workflow)

@@ -3063,6 +3063,72 @@ async def test_runner_initializes_and_finishes_workflow_scoped_mcp_sessions() ->
 
 
 @pytest.mark.asyncio
+async def test_runner_stop_and_resume_reuses_workflow_scoped_mcp_session() -> None:
+    settings = vocode_settings.Settings(
+        workflows={
+            "wf-runner-mcp": vocode_settings.WorkflowConfig(
+                mcp=vocode_settings.MCPWorkflowSettings(
+                    tools=[vocode_settings.MCPToolSelector(source="wf_local", tool="*")]
+                )
+            )
+        },
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "wf_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                )
+            }
+        ),
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp)
+
+    node = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-runner-mcp", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(role=models.Role.USER, text="start"),
+    )
+
+    agen = runner.run()
+    while True:
+        event = await agen.__anext__()
+        if event.step is not None:
+            break
+
+    session_before_stop = project.mcp.get_session("wf_local")
+    assert session_before_stop is not None
+
+    stop_event = await agen.athrow(RunnerStopped())
+
+    assert stop_event.stats is not None
+    assert stop_event.stats.status == state.RunnerStatus.STOPPED
+    assert project.mcp.get_session("wf_local") is session_before_stop
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert project.mcp.get_session("wf_local") is None
+
+
+@pytest.mark.asyncio
 async def test_runner_refreshes_mcp_tools_once_when_workflow_starts() -> None:
     settings = vocode_settings.Settings(
         workflows={

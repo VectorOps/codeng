@@ -13,6 +13,9 @@ from vocode.settings import MCPRootEntry
 from vocode.settings import MCPRootSettings
 from vocode.settings import MCPSettings
 from vocode.settings import MCPStdioSourceSettings
+from vocode.settings import MCPToolSelector
+from vocode.settings import MCPWorkflowSettings
+from vocode.settings import WorkflowConfig
 
 
 _SERVICE_HANDSHAKE_SERVER = """
@@ -163,6 +166,59 @@ async def test_service_start_and_finish_workflow_manage_workflow_scoped_sessions
 
     await service.finish_workflow("wf")
 
+    assert service.list_sessions() == {}
+
+
+@pytest.mark.asyncio
+async def test_service_reconciles_workflow_scoped_sessions_differentially() -> None:
+    settings = MCPSettings(
+        sources={
+            "local_a": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_HANDSHAKE_SERVER],
+            ),
+            "local_b": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_HANDSHAKE_SERVER],
+            ),
+        }
+    )
+    service = MCPService(settings)
+    workflow_a = WorkflowConfig(
+        mcp=MCPWorkflowSettings(
+            tools=[MCPToolSelector(source="local_a", tool="*")],
+        )
+    )
+    workflow_b = WorkflowConfig(
+        mcp=MCPWorkflowSettings(
+            tools=[MCPToolSelector(source="local_b", tool="*")],
+        )
+    )
+
+    change_a = await service.start_workflow("wf-a", workflow_a)
+
+    assert change_a.started_sources == ["local_a"]
+    assert change_a.stopped_sources == []
+    session_a = service.get_session("local_a")
+    assert session_a is not None
+
+    paused = await service.finish_workflow("wf-a", True)
+
+    assert paused.started_sources == []
+    assert paused.stopped_sources == []
+    assert service.get_session("local_a") is session_a
+
+    change_b = await service.start_workflow("wf-b", workflow_b)
+
+    assert change_b.started_sources == ["local_b"]
+    assert change_b.stopped_sources == ["local_a"]
+    assert service.get_session("local_a") is None
+    assert service.get_session("local_b") is not None
+
+    finished = await service.finish_workflow("wf-b")
+
+    assert finished.started_sources == []
+    assert finished.stopped_sources == ["local_b"]
     assert service.list_sessions() == {}
 
 

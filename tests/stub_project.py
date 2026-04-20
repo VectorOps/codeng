@@ -60,16 +60,26 @@ class StubProject:
         self.current_workflow = workflow_name
         if self.mcp is None:
             return
-        await self.mcp.start_workflow(workflow_name)
-        for source_name in self.mcp.list_sessions().keys():
+        workflow = self.settings.workflows.get(workflow_name)
+        change = await self.mcp.start_workflow(workflow_name, workflow)
+        for source_name in change.started_sources:
             await self.mcp.refresh_tools(source_name)
-        self.refresh_tools_from_registry()
+        if change.started_sources or change.stopped_sources:
+            self.refresh_tools_from_registry()
 
-    async def on_workflow_finished(self, workflow_name: str) -> None:
+    async def on_workflow_finished(
+        self,
+        workflow_name: str,
+        keep_mcp_sessions: bool = False,
+    ) -> None:
         if self.mcp is None:
             return
-        await self.mcp.finish_workflow(workflow_name)
-        self.refresh_tools_from_registry()
+        change = await self.mcp.finish_workflow(
+            workflow_name,
+            keep_mcp_sessions,
+        )
+        if change.started_sources or change.stopped_sources:
+            self.refresh_tools_from_registry()
 
     async def start(self) -> None:
         return None

@@ -4,6 +4,7 @@ from typing import Dict, Optional
 
 from vocode import settings as vocode_settings
 from vocode.mcp import models as mcp_models
+from vocode.mcp import tool_resolution
 
 
 class MCPRegistry:
@@ -61,42 +62,11 @@ class MCPRegistry:
         source_name: str,
         tool_names: list[str],
     ) -> list[str]:
-        if workflow is None or workflow.mcp is None or not workflow.mcp.enabled:
-            return []
-        workflow_mcp = workflow.mcp
-        out: list[str] = []
-        for tool_name in tool_names:
-            if self._is_disabled(workflow_mcp, source_name, tool_name):
-                continue
-            if self._is_enabled(workflow_mcp, source_name, tool_name):
-                out.append(tool_name)
-        return out
-
-    def _is_enabled(
-        self,
-        workflow_mcp: vocode_settings.MCPWorkflowSettings,
-        source_name: str,
-        tool_name: str,
-    ) -> bool:
-        for selector in workflow_mcp.tools:
-            if selector.source != source_name:
-                continue
-            if selector.tool == "*" or selector.tool == tool_name:
-                return True
-        return False
-
-    def _is_disabled(
-        self,
-        workflow_mcp: vocode_settings.MCPWorkflowSettings,
-        source_name: str,
-        tool_name: str,
-    ) -> bool:
-        for selector in workflow_mcp.disabled_tools:
-            if selector.source != source_name:
-                continue
-            if selector.tool == "*" or selector.tool == tool_name:
-                return True
-        return False
+        return tool_resolution.resolve_workflow_tools(
+            workflow,
+            source_name,
+            tool_names,
+        )
 
     def _convert_root_settings(
         self,
