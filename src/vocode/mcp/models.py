@@ -107,3 +107,20 @@ class MCPSessionState(BaseModel):
         if self.phase == MCPSessionPhase.operating and not self.initialized:
             raise ValueError("operating session must be initialized")
         return self
+
+
+class MCPToolDescriptor(BaseModel):
+    source_name: str
+    tool_name: str
+    title: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None)
+    input_schema: Dict[str, object] = Field(default_factory=dict)
+    annotations: Dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_identity(self) -> "MCPToolDescriptor":
+        if not self.source_name.strip():
+            raise ValueError("source_name must be non-empty")
+        if not self.tool_name.strip():
+            raise ValueError("tool_name must be non-empty")
+        return self

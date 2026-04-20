@@ -130,3 +130,37 @@ async def test_service_start_and_finish_workflow_manage_workflow_scoped_sessions
     await service.finish_workflow("wf")
 
     assert service.list_sessions() == {}
+
+
+def test_service_caches_and_clears_tool_descriptors_per_source() -> None:
+    service = MCPService(_make_settings())
+
+    cached = service.cache_tool_descriptors(
+        "local",
+        [
+            {
+                "name": "search",
+                "description": "Search docs",
+            },
+            {
+                "name": "fetch",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                },
+            },
+        ],
+    )
+
+    assert set(cached.keys()) == {"search", "fetch"}
+    assert service.list_cached_tools("local")["search"].description == "Search docs"
+    assert (
+        service.list_cached_tools("local")["fetch"].input_schema["properties"]["id"][
+            "type"
+        ]
+        == "string"
+    )
+
+    service.clear_tool_cache("local")
+
+    assert service.list_cached_tools("local") == {}

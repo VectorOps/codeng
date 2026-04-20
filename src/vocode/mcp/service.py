@@ -4,6 +4,7 @@ from typing import Dict, Optional
 
 from vocode import settings as vocode_settings
 from vocode.mcp import client as mcp_client
+from vocode.mcp import converters as mcp_converters
 from vocode.mcp import models as mcp_models
 from vocode.mcp import registry as mcp_registry
 from vocode.mcp import transports as mcp_transports
@@ -18,6 +19,7 @@ class MCPService:
         self._settings = settings
         self._registry = mcp_registry.MCPRegistry(settings)
         self._sessions: Dict[str, mcp_client.MCPClientSession] = {}
+        self._tool_cache: Dict[str, Dict[str, mcp_models.MCPToolDescriptor]] = {}
 
     @property
     def registry(self) -> mcp_registry.MCPRegistry:
@@ -50,6 +52,29 @@ class MCPService:
         if session is None:
             return None
         return session.state
+
+    def list_cached_tools(
+        self, source_name: str
+    ) -> Dict[str, mcp_models.MCPToolDescriptor]:
+        cached = self._tool_cache.get(source_name)
+        if cached is None:
+            return {}
+        return dict(cached)
+
+    def cache_tool_descriptors(
+        self,
+        source_name: str,
+        payloads: list[Dict[str, object]],
+    ) -> Dict[str, mcp_models.MCPToolDescriptor]:
+        out: Dict[str, mcp_models.MCPToolDescriptor] = {}
+        for payload in payloads:
+            descriptor = mcp_converters.normalize_tool_descriptor(source_name, payload)
+            out[descriptor.tool_name] = descriptor
+        self._tool_cache[source_name] = out
+        return dict(out)
+
+    def clear_tool_cache(self, source_name: str) -> None:
+        self._tool_cache.pop(source_name, None)
 
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
         existing = self._sessions.get(source_name)
@@ -105,6 +130,7 @@ class MCPService:
         session = self._sessions.pop(source_name, None)
         if session is None:
             return
+        self.clear_tool_cache(source_name)
         await session.close()
 
     async def close_all(self) -> None:
