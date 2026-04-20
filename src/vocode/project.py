@@ -124,8 +124,22 @@ class Project:
                     self.tools[t.tool_name] = convert_know_tool(self, t)
 
         if self.mcp is not None:
+            workflow_mcp = None
+            if (
+                self.settings is not None
+                and self.current_workflow is not None
+                and self.current_workflow in self.settings.workflows
+            ):
+                workflow_mcp = self.settings.workflows[self.current_workflow].mcp
+            if workflow_mcp is not None and not workflow_mcp.enabled:
+                return
             for source_name, descriptors in self.mcp.list_tool_cache().items():
                 for descriptor in descriptors.values():
+                    if not self._is_mcp_tool_enabled_for_current_workflow(
+                        source_name,
+                        descriptor.tool_name,
+                    ):
+                        continue
                     internal_name = f"mcp__{source_name}__{descriptor.tool_name}"
                     if internal_name in disabled_tool_names:
                         continue
@@ -134,6 +148,33 @@ class Project:
                         descriptor,
                         internal_name,
                     )
+
+    def _is_mcp_tool_enabled_for_current_workflow(
+        self,
+        source_name: str,
+        tool_name: str,
+    ) -> bool:
+        if self.settings is None or self.current_workflow is None:
+            return False
+        workflow = self.settings.workflows.get(self.current_workflow)
+        if workflow is None or workflow.mcp is None:
+            return False
+        workflow_mcp = workflow.mcp
+
+        for selector in workflow_mcp.disabled_tools:
+            if selector.source != source_name:
+                continue
+            if selector.tool == "*" or selector.tool == tool_name:
+                return False
+
+        if not workflow_mcp.tools:
+            return False
+        for selector in workflow_mcp.tools:
+            if selector.source != source_name:
+                continue
+            if selector.tool == "*" or selector.tool == tool_name:
+                return True
+        return False
 
     # LLM usage totals
     def add_llm_usage(

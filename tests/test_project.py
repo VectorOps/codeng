@@ -12,8 +12,11 @@ from vocode.settings import MCPExternalSourceSettings
 from vocode.settings import MCPSourceScope
 from vocode.settings import MCPSettings
 from vocode.settings import MCPStdioSourceSettings
+from vocode.settings import MCPToolSelector
+from vocode.settings import MCPWorkflowSettings
 from vocode.settings import ToolSpec
 from vocode.settings import Settings
+from vocode.settings import WorkflowConfig
 
 
 class _DummyKnowPM:
@@ -80,6 +83,13 @@ async def test_project_start_initializes_subsystems_and_tools(tmp_path):
 @pytest.mark.asyncio
 async def test_project_refresh_tools_merges_cached_mcp_tools(tmp_path):
     settings = Settings(
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                )
+            )
+        },
         mcp=MCPSettings(
             sources={
                 "local": MCPStdioSourceSettings(
@@ -88,7 +98,7 @@ async def test_project_refresh_tools_merges_cached_mcp_tools(tmp_path):
                     scope=MCPSourceScope.project,
                 ),
             }
-        )
+        ),
     )
     project = Project(
         base_path=tmp_path,
@@ -96,6 +106,7 @@ async def test_project_refresh_tools_merges_cached_mcp_tools(tmp_path):
         settings=settings,
     )
     project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
 
     await project.start()
     assert project.mcp is not None
@@ -127,6 +138,13 @@ async def test_project_refresh_tools_merges_cached_mcp_tools(tmp_path):
 @pytest.mark.asyncio
 async def test_project_mcp_tool_adapter_invokes_service_tool_call(tmp_path):
     settings = Settings(
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                )
+            )
+        },
         mcp=MCPSettings(
             sources={
                 "local": MCPStdioSourceSettings(
@@ -135,7 +153,7 @@ async def test_project_mcp_tool_adapter_invokes_service_tool_call(tmp_path):
                     scope=MCPSourceScope.project,
                 ),
             }
-        )
+        ),
     )
     project = Project(
         base_path=tmp_path,
@@ -143,6 +161,7 @@ async def test_project_mcp_tool_adapter_invokes_service_tool_call(tmp_path):
         settings=settings,
     )
     project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
 
     await project.start()
     assert project.mcp is not None
@@ -176,6 +195,91 @@ async def test_project_mcp_tool_adapter_invokes_service_tool_call(tmp_path):
 
     assert result is not None
     assert result.text == "hello\nworld"
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_project_does_not_materialize_mcp_tools_without_workflow_selection(
+    tmp_path,
+):
+    settings = Settings(
+        mcp=MCPSettings(
+            sources={
+                "local": MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _PROJECT_MCP_SERVER],
+                    scope=MCPSourceScope.project,
+                ),
+            }
+        )
+    )
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+    project.know = _DummyKnowProject()
+
+    await project.start()
+    assert project.mcp is not None
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [{"name": "search", "description": "Search docs"}],
+    )
+
+    project.refresh_tools_from_registry()
+
+    assert "mcp__local__search" not in project.tools
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_project_mcp_disabled_tools_override_allow_selectors(tmp_path):
+    settings = Settings(
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                    disabled_tools=[
+                        MCPToolSelector(source="local", tool="search"),
+                    ],
+                )
+            )
+        },
+        mcp=MCPSettings(
+            sources={
+                "local": MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _PROJECT_MCP_SERVER],
+                    scope=MCPSourceScope.project,
+                ),
+            }
+        ),
+    )
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+    project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
+
+    await project.start()
+    assert project.mcp is not None
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [
+            {"name": "search", "description": "Search docs"},
+            {"name": "fetch", "description": "Fetch docs"},
+        ],
+    )
+
+    project.refresh_tools_from_registry()
+
+    assert "mcp__local__search" not in project.tools
+    assert "mcp__local__fetch" in project.tools
 
     await project.shutdown()
 
