@@ -19,6 +19,8 @@ _SERVICE_HANDSHAKE_SERVER = """
 import json
 import sys
 
+initialized = False
+
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get('method') == 'initialize':
@@ -33,7 +35,39 @@ for line in sys.stdin:
         }) + '\\n')
         sys.stdout.flush()
     elif msg.get('method') == 'notifications/initialized':
-        break
+        initialized = True
+    elif msg.get('method') == 'tools/list' and initialized:
+        if msg.get('params', {}).get('cursor') == 'cursor-2':
+            sys.stdout.write(json.dumps({
+                'jsonrpc': '2.0',
+                'id': msg['id'],
+                'result': {
+                    'tools': [
+                        {
+                            'name': 'fetch',
+                            'inputSchema': {
+                                'type': 'object',
+                                'properties': {'id': {'type': 'string'}}
+                            }
+                        }
+                    ]
+                }
+            }) + '\\n')
+        else:
+            sys.stdout.write(json.dumps({
+                'jsonrpc': '2.0',
+                'id': msg['id'],
+                'result': {
+                    'tools': [
+                        {
+                            'name': 'search',
+                            'description': 'Search docs'
+                        }
+                    ],
+                    'nextCursor': 'cursor-2'
+                }
+            }) + '\\n')
+        sys.stdout.flush()
 """
 
 
@@ -164,3 +198,26 @@ def test_service_caches_and_clears_tool_descriptors_per_source() -> None:
     service.clear_tool_cache("local")
 
     assert service.list_cached_tools("local") == {}
+
+
+@pytest.mark.asyncio
+async def test_service_refresh_tools_populates_cache_from_live_session() -> None:
+    service = MCPService(_make_settings())
+
+    await service.start_session("local")
+    cached = await service.refresh_tools("local")
+
+    assert set(cached.keys()) == {"search", "fetch"}
+    assert cached["search"].description == "Search docs"
+    assert cached["fetch"].input_schema["properties"]["id"]["type"] == "string"
+    assert set(service.list_cached_tools("local").keys()) == {"search", "fetch"}
+
+    await service.close_all()
+
+
+@pytest.mark.asyncio
+async def test_service_refresh_tools_requires_active_session() -> None:
+    service = MCPService(_make_settings())
+
+    with pytest.raises(MCPServiceError, match="no active session"):
+        await service.refresh_tools("local")

@@ -76,6 +76,16 @@ class MCPService:
     def clear_tool_cache(self, source_name: str) -> None:
         self._tool_cache.pop(source_name, None)
 
+    async def refresh_tools(
+        self,
+        source_name: str,
+    ) -> Dict[str, mcp_models.MCPToolDescriptor]:
+        session = self._sessions.get(source_name)
+        if session is None:
+            raise MCPServiceError(f"no active session for mcp source: {source_name}")
+        payloads = await session.list_all_tools()
+        return self.cache_tool_descriptors(source_name, payloads)
+
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
         existing = self._sessions.get(source_name)
         if existing is not None:
