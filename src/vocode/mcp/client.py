@@ -119,6 +119,32 @@ class MCPClientSession:
             params["cursor"] = cursor
         return await self.request("tools/list", params)
 
+    async def list_all_tools(self) -> list[Dict[str, Any]]:
+        tools: list[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        while True:
+            result = await self.list_tools(cursor=cursor)
+            tools.extend(result.get("tools") or [])
+            next_cursor = result.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                return tools
+            cursor = next_cursor
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not self.state.negotiation.server_capabilities.tools:
+            raise MCPClientError("server does not advertise tools capability")
+        return await self.request(
+            "tools/call",
+            {
+                "name": name,
+                "arguments": arguments or {},
+            },
+        )
+
     def _parse_server_capabilities(
         self, value: Dict[str, Any]
     ) -> mcp_models.MCPServerCapabilities:

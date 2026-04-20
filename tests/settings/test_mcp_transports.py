@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
+from aiohttp import web
 
 from vocode.mcp.protocol import MCPJSONRPCNotification
 from vocode.mcp.protocol import MCPJSONRPCRequest
 from vocode.mcp.protocol import MCPJSONRPCResponse
+from vocode.mcp.transports import MCPHTTPTransport
 from vocode.mcp.transports import MCPStdioTransport
 from vocode.mcp.transports import MCPTransportError
 
@@ -98,3 +101,83 @@ async def test_stdio_transport_rejects_invalid_json() -> None:
         await transport.receive()
 
     await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_posts_jsonrpc_and_injects_headers(
+    unused_tcp_port,
+) -> None:
+    observed: dict[str, object] = {}
+
+    async def handler(request: web.Request) -> web.Response:
+        observed["authorization"] = request.headers.get("Authorization")
+        observed["protocol_version"] = request.headers.get("MCP-Protocol-Version")
+        observed["custom"] = request.headers.get("X-Test")
+        observed["payload"] = await request.json()
+        return web.json_response(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2025-03-26",
+                },
+            }
+        )
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = unused_tcp_port
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    transport = MCPHTTPTransport(
+        f"http://127.0.0.1:{port}/mcp",
+        headers={"X-Test": "yes"},
+        auth_token="secret-token",
+        protocol_version="2025-03-26",
+    )
+    await transport.start()
+
+    response = await transport.request(MCPJSONRPCRequest(id=1, method="initialize"))
+
+    assert isinstance(response, MCPJSONRPCResponse)
+    assert response.result["protocolVersion"] == "2025-03-26"
+    assert observed["authorization"] == "Bearer secret-token"
+    assert observed["protocol_version"] == "2025-03-26"
+    assert observed["custom"] == "yes"
+    assert observed["payload"] == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {},
+    }
+
+    await transport.close()
+    await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_rejects_invalid_json_response(
+    unused_tcp_port,
+) -> None:
+    async def handler(request: web.Request) -> web.Response:
+        return web.Response(text="not-json", content_type="application/json")
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = unused_tcp_port
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    transport = MCPHTTPTransport(f"http://127.0.0.1:{port}/mcp")
+    await transport.start()
+
+    with pytest.raises(MCPTransportError, match="invalid JSON"):
+        await transport.request(MCPJSONRPCRequest(id=1, method="initialize"))
+
+    await transport.close()
+    await runner.cleanup()

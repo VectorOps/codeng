@@ -17,6 +17,7 @@ import json
 import sys
 
 initialized = False
+tools_list_calls = 0
 
 for line in sys.stdin:
     msg = json.loads(line)
@@ -37,17 +38,52 @@ for line in sys.stdin:
     elif msg.get('method') == 'notifications/initialized':
         initialized = True
     elif msg.get('method') == 'tools/list' and initialized:
-        sys.stdout.write(json.dumps({
-            'jsonrpc': '2.0',
-            'id': msg['id'],
-            'result': {
-                'tools': [
-                    {'name': 'search'},
-                    {'name': 'fetch'}
-                ],
-                'nextCursor': 'cursor-2'
-            }
-        }) + '\\n')
+        tools_list_calls += 1
+        if msg.get('params', {}).get('cursor') == 'cursor-2':
+            sys.stdout.write(json.dumps({
+                'jsonrpc': '2.0',
+                'id': msg['id'],
+                'result': {
+                    'tools': [
+                        {'name': 'final'}
+                    ]
+                }
+            }) + '\\n')
+        else:
+            sys.stdout.write(json.dumps({
+                'jsonrpc': '2.0',
+                'id': msg['id'],
+                'result': {
+                    'tools': [
+                        {'name': 'search'},
+                        {'name': 'fetch'}
+                    ],
+                    'nextCursor': 'cursor-2'
+                }
+            }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'tools/call' and initialized:
+        if msg.get('params', {}).get('name') == 'explode':
+            sys.stdout.write(json.dumps({
+                'jsonrpc': '2.0',
+                'id': msg['id'],
+                'error': {
+                    'code': -32001,
+                    'message': 'tool failed'
+                }
+            }) + '\\n')
+        else:
+            sys.stdout.write(json.dumps({
+                'jsonrpc': '2.0',
+                'id': msg['id'],
+                'result': {
+                    'content': [
+                        {'type': 'text', 'text': 'ok'}
+                    ],
+                    'isError': False,
+                    'structuredContent': {'echo': msg.get('params', {}).get('arguments', {})}
+                }
+            }) + '\\n')
         sys.stdout.flush()
 """
 
@@ -185,5 +221,52 @@ async def test_client_session_rejects_tools_list_when_capability_missing() -> No
 
     with pytest.raises(MCPClientError, match="tools capability"):
         await session.list_tools()
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_list_all_tools_follows_cursors() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _HANDSHAKE_SERVER]),
+    )
+
+    await session.start()
+    tools = await session.list_all_tools()
+
+    assert [item["name"] for item in tools] == ["search", "fetch", "final"]
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_call_tool_returns_result_payload() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _HANDSHAKE_SERVER]),
+    )
+
+    await session.start()
+    result = await session.call_tool("search", {"query": "weather"})
+
+    assert result["isError"] is False
+    assert result["structuredContent"] == {"echo": {"query": "weather"}}
+    assert result["content"][0]["text"] == "ok"
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_call_tool_surfaces_protocol_error() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _HANDSHAKE_SERVER]),
+    )
+
+    await session.start()
+
+    with pytest.raises(MCPClientError, match="tool failed"):
+        await session.call_tool("explode")
 
     await session.close()
