@@ -54,6 +54,8 @@ These decisions should be treated as settled unless requirements change.
 - Stdio sources default to workflow-scoped startup.
 - HTTP auth should be centralized in the MCP subsystem, not implemented inside individual tool adapters.
 - Pre-registered auth should be implemented first. Client metadata documents are optional in V1 when operator-configured. Dynamic client registration is deferred unless it becomes cheap and necessary.
+- MCP auth credentials and tokens should persist across application restarts using the existing credential storage machinery where practical, rather than remaining session-only.
+- MCP management and authentication UX should be exposed through dedicated `/mcp` commands for source-oriented flows, while reusing lower-level auth/session infrastructure from the existing `/auth` implementation where practical.
 - Source failures and tool failures must be isolated and should not crash unrelated workflows when avoidable.
 
 ## V1 scope and non-goals
@@ -152,6 +154,7 @@ V1 should include:
 - Validation failures in roots and auth config should fail early where possible.
 - Shutdown must be best-effort and idempotent.
 - Tokens should reuse existing credential infrastructure where practical.
+- Persisted MCP auth state should survive process restarts and be recoverable without re-running login unless the credentials expired or were removed.
 - HTTPS must be required for auth server metadata and non-local redirect flows.
 - Redirect URIs must be localhost or HTTPS.
 - The client must not over-advertise unsupported MCP capabilities.
@@ -526,6 +529,22 @@ Likely minimal V1 changes. In V2, omit `skip_listing=True` tools from outbound t
 
 Add the new subsystem described above.
 
+### `src/vocode/connect_auth.py`
+
+Extend credential persistence and interactive auth helpers so MCP auth can reuse the same file-backed credential storage and TUI callback patterns.
+
+### `src/vocode/manager/commands/`
+
+Add an MCP command surface for source management and authentication, including login, status, logout, cancel, and follow-up MCP management subcommands as they are introduced.
+
+### `src/vocode/manager/server.py`
+
+Add MCP-specific interactive session wiring parallel to existing provider auth session handling.
+
+### `src/vocode/manager/autocomplete*.py`
+
+Expose `/mcp` commands and MCP source names through autocomplete.
+
 ### `src/vocode/tools/`
 
 V2 adds the discovery tool. V3 adds prompt and resource helper tools.
@@ -620,6 +639,8 @@ Deliverable:
 27. Implement workflow selector resolution with wildcard enable and explicit disable support.
 28. Add executor and tool materialization tests.
 29. Integrate MCP auth flows with the TUI for operator-guided login and callback handling.
+30. Persist MCP auth credentials and tokens across restarts using the existing credential store.
+31. Wire `/mcp` commands into manager, server, and autocomplete for source-oriented auth and management flows.
 
 Detailed work breakdown:
 
@@ -659,6 +680,11 @@ Detailed work breakdown:
   - surface authorization URL, progress, prompts, and completion/failure state through the TUI
   - support callback-driven browser auth for MCP sources without embedding auth logic in tool adapters
   - ensure credentials and tokens remain isolated per MCP source and canonical resource
+  - persist MCP token and credential state in the same user-scoped credential store used by existing auth flows so login survives restart
+  - avoid env-only caching for MCP-issued tokens except as an explicit operator-provided secret source
+  - add a dedicated `/mcp` command with at least `login`, `status`, `logout`, and `cancel` subcommands keyed by MCP source name
+  - leave provider `/auth` focused on provider authentication rather than overloading it with MCP source semantics
+  - wire `/mcp` command registration and autocomplete so MCP auth and future MCP management commands are discoverable in the TUI
 
 Deliverable:
 
@@ -768,7 +794,10 @@ This delivers the core requested capability while keeping the current architectu
 [x] Implement workflow selector resolution with wildcard enable and explicit disable support
 [x] Add executor and tool materialization tests
 [x] Implement `tools/list` pagination handling in the client session layer
-[ ] Implement refresh support for `notifications/tools/list_changed`
-[ ] Implement `tools/call` handling with protocol-error versus execution-error separation through the internal tool pipeline
-[ ] Preserve richer MCP tool result payloads beyond plain text extraction in the adapter layer
-[ ] Integrate MCP auth flows into the TUI for operator-guided login and callback handling
+[x] Implement refresh support for `notifications/tools/list_changed`
+[x] Implement `tools/call` handling with protocol-error versus execution-error separation through the internal tool pipeline
+[x] Preserve richer MCP tool result payloads beyond plain text extraction in the adapter layer
+[ ] Integrate MCP auth flows into the TUI for operator-guided login and callback handling. Follow existing patterns by introducing a /mcp command with "login" subcommand.
+[ ] Persist MCP auth credentials and tokens across restarts using the existing credential store instead of env-only token caching.
+[ ] Wire `/mcp` auth and MCP management commands into manager, server, and autocomplete.
+
