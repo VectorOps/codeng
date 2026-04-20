@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import sys
+
+import pytest
+
+from vocode.mcp.client import MCPClientError
+from vocode.mcp.client import MCPClientSession
+from vocode.mcp.models import MCPClientCapabilities
+from vocode.mcp.models import MCPSourceDescriptor
+from vocode.mcp.models import MCPTransportKind
+from vocode.mcp.transports import MCPStdioTransport
+
+
+_HANDSHAKE_SERVER = """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'mcp-test-server', 'version': '1.2.3'},
+                'capabilities': {
+                    'tools': {'listChanged': True},
+                    'roots': {'listChanged': True}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        break
+"""
+
+
+_BAD_HANDSHAKE_SERVER = """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'method': 'notifications/ready'
+        }) + '\\n')
+        sys.stdout.flush()
+        break
+"""
+
+
+def _make_source() -> MCPSourceDescriptor:
+    return MCPSourceDescriptor(
+        source_name="local",
+        transport=MCPTransportKind.stdio,
+        scope="workflow",
+        startup_timeout_s=15,
+        shutdown_timeout_s=10,
+        request_timeout_s=30,
+    )
+
+
+@pytest.mark.asyncio
+async def test_client_session_initialize_populates_negotiated_state() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _HANDSHAKE_SERVER]),
+        client_capabilities=MCPClientCapabilities(roots=True, roots_list_changed=True),
+    )
+
+    result = await session.initialize()
+
+    assert result["protocolVersion"] == "2025-03-26"
+    assert session.state.initialized is True
+    assert session.state.phase == "operating"
+    assert session.state.negotiation.protocol_version == "2025-03-26"
+    assert session.state.negotiation.server_info["name"] == "mcp-test-server"
+    assert session.state.negotiation.client_capabilities.roots is True
+    assert session.state.negotiation.server_capabilities.tools is True
+    assert session.state.negotiation.server_capabilities.tools_list_changed is True
+    assert session.state.negotiation.server_capabilities.roots is True
+    assert session.state.negotiation.server_capabilities.roots_list_changed is True
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_start_runs_transport_and_initialize() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _HANDSHAKE_SERVER]),
+    )
+
+    await session.start()
+
+    assert session.transport.is_running is True
+    assert session.state.initialized is True
+
+    await session.close()
+    assert session.state.phase == "closed"
+
+
+@pytest.mark.asyncio
+async def test_client_session_rejects_unexpected_notification_during_initialize() -> (
+    None
+):
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _BAD_HANDSHAKE_SERVER]),
+    )
+
+    with pytest.raises(MCPClientError, match="unexpected notification"):
+        await session.initialize()
+
+    await session.close()
