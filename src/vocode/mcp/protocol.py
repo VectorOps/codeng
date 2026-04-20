@@ -123,6 +123,22 @@ class MCPProtocolClient:
         self.state.initialized_notification_sent = True
         return MCPJSONRPCNotification(method="notifications/initialized")
 
+    def build_cancel_notification(
+        self,
+        request_id: Union[int, str],
+        reason: str = "request timed out",
+    ) -> MCPJSONRPCNotification:
+        return MCPJSONRPCNotification(
+            method="notifications/cancelled",
+            params={
+                "requestId": request_id,
+                "reason": reason,
+            },
+        )
+
+    def drop_pending(self, request_id: Union[int, str]) -> None:
+        self._pending.pop(request_id, None)
+
     def handle_response(
         self,
         response: Union[MCPJSONRPCResponse, MCPJSONRPCErrorResponse],

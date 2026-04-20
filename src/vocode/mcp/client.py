@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any, Dict, Optional
 
 from vocode.mcp import models as mcp_models
@@ -92,12 +94,36 @@ class MCPClientSession:
         method: str,
         params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        return await self.request_with_timeout(method, params=params, timeout_s=None)
+
+    async def request_with_timeout(
+        self,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> Dict[str, Any]:
         if not self.state.initialized:
             raise MCPClientError("session must be initialized before sending requests")
         try:
             request = self.protocol.create_request(method, params)
             future = self.protocol.register_pending(request)
-            message = await self.transport.request(request)
+            if isinstance(self.transport, mcp_transports.MCPHTTPTransport):
+                if timeout_s is None:
+                    message = await self.transport.request(request)
+                else:
+                    message = await asyncio.wait_for(
+                        self.transport.request(request),
+                        timeout_s,
+                    )
+            else:
+                await self.transport.send(request)
+                if timeout_s is None:
+                    message = await self.transport.receive()
+                else:
+                    message = await asyncio.wait_for(
+                        self.transport.receive(),
+                        timeout_s,
+                    )
             if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
                 raise MCPClientError(
                     "unexpected request received while waiting for response"
@@ -108,6 +134,14 @@ class MCPClientSession:
                 )
             self.protocol.handle_response(message)
             return await future
+        except TimeoutError as exc:
+            self.protocol.drop_pending(request.id)
+            await self.transport.notify(
+                self.protocol.build_cancel_notification(request.id)
+            )
+            raise MCPClientError(
+                f"request timed out after {timeout_s} seconds"
+            ) from exc
         except mcp_protocol.MCPProtocolError as exc:
             raise MCPClientError(str(exc)) from exc
 

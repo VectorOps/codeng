@@ -98,3 +98,26 @@ def test_unknown_response_id_raises_protocol_error() -> None:
 
     with pytest.raises(MCPProtocolError, match="unknown response id"):
         client.handle_response(MCPJSONRPCResponse(id=99, result={}))
+
+
+def test_build_cancel_notification_includes_request_id_and_reason() -> None:
+    client = MCPProtocolClient()
+
+    notification = client.build_cancel_notification(7)
+
+    assert notification.method == "notifications/cancelled"
+    assert notification.params == {
+        "requestId": 7,
+        "reason": "request timed out",
+    }
+
+
+@pytest.mark.asyncio
+async def test_drop_pending_removes_registered_request() -> None:
+    client = MCPProtocolClient()
+    request = client.create_request("initialize")
+    client.register_pending(request)
+
+    client.drop_pending(request.id)
+
+    assert client.pending_count() == 0

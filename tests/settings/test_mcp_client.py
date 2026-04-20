@@ -130,6 +130,45 @@ for line in sys.stdin:
 """
 
 
+_TIMEOUT_SERVER = """
+import json
+import sys
+import time
+
+cancelled = []
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'timeout-server', 'version': '1.0.0'},
+                'capabilities': {
+                    'tools': {'listChanged': False}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        pass
+    elif msg.get('method') == 'slow/method':
+        time.sleep(0.05)
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {'done': True}
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/cancelled':
+        cancelled.append(msg.get('params'))
+        sys.stderr.write(json.dumps(cancelled) + '\\n')
+        sys.stderr.flush()
+"""
+
+
 def _make_source() -> MCPSourceDescriptor:
     return MCPSourceDescriptor(
         source_name="local",
@@ -361,3 +400,23 @@ async def test_client_session_initialize_and_request_over_http_transport(
 
     await session.close()
     await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_client_session_request_with_timeout_sends_cancel_notification() -> None:
+    transport = MCPStdioTransport(sys.executable, args=["-c", _TIMEOUT_SERVER])
+    session = MCPClientSession(
+        _make_source(),
+        transport,
+    )
+
+    await session.start()
+
+    with pytest.raises(MCPClientError, match="timed out"):
+        await session.request_with_timeout("slow/method", timeout_s=0.01)
+
+    await session.close()
+
+    assert transport.stderr_lines
+    assert '"requestId": 2' in transport.stderr_lines[-1]
+    assert '"reason": "request timed out"' in transport.stderr_lines[-1]
