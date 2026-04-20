@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -34,6 +36,7 @@ class MCPService:
         self._auth = mcp_auth.MCPAuthManager(settings, credentials=credentials)
         self._sessions: Dict[str, mcp_client.MCPClientSession] = {}
         self._tool_cache: Dict[str, Dict[str, mcp_models.MCPToolDescriptor]] = {}
+        self._tool_refresh_tasks: Dict[str, asyncio.Task[None]] = {}
 
     @property
     def registry(self) -> mcp_registry.MCPRegistry:
@@ -150,13 +153,20 @@ class MCPService:
                 headers=headers,
             )
         session = mcp_client.MCPClientSession(source, transport)
+        session.add_notification_handler(
+            lambda notification: self._on_session_notification(
+                source_name,
+                notification,
+            )
+        )
+        self._sessions[source_name] = session
         try:
             await session.start()
         except mcp_client.MCPClientError as exc:
+            self._sessions.pop(source_name, None)
             raise MCPServiceError(
                 f"failed to start mcp source {source_name}: {exc}"
             ) from exc
-        self._sessions[source_name] = session
         return session
 
     async def start_workflow(
@@ -201,6 +211,9 @@ class MCPService:
         return MCPWorkflowSessionChange([], stopped_sources)
 
     async def close_session(self, source_name: str) -> None:
+        refresh_task = self._tool_refresh_tasks.pop(source_name, None)
+        if refresh_task is not None:
+            refresh_task.cancel()
         session = self._sessions.pop(source_name, None)
         if session is None:
             return
@@ -225,3 +238,33 @@ class MCPService:
         workflow: Optional[vocode_settings.WorkflowConfig],
     ) -> list[str]:
         return list(self._registry.resolve_workflow_sources(workflow).keys())
+
+    def _on_session_notification(
+        self,
+        source_name: str,
+        notification,
+    ) -> None:
+        if notification.method != "notifications/tools/list_changed":
+            return
+        session = self._sessions.get(source_name)
+        if session is None:
+            return
+        if not session.state.negotiation.server_capabilities.tools_list_changed:
+            return
+        refresh_task = self._tool_refresh_tasks.get(source_name)
+        if refresh_task is not None and not refresh_task.done():
+            return
+        self._tool_refresh_tasks[source_name] = asyncio.create_task(
+            self._refresh_tools_from_notification(source_name)
+        )
+
+    async def _refresh_tools_from_notification(self, source_name: str) -> None:
+        task = self._tool_refresh_tasks.get(source_name)
+        try:
+            await self.refresh_tools(source_name)
+        except MCPServiceError:
+            return
+        finally:
+            current = self._tool_refresh_tasks.get(source_name)
+            if current is task:
+                self._tool_refresh_tasks.pop(source_name, None)

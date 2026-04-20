@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import typing
 
 from typing import Any, Dict, Optional
 
@@ -32,6 +34,10 @@ class MCPClientSession:
         self._client_capabilities = (
             client_capabilities or mcp_models.MCPClientCapabilities()
         )
+        self._notification_handlers: list[
+            typing.Callable[[mcp_protocol.MCPJSONRPCNotification], None]
+        ] = []
+        self._receive_task: Optional[asyncio.Task[None]] = None
 
     async def start(self) -> None:
         await self.transport.start()
@@ -40,6 +46,12 @@ class MCPClientSession:
         except Exception:
             await self._mark_disconnected("session initialization failed")
             raise
+
+    def add_notification_handler(
+        self,
+        handler: typing.Callable[[mcp_protocol.MCPJSONRPCNotification], None],
+    ) -> None:
+        self._notification_handlers.append(handler)
 
     async def initialize(self) -> Dict[str, Any]:
         try:
@@ -87,6 +99,7 @@ class MCPClientSession:
                     server_info=self.protocol.state.negotiation.server_info,
                 ),
             )
+            self._ensure_receive_loop()
             return result
         except Exception as exc:
             await self._mark_disconnected(str(exc))
@@ -126,12 +139,11 @@ class MCPClientSession:
             else:
                 await self.transport.send(request)
                 if timeout_s is None:
-                    message = await self.transport.receive()
-                else:
-                    message = await asyncio.wait_for(
-                        self.transport.receive(),
-                        timeout_s,
-                    )
+                    return await future
+                return await asyncio.wait_for(
+                    future,
+                    timeout_s,
+                )
             if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
                 raise MCPClientError(
                     "unexpected request received while waiting for response"
@@ -208,7 +220,43 @@ class MCPClientSession:
             or bool(value.get("resources")),
         )
 
+    def _ensure_receive_loop(self) -> None:
+        if not isinstance(self.transport, mcp_transports.MCPStdioTransport):
+            return
+        if self._receive_task is not None and not self._receive_task.done():
+            return
+        self._receive_task = asyncio.create_task(self._run_receive_loop())
+
+    async def _run_receive_loop(self) -> None:
+        try:
+            while self.transport.is_running:
+                message = await self.transport.receive()
+                if isinstance(message, mcp_protocol.MCPJSONRPCNotification):
+                    self._dispatch_notification(message)
+                    continue
+                if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
+                    continue
+                self.protocol.handle_response(message)
+        except asyncio.CancelledError:
+            raise
+        except mcp_transports.MCPTransportError as exc:
+            if self.state.phase != mcp_models.MCPSessionPhase.closed:
+                await self._mark_disconnected(str(exc))
+
+    def _dispatch_notification(
+        self,
+        notification: mcp_protocol.MCPJSONRPCNotification,
+    ) -> None:
+        for handler in self._notification_handlers:
+            handler(notification)
+
     async def _mark_disconnected(self, error: Optional[str]) -> None:
+        receive_task = self._receive_task
+        self._receive_task = None
+        if receive_task is not None and receive_task is not asyncio.current_task():
+            receive_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await receive_task
         try:
             if self.transport.is_running:
                 await self.transport.close()

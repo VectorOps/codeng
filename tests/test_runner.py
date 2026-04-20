@@ -432,6 +432,23 @@ class RecordingTool:
         return None
 
 
+class ErroringTool:
+    def __init__(self, response: tools_base.ToolTextResponse) -> None:
+        self.response = response
+
+    async def run(self, req: tools_base.ToolReq, args: dict):
+        return self.response
+
+
+class ProtocolFailingTool:
+    async def run(self, req: tools_base.ToolReq, args: dict):
+        raise tools_base.ToolExecutionError(
+            "protocol failure",
+            error_type=tools_base.ToolExecutionErrorType.protocol,
+            payload={"source": "mcp"},
+        )
+
+
 class DummyWorkflow:
     def __init__(
         self,
@@ -2209,6 +2226,93 @@ async def test_runner_uses_tool_spec_from_request_for_execution():
     assert tool_req.spec.name == "test-tool"
     assert tool_req.spec.config.get("foo") == "bar"
     assert args == {"x": 1}
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_tool_execution_error_response_as_failed() -> None:
+    project = StubProject()
+    project.tools["test-tool"] = ErroringTool(
+        tools_base.ToolTextResponse(
+            text="remote failure",
+            data={
+                "content": [{"type": "text", "text": "remote failure"}],
+                "isError": True,
+                "structuredContent": {"reason": "denied"},
+            },
+            is_error=True,
+        )
+    )
+
+    node = models.Node(
+        name="dummy",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-tool-execution-error",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    result = await runner._execute_tool_call(
+        state.ToolCallReq(
+            id="call-test-tool",
+            name="test-tool",
+            arguments={"x": 1},
+        )
+    )
+
+    assert result.kind == runner_proto.ToolExecResultKind.RESPONSE
+    response = result.response
+    assert response.status == state.ToolCallStatus.FAILED
+    assert response.result is not None
+    assert response.result["error_type"] == "execution"
+    assert response.result["isError"] is True
+    assert response.result["structuredContent"]["reason"] == "denied"
+    assert response.result["text"] == "remote failure"
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_tool_protocol_failure_as_failed() -> None:
+    project = StubProject()
+    project.tools["test-tool"] = ProtocolFailingTool()
+
+    node = models.Node(
+        name="dummy",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-tool-protocol-error",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    result = await runner._execute_tool_call(
+        state.ToolCallReq(
+            id="call-test-tool",
+            name="test-tool",
+            arguments={"x": 1},
+        )
+    )
+
+    assert result.kind == runner_proto.ToolExecResultKind.RESPONSE
+    response = result.response
+    assert response.status == state.ToolCallStatus.FAILED
+    assert response.result is not None
+    assert response.result["error_type"] == "protocol"
+    assert response.result["error"] == "protocol failure"
+    assert response.result["source"] == "mcp"
 
 
 @pytest.mark.asyncio

@@ -195,6 +195,80 @@ async def test_project_mcp_tool_adapter_invokes_service_tool_call(tmp_path):
 
     assert result is not None
     assert result.text == "hello\nworld"
+    assert result.data is not None
+    assert result.data["content"][0]["text"] == "hello"
+    assert result.is_error is False
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_project_mcp_tool_adapter_preserves_remote_execution_error_payload(
+    tmp_path,
+):
+    settings = Settings(
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                )
+            )
+        },
+        mcp=MCPSettings(
+            sources={
+                "local": MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _PROJECT_MCP_SERVER],
+                    scope=MCPSourceScope.project,
+                ),
+            }
+        ),
+    )
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+    project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
+
+    await project.start()
+    assert project.mcp is not None
+
+    async def _call_tool(source_name: str, tool_name: str, arguments):
+        assert source_name == "local"
+        assert tool_name == "search"
+        assert arguments == {"q": "test"}
+        return {
+            "content": [
+                {"type": "text", "text": "remote failure"},
+            ],
+            "isError": True,
+            "structuredContent": {"code": "REMOTE_FAILURE"},
+        }
+
+    project.mcp.call_tool = _call_tool  # type: ignore[method-assign]
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [{"name": "search", "description": "Search docs"}],
+    )
+    project.refresh_tools_from_registry()
+
+    adapter = project.tools["mcp__local__search"]
+    result = await adapter.run(
+        ToolReq(
+            execution=state.WorkflowExecution(workflow_name="wf"),
+            spec=ToolSpec(name="mcp__local__search"),
+        ),
+        {"q": "test"},
+    )
+
+    assert result is not None
+    assert result.text == "remote failure"
+    assert result.is_error is True
+    assert result.data is not None
+    assert result.data["isError"] is True
+    assert result.data["structuredContent"]["code"] == "REMOTE_FAILURE"
 
     await project.shutdown()
 

@@ -112,6 +112,17 @@ class Runner:
             raw_result = await tool.run(tool_req, req.arguments)
         except RunnerStopped:
             raise
+        except tools_base.ToolExecutionError as exc:
+            result = dict(exc.payload or {})
+            result.setdefault("error", str(exc))
+            result["error_type"] = exc.error_type.value
+            resp = state.ToolCallResp(
+                id=req.id,
+                status=state.ToolCallStatus.FAILED,
+                name=req.name,
+                result=result,
+            )
+            return runner_proto.ToolExecResponse(response=resp)
         except Exception as exc:
             # TODO: send exception back?
             resp = state.ToolCallResp(
@@ -145,10 +156,22 @@ class Runner:
                 initial_message=initial_message,
             )
 
-        result_data = raw_result.model_dump()
+        if raw_result.data is not None:
+            result_data = dict(raw_result.data)
+            if raw_result.text is not None:
+                result_data.setdefault("text", raw_result.text)
+            if raw_result.is_error:
+                result_data["error_type"] = (
+                    tools_base.ToolExecutionErrorType.execution.value
+                )
+        else:
+            result_data = raw_result.model_dump(exclude_none=True)
+        status = state.ToolCallStatus.COMPLETED
+        if raw_result.is_error:
+            status = state.ToolCallStatus.FAILED
         resp = state.ToolCallResp(
             id=req.id,
-            status=state.ToolCallStatus.COMPLETED,
+            status=status,
             name=req.name,
             result=result_data,
         )

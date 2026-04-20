@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import pytest
@@ -166,6 +167,48 @@ for line in sys.stdin:
         cancelled.append(msg.get('params'))
         sys.stderr.write(json.dumps(cancelled) + '\\n')
         sys.stderr.flush()
+"""
+
+
+_LIST_CHANGED_SERVER = """
+import json
+import sys
+
+initialized = False
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'list-changed-server', 'version': '1.0.0'},
+                'capabilities': {
+                    'tools': {'listChanged': True}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        initialized = True
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'method': 'notifications/tools/list_changed'
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'tools/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'tools': [
+                    {'name': 'refreshed'}
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
 """
 
 
@@ -443,3 +486,27 @@ async def test_client_session_close_clears_negotiated_state() -> None:
     assert session.state.negotiation.protocol_version is None
     assert session.state.negotiation.server_info == {}
     assert session.state.negotiation.server_capabilities.tools is False
+
+
+@pytest.mark.asyncio
+async def test_client_session_dispatches_list_changed_notifications() -> None:
+    notifications: list[str] = []
+    notification_received = asyncio.Event()
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _LIST_CHANGED_SERVER]),
+    )
+
+    def _on_notification(notification) -> None:
+        notifications.append(notification.method)
+        if notification.method == "notifications/tools/list_changed":
+            notification_received.set()
+
+    session.add_notification_handler(_on_notification)
+
+    await session.start()
+    await asyncio.wait_for(notification_received.wait(), timeout=1.0)
+
+    assert notifications == ["notifications/tools/list_changed"]
+
+    await session.close()

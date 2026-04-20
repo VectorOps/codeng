@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import pytest
@@ -90,6 +91,49 @@ for line in sys.stdin:
         }) + '\\n')
         sys.stdout.flush()
         break
+"""
+
+
+_SERVICE_LIST_CHANGED_SERVER = """
+import json
+import sys
+
+initialized = False
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'service-list-changed', 'version': '1.0.0'},
+                'capabilities': {'tools': {'listChanged': True}}
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        initialized = True
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'method': 'notifications/tools/list_changed'
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'tools/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'tools': [
+                    {
+                        'name': 'refreshed',
+                        'description': 'Refreshed docs'
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
 """
 
 
@@ -421,3 +465,31 @@ async def test_service_does_not_retain_failed_session_start() -> None:
 
     assert service.get_session("broken") is None
     assert service.list_sessions() == {}
+
+
+@pytest.mark.asyncio
+async def test_service_refreshes_tools_after_list_changed_notification() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_LIST_CHANGED_SERVER],
+            )
+        }
+    )
+    service = MCPService(settings)
+
+    await service.start_session("local")
+
+    async def _wait_for_cache() -> dict[str, object]:
+        while True:
+            cached = service.list_cached_tools("local")
+            if "refreshed" in cached:
+                return cached
+            await asyncio.sleep(0.01)
+
+    cached = await asyncio.wait_for(_wait_for_cache(), timeout=1.0)
+
+    assert cached["refreshed"].description == "Refreshed docs"
+
+    await service.close_all()

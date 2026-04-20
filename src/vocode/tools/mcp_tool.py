@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from vocode.mcp import models as mcp_models
+from vocode.mcp import service as mcp_service
 from vocode.tools import base as tools_base
 
 
@@ -25,12 +26,21 @@ class MCPToolAdapter(tools_base.BaseTool):
         args: Any,
     ) -> tools_base.ToolTextResponse:
         if self.prj.mcp is None:
-            raise RuntimeError("MCP service is not available")
-        result = await self.prj.mcp.call_tool(
-            self.descriptor.source_name,
-            self.descriptor.tool_name,
-            args if isinstance(args, dict) else {},
-        )
+            raise tools_base.ToolExecutionError(
+                "MCP service is not available",
+                error_type=tools_base.ToolExecutionErrorType.protocol,
+            )
+        try:
+            result = await self.prj.mcp.call_tool(
+                self.descriptor.source_name,
+                self.descriptor.tool_name,
+                args if isinstance(args, dict) else {},
+            )
+        except mcp_service.MCPServiceError as exc:
+            raise tools_base.ToolExecutionError(
+                str(exc),
+                error_type=tools_base.ToolExecutionErrorType.protocol,
+            ) from exc
         content = result.get("content") or []
         text_parts: list[str] = []
         for item in content:
@@ -41,7 +51,11 @@ class MCPToolAdapter(tools_base.BaseTool):
             text = item.get("text")
             if isinstance(text, str):
                 text_parts.append(text)
-        return tools_base.ToolTextResponse(text="\n".join(text_parts) or None)
+        return tools_base.ToolTextResponse(
+            text="\n".join(text_parts) or None,
+            data=dict(result),
+            is_error=bool(result.get("isError", False)),
+        )
 
     async def openapi_spec(self, spec) -> Dict[str, Any]:
         return {
