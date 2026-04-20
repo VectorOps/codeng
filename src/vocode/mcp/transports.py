@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from vocode.mcp import process_manager as mcp_process_manager
 from vocode.mcp import protocol as mcp_protocol
 
 
@@ -27,9 +27,14 @@ class MCPStdioTransport:
         self._args = list(args or [])
         self._env = dict(env or {})
         self._cwd = cwd
-        self._startup_timeout_s = startup_timeout_s
-        self._shutdown_timeout_s = shutdown_timeout_s
-        self._proc: Optional[asyncio.subprocess.Process] = None
+        self._process_manager = mcp_process_manager.MCPStdioProcessManager(
+            command,
+            args=self._args,
+            env=self._env,
+            cwd=cwd,
+            startup_timeout_s=startup_timeout_s,
+            shutdown_timeout_s=shutdown_timeout_s,
+        )
         self._stderr_lines: List[str] = []
         self._stderr_task: Optional[asyncio.Task[None]] = None
 
@@ -39,43 +44,30 @@ class MCPStdioTransport:
 
     @property
     def is_running(self) -> bool:
-        return self._proc is not None and self._proc.returncode is None
+        return self._process_manager.is_running
 
     async def start(self) -> None:
         if self.is_running:
             return
         try:
-            self._proc = await asyncio.wait_for(
-                asyncio.create_subprocess_exec(
-                    self._command,
-                    *self._args,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=str(Path(self._cwd)) if self._cwd is not None else None,
-                    env=self._env or None,
-                ),
-                timeout=self._startup_timeout_s,
-            )
-        except asyncio.TimeoutError as exc:
-            raise MCPTransportError(
-                f"stdio transport startup timed out after {self._startup_timeout_s} seconds"
-            ) from exc
-        if self._proc is None:
-            raise MCPTransportError("failed to start stdio transport")
+            await self._process_manager.start()
+        except mcp_process_manager.MCPProcessError as exc:
+            raise MCPTransportError(str(exc)) from exc
         self._stderr_task = asyncio.create_task(self._collect_stderr())
 
     async def send(self, message: mcp_protocol.MCPJSONRPCMessage) -> None:
-        if not self.is_running or self._proc is None or self._proc.stdin is None:
+        proc = self._process_manager.process
+        if not self.is_running or proc is None or proc.stdin is None:
             raise MCPTransportError("stdio transport is not running")
         payload = message.model_dump_json(exclude_none=True) + "\n"
-        self._proc.stdin.write(payload.encode("utf-8"))
-        await self._proc.stdin.drain()
+        proc.stdin.write(payload.encode("utf-8"))
+        await proc.stdin.drain()
 
     async def receive(self) -> mcp_protocol.MCPJSONRPCMessage:
-        if not self.is_running or self._proc is None or self._proc.stdout is None:
+        proc = self._process_manager.process
+        if not self.is_running or proc is None or proc.stdout is None:
             raise MCPTransportError("stdio transport is not running")
-        line = await self._proc.stdout.readline()
+        line = await proc.stdout.readline()
         if not line:
             raise MCPTransportError(
                 "stdio transport closed before a message was received"
@@ -95,31 +87,16 @@ class MCPStdioTransport:
         return mcp_protocol.MCPJSONRPCResponse.model_validate(data)
 
     async def close(self) -> None:
-        proc = self._proc
-        if proc is None:
-            return
-        if proc.stdin is not None:
-            proc.stdin.close()
-            try:
-                await proc.stdin.wait_closed()
-            except Exception:
-                pass
         try:
-            await asyncio.wait_for(proc.wait(), timeout=self._shutdown_timeout_s)
-        except asyncio.TimeoutError:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=self._shutdown_timeout_s)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
+            await self._process_manager.close()
+        except mcp_process_manager.MCPProcessError as exc:
+            raise MCPTransportError(str(exc)) from exc
         if self._stderr_task is not None:
             await self._stderr_task
             self._stderr_task = None
-        self._proc = None
 
     async def _collect_stderr(self) -> None:
-        proc = self._proc
+        proc = self._process_manager.process
         if proc is None or proc.stderr is None:
             return
         while True:
