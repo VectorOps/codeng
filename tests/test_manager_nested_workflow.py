@@ -13,32 +13,15 @@ from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.settings import Settings, ToolSpec, WorkflowConfig
 from vocode.tools import base as tools_base
+from tests.stub_project import StubProject
 
 
-class NestedWorkflowTestProject:
+class NestedWorkflowTestProject(StubProject):
     def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+        super().__init__(settings=settings)
         self.tools: dict[str, tools_base.BaseTool] = {}
-        self.current_workflow: str | None = None
-        self.history = HistoryManager()
-        self.input_manager = InputManager()
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
         self.project_state = ProjectState()
-
-    async def start(self) -> None:
-        return None
-
-    async def shutdown(self) -> None:
-        await self.input_manager.reset_all()
-        return None
-
-    def add_llm_usage(
-        self,
-        prompt_delta: int,
-        completion_delta: int,
-        cost_delta: float,
-    ) -> None:
-        return None
 
 
 class NestedWorkflowTool(tools_base.BaseTool):
