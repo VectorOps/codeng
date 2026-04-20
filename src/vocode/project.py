@@ -186,6 +186,21 @@ class Project:
         stats.completion_tokens += int(completion_delta or 0)
         stats.cost_dollars += float(cost_delta or 0.0)
 
+    async def on_workflow_started(self, workflow_name: str) -> None:
+        self.current_workflow = workflow_name
+        if self.mcp is None:
+            return
+        await self.mcp.start_workflow(workflow_name)
+        for source_name in self.mcp.list_sessions().keys():
+            await self.mcp.refresh_tools(source_name)
+        self.refresh_tools_from_registry()
+
+    async def on_workflow_finished(self, workflow_name: str) -> None:
+        if self.mcp is None:
+            return
+        await self.mcp.finish_workflow(workflow_name)
+        self.refresh_tools_from_registry()
+
     # Lifecycle management
     async def start(self) -> None:
         """
