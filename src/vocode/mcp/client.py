@@ -35,59 +35,67 @@ class MCPClientSession:
 
     async def start(self) -> None:
         await self.transport.start()
-        await self.initialize()
+        try:
+            await self.initialize()
+        except Exception:
+            await self._mark_disconnected("session initialization failed")
+            raise
 
     async def initialize(self) -> Dict[str, Any]:
-        if not self.transport.is_running:
-            await self.transport.start()
-        request = self.protocol.create_request(
-            "initialize",
-            {
-                "protocolVersion": "2025-03-26",
-                "clientInfo": {
-                    "name": self._client_name,
-                    "version": self._client_version,
+        try:
+            if not self.transport.is_running:
+                await self.transport.start()
+            request = self.protocol.create_request(
+                "initialize",
+                {
+                    "protocolVersion": "2025-03-26",
+                    "clientInfo": {
+                        "name": self._client_name,
+                        "version": self._client_version,
+                    },
+                    "capabilities": self._client_capabilities.model_dump(
+                        exclude_none=True
+                    ),
                 },
-                "capabilities": self._client_capabilities.model_dump(exclude_none=True),
-            },
-        )
-        future = self.protocol.register_pending(request)
-        message = await self.transport.request(request)
-        if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
-            raise MCPClientError("unexpected request received during initialize")
-        if isinstance(message, mcp_protocol.MCPJSONRPCNotification):
-            raise MCPClientError(
-                "unexpected notification received before initialize response"
             )
-        self.protocol.handle_response(message)
-        result = await future
-        if isinstance(self.transport, mcp_transports.MCPHTTPTransport):
-            self.transport.set_protocol_version(result.get("protocolVersion"))
-        notification = self.protocol.build_initialized_notification()
-        await self.transport.notify(notification)
-        self.state = mcp_models.MCPSessionState(
-            source=self.source,
-            phase=mcp_models.MCPSessionPhase.operating,
-            initialized=True,
-            negotiation=mcp_models.MCPSessionNegotiation(
-                protocol_version=self.protocol.state.negotiation.protocol_version,
-                client_capabilities=self._client_capabilities,
-                server_capabilities=(
-                    self._parse_server_capabilities(result.get("capabilities") or {})
+            future = self.protocol.register_pending(request)
+            message = await self.transport.request(request)
+            if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
+                raise MCPClientError("unexpected request received during initialize")
+            if isinstance(message, mcp_protocol.MCPJSONRPCNotification):
+                raise MCPClientError(
+                    "unexpected notification received before initialize response"
+                )
+            self.protocol.handle_response(message)
+            result = await future
+            if isinstance(self.transport, mcp_transports.MCPHTTPTransport):
+                self.transport.set_protocol_version(result.get("protocolVersion"))
+            notification = self.protocol.build_initialized_notification()
+            await self.transport.notify(notification)
+            self.state = mcp_models.MCPSessionState(
+                source=self.source,
+                phase=mcp_models.MCPSessionPhase.operating,
+                initialized=True,
+                negotiation=mcp_models.MCPSessionNegotiation(
+                    protocol_version=self.protocol.state.negotiation.protocol_version,
+                    client_capabilities=self._client_capabilities,
+                    server_capabilities=(
+                        self._parse_server_capabilities(
+                            result.get("capabilities") or {}
+                        )
+                    ),
+                    server_info=self.protocol.state.negotiation.server_info,
                 ),
-                server_info=self.protocol.state.negotiation.server_info,
-            ),
-        )
-        return result
+            )
+            return result
+        except Exception as exc:
+            await self._mark_disconnected(str(exc))
+            if isinstance(exc, MCPClientError):
+                raise
+            raise MCPClientError(str(exc)) from exc
 
     async def close(self) -> None:
-        await self.transport.close()
-        self.state = mcp_models.MCPSessionState(
-            source=self.source,
-            phase=mcp_models.MCPSessionPhase.closed,
-            initialized=False,
-            negotiation=self.state.negotiation,
-        )
+        await self._mark_disconnected(self.state.last_error)
 
     async def request(
         self,
@@ -142,6 +150,9 @@ class MCPClientSession:
             raise MCPClientError(
                 f"request timed out after {timeout_s} seconds"
             ) from exc
+        except mcp_transports.MCPTransportError as exc:
+            await self._mark_disconnected(str(exc))
+            raise MCPClientError(str(exc)) from exc
         except mcp_protocol.MCPProtocolError as exc:
             raise MCPClientError(str(exc)) from exc
 
@@ -196,3 +207,15 @@ class MCPClientSession:
             resources=isinstance(value.get("resources"), dict)
             or bool(value.get("resources")),
         )
+
+    async def _mark_disconnected(self, error: Optional[str]) -> None:
+        try:
+            if self.transport.is_running:
+                await self.transport.close()
+        finally:
+            self.state = mcp_models.MCPSessionState(
+                source=self.source,
+                phase=mcp_models.MCPSessionPhase.closed,
+                initialized=False,
+                last_error=error,
+            )

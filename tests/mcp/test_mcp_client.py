@@ -243,7 +243,10 @@ async def test_client_session_rejects_unexpected_notification_during_initialize(
     with pytest.raises(MCPClientError, match="unexpected notification"):
         await session.initialize()
 
-    await session.close()
+    assert session.state.phase == "closed"
+    assert session.state.initialized is False
+    assert session.state.negotiation.protocol_version is None
+    assert session.state.last_error is not None
 
 
 @pytest.mark.asyncio
@@ -420,3 +423,23 @@ async def test_client_session_request_with_timeout_sends_cancel_notification() -
     assert transport.stderr_lines
     assert '"requestId": 2' in transport.stderr_lines[-1]
     assert '"reason": "request timed out"' in transport.stderr_lines[-1]
+
+
+@pytest.mark.asyncio
+async def test_client_session_close_clears_negotiated_state() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _HANDSHAKE_SERVER]),
+    )
+
+    await session.start()
+
+    assert session.state.negotiation.protocol_version == "2025-03-26"
+
+    await session.close()
+
+    assert session.state.phase == "closed"
+    assert session.state.initialized is False
+    assert session.state.negotiation.protocol_version is None
+    assert session.state.negotiation.server_info == {}
+    assert session.state.negotiation.server_capabilities.tools is False

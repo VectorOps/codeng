@@ -586,6 +586,27 @@ Deliverable:
 21. Implement workflow-scoped root recalculation and roots change notification.
 22. Add workflow lifecycle tests.
 
+Detailed work breakdown:
+
+- `src/vocode/runner/runner.py`
+  - call `project.on_workflow_started(...)` from `_init_executors()` before executor init completes
+  - call `project.on_workflow_finished(...)` from `_shutdown_executors()` after executor shutdown
+  - preserve current stop/resume semantics so workflow-scoped MCP sessions can survive runner stop and be finalized only when appropriate
+- `src/vocode/project.py`
+  - route runner lifecycle callbacks into `MCPService.start_workflow(...)` and `MCPService.finish_workflow(...)`
+  - refresh MCP tool cache when new workflow-scoped sources start
+  - refresh merged project tool registry when workflow-scoped MCP source availability changes
+- `src/vocode/mcp/service.py`
+  - reconcile desired workflow-scoped sessions against currently running workflow-scoped sessions
+  - avoid restarting unchanged workflow-scoped sessions across stop/resume cycles
+  - add workflow-aware roots recalculation entrypoints once roots handling is implemented
+- tests
+  - verify runner start initializes workflow-scoped MCP sessions
+  - verify runner finish closes workflow-scoped MCP sessions
+  - verify runner stop/resume reuses workflow-scoped MCP sessions without restart
+  - verify project refreshes MCP tools exactly once per workflow start when new workflow-scoped sources appear
+  - later add root recalculation and `roots/list_changed` coverage when root support is completed
+
 Deliverable:
 
 - workflow-scoped MCP sources behave correctly over runner lifecycle
@@ -598,6 +619,46 @@ Deliverable:
 26. Extend `Project.refresh_tools_from_registry()` to merge enabled MCP tools.
 27. Implement workflow selector resolution with wildcard enable and explicit disable support.
 28. Add executor and tool materialization tests.
+29. Integrate MCP auth flows with the TUI for operator-guided login and callback handling.
+
+Detailed work breakdown:
+
+- `src/vocode/mcp/converters.py`
+  - validate remote MCP tool payloads and reject malformed descriptors without failing the whole source
+  - normalize missing `inputSchema` to an empty object schema
+  - preserve descriptive metadata needed by adapters and later discovery UX
+  - later extend conversion to retain richer output or annotation metadata if needed
+- `src/vocode/tools/mcp_tool.py`
+  - implement `MCPToolAdapter` over cached MCP descriptors
+  - expose normalized OpenAPI-compatible schema through `openapi_spec(...)`
+  - delegate runtime execution to `project.mcp.call_tool(...)`
+  - later improve result handling so protocol failures stay distinct from remote `isError: true` tool results in the internal tool response path
+- `src/vocode/mcp/client.py`
+  - keep `tools/list` pagination support in the session layer
+  - add notification-driven refresh support for `notifications/tools/list_changed` once notification handling is implemented
+  - keep `tools/call` transport/protocol behavior separated from higher-level execution formatting
+- `src/vocode/mcp/service.py`
+  - cache discovered tool descriptors per source
+  - expose refresh helpers used by project and workflow lifecycle code
+  - later add refresh triggers when servers advertise `tools.listChanged`
+- `src/vocode/project.py`
+  - materialize enabled MCP tools into `project.tools` using canonical internal names
+  - respect workflow MCP enable/disable state and selector filtering
+  - apply disabled tool overrides after wildcard allow selectors
+- tests
+  - verify parameterless tool schema normalization
+  - verify MCP tool adapters are materialized into `project.tools`
+  - verify adapter execution delegates into the MCP service
+  - verify wildcard allow plus explicit disable selector behavior
+  - verify MCP auth flows can surface browser/login prompts through the TUI and complete callback-driven authorization
+  - later add server notification refresh coverage and protocol-vs-execution failure formatting coverage
+  - later add TUI coverage for cancellation and failed MCP auth login flows
+
+- `src/vocode/mcp/auth.py`, `src/vocode/connect_auth.py`, `src/vocode/manager/`, `src/vocode/tui/`
+  - connect MCP auth login flows to the existing interactive auth/session infrastructure where practical
+  - surface authorization URL, progress, prompts, and completion/failure state through the TUI
+  - support callback-driven browser auth for MCP sources without embedding auth logic in tool adapters
+  - ensure credentials and tokens remain isolated per MCP source and canonical resource
 
 Deliverable:
 
@@ -675,15 +736,39 @@ This delivers the core requested capability while keeping the current architectu
 
 ### Phase 3 status
 
-[ ] Implement `src/vocode/mcp/auth.py` for protected resource discovery, auth server discovery, PKCE flow support, and token handling
+[x] Implement `src/vocode/mcp/auth.py` for protected resource discovery, auth server discovery, PKCE flow support, and token handling
 [x] Implement `src/vocode/mcp/registry.py` for source descriptor indexing
-[ ] Extend `src/vocode/mcp/registry.py` with effective root resolution and selector utilities
+[x] Extend `src/vocode/mcp/registry.py` with effective root resolution and selector utilities
 [x] Implement `src/vocode/mcp/converters.py` for basic tool normalization
 [x] Implement `src/vocode/mcp/service.py` for source lifecycle, session ownership, negotiated metadata lookup, and tool cache management
-[ ] Extend `src/vocode/mcp/service.py` with auth coordination
+[x] Extend `src/vocode/mcp/service.py` with auth coordination
 [ ] Extend `src/vocode/mcp/service.py` with roots handling and root recalculation
 [x] Integrate `Project.start()` and `Project.shutdown()` with the service for project-scoped stdio sources
 [x] Add service tests
-[ ] Add auth tests
+[x] Add auth tests
 [x] If workflow did not change, but runner started, stopped or restarted - there's no need to restart MCP servers. Implement differential start/stop of MCP servers needed.
 [x] Move MCP resolution, state and tool starting logic out of project
+[x] Clear negotiated session state on disconnect and isolate failed session startup
+
+### Phase 4 status
+
+[x] Add runner hooks to notify MCP service on workflow start and finish
+[x] Implement workflow-scoped stdio source startup and shutdown behavior
+[ ] Implement workflow-scoped root recalculation and roots change notification
+[x] Add workflow lifecycle tests
+[x] Preserve workflow-scoped MCP sessions across runner stop/resume when the workflow does not change
+[x] Refresh MCP tool cache when workflow-scoped sources start
+[x] Refresh merged project tools when workflow-scoped MCP source availability changes
+
+### Phase 5 status
+
+[x] Implement `MCPToolAdapter` and basic conversion helpers
+[x] Normalize parameterless MCP tool schemas to an empty object schema
+[x] Extend `Project.refresh_tools_from_registry()` to merge enabled MCP tools
+[x] Implement workflow selector resolution with wildcard enable and explicit disable support
+[x] Add executor and tool materialization tests
+[x] Implement `tools/list` pagination handling in the client session layer
+[ ] Implement refresh support for `notifications/tools/list_changed`
+[ ] Implement `tools/call` handling with protocol-error versus execution-error separation through the internal tool pipeline
+[ ] Preserve richer MCP tool result payloads beyond plain text extraction in the adapter layer
+[ ] Integrate MCP auth flows into the TUI for operator-guided login and callback handling

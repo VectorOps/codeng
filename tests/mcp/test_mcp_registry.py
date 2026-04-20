@@ -2,6 +2,8 @@ from vocode.mcp.registry import MCPRegistry
 from vocode.settings import MCPRootEntry
 from vocode.settings import MCPRootSettings
 from vocode.settings import MCPSettings
+from vocode.settings import MCPExternalSourceSettings
+from vocode.settings import MCPSettings
 from vocode.settings import MCPStdioSourceSettings
 from vocode.settings import MCPToolSelector
 from vocode.settings import MCPWorkflowSettings
@@ -72,6 +74,57 @@ def test_registry_falls_back_to_project_root_for_stdio_without_roots() -> None:
     assert [item.uri for item in roots] == ["file:///project"]
 
 
+def test_registry_lists_source_names_by_scope_and_transport() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(command="uvx"),
+            "remote": MCPExternalSourceSettings(url="https://example.com/mcp"),
+        }
+    )
+    registry = MCPRegistry(settings)
+
+    assert registry.list_source_names() == ["local", "remote"]
+    assert registry.list_source_names(scope="workflow") == ["local"]
+    assert registry.list_source_names(scope="project") == ["remote"]
+    assert registry.list_source_names(transport="stdio") == ["local"]
+    assert registry.list_source_names(transport="http") == ["remote"]
+
+
+def test_registry_resolves_workflow_source_descriptors_from_selectors() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(command="uvx"),
+            "local_b": MCPStdioSourceSettings(command="uvx"),
+            "remote": MCPExternalSourceSettings(url="https://example.com/mcp"),
+        }
+    )
+    registry = MCPRegistry(settings)
+    workflow = WorkflowConfig(
+        mcp=MCPWorkflowSettings(
+            tools=[MCPToolSelector(source="local_b", tool="*")],
+        )
+    )
+
+    sources = registry.resolve_workflow_sources(workflow)
+
+    assert list(sources.keys()) == ["local_b"]
+    assert sources["local_b"].scope == "workflow"
+
+
+def test_registry_resolves_all_workflow_sources_without_workflow_context() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(command="uvx"),
+            "remote": MCPExternalSourceSettings(url="https://example.com/mcp"),
+        }
+    )
+    registry = MCPRegistry(settings)
+
+    sources = registry.resolve_workflow_sources(None)
+
+    assert list(sources.keys()) == ["local"]
+
+
 def test_registry_resolves_workflow_tools_with_allow_and_deny_selectors() -> None:
     registry = MCPRegistry(_make_settings())
     workflow = WorkflowConfig(
@@ -102,3 +155,17 @@ def test_registry_returns_no_tools_when_workflow_mcp_is_missing_or_disabled() ->
         )
         == []
     )
+
+
+def test_registry_reports_if_workflow_tool_is_enabled() -> None:
+    registry = MCPRegistry(_make_settings())
+    workflow = WorkflowConfig(
+        mcp=MCPWorkflowSettings(
+            tools=[MCPToolSelector(source="local", tool="*")],
+            disabled_tools=[MCPToolSelector(source="local", tool="search")],
+        )
+    )
+
+    assert registry.is_workflow_tool_enabled(workflow, "local", "fetch") is True
+    assert registry.is_workflow_tool_enabled(workflow, "local", "search") is False
+    assert registry.is_workflow_tool_enabled(None, "local", "fetch") is False

@@ -24,7 +24,6 @@ from .connect_auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 from vocode.mcp.service import MCPService
-from vocode.mcp import tool_resolution
 from vocode.tools.mcp_tool import MCPToolAdapter
 
 
@@ -155,13 +154,11 @@ class Project:
         source_name: str,
         tool_name: str,
     ) -> bool:
-        if self.settings is None or self.current_workflow is None:
+        if self.settings is None or self.current_workflow is None or self.mcp is None:
             return False
         workflow = self.settings.workflows.get(self.current_workflow)
-        if workflow is None or workflow.mcp is None:
-            return False
-        return tool_resolution.is_workflow_tool_enabled(
-            workflow.mcp,
+        return self.mcp.registry.is_workflow_tool_enabled(
+            workflow,
             source_name,
             tool_name,
         )

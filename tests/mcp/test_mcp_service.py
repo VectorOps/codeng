@@ -77,6 +77,22 @@ for line in sys.stdin:
 """
 
 
+_BROKEN_SERVICE_SERVER = """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'method': 'notifications/ready'
+        }) + '\\n')
+        sys.stdout.flush()
+        break
+"""
+
+
 def _make_settings() -> MCPSettings:
     return MCPSettings(
         sources={
@@ -386,3 +402,22 @@ async def test_service_starts_external_http_session_with_auth(
 
     await service.close_all()
     await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_service_does_not_retain_failed_session_start() -> None:
+    settings = MCPSettings(
+        sources={
+            "broken": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _BROKEN_SERVICE_SERVER],
+            )
+        }
+    )
+    service = MCPService(settings)
+
+    with pytest.raises(MCPServiceError, match="failed to start mcp source broken"):
+        await service.start_session("broken")
+
+    assert service.get_session("broken") is None
+    assert service.list_sessions() == {}

@@ -9,7 +9,6 @@ from vocode.mcp import client as mcp_client
 from vocode.mcp import converters as mcp_converters
 from vocode.mcp import models as mcp_models
 from vocode.mcp import registry as mcp_registry
-from vocode.mcp import tool_resolution
 from vocode.mcp import transports as mcp_transports
 
 
@@ -151,7 +150,12 @@ class MCPService:
                 headers=headers,
             )
         session = mcp_client.MCPClientSession(source, transport)
-        await session.start()
+        try:
+            await session.start()
+        except mcp_client.MCPClientError as exc:
+            raise MCPServiceError(
+                f"failed to start mcp source {source_name}: {exc}"
+            ) from exc
         self._sessions[source_name] = session
         return session
 
@@ -220,13 +224,4 @@ class MCPService:
         self,
         workflow: Optional[vocode_settings.WorkflowConfig],
     ) -> list[str]:
-        if self._settings is None:
-            return []
-        if workflow is None:
-            names: list[str] = []
-            for name, source in self._settings.sources.items():
-                if source.scope.value != "workflow":
-                    continue
-                names.append(name)
-            return names
-        return tool_resolution.resolve_workflow_source_names(self._settings, workflow)
+        return list(self._registry.resolve_workflow_sources(workflow).keys())
