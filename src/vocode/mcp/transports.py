@@ -65,6 +65,16 @@ class MCPStdioTransport:
         proc.stdin.write(payload.encode("utf-8"))
         await proc.stdin.drain()
 
+    async def notify(self, message: mcp_protocol.MCPJSONRPCNotification) -> None:
+        await self.send(message)
+
+    async def request(
+        self,
+        message: mcp_protocol.MCPJSONRPCMessage,
+    ) -> mcp_protocol.MCPJSONRPCMessage:
+        await self.send(message)
+        return await self.receive()
+
     async def receive(self) -> mcp_protocol.MCPJSONRPCMessage:
         proc = self._process_manager.process
         if not self.is_running or proc is None or proc.stdout is None:
@@ -135,11 +145,29 @@ class MCPHTTPTransport:
         self._session = aiohttp.ClientSession()
         self._owns_session = True
 
+    def set_protocol_version(self, value: Optional[str]) -> None:
+        self._protocol_version = value
+
     async def send(self, message: mcp_protocol.MCPJSONRPCMessage) -> None:
         raise MCPTransportError("HTTP transport does not support buffered send")
 
     async def receive(self) -> mcp_protocol.MCPJSONRPCMessage:
         raise MCPTransportError("HTTP transport does not support buffered receive")
+
+    async def notify(self, message: mcp_protocol.MCPJSONRPCNotification) -> None:
+        if not self.is_running or self._session is None:
+            raise MCPTransportError("http transport is not running")
+        headers = dict(self._headers)
+        if self._auth_token is not None:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
+        if self._protocol_version is not None:
+            headers["MCP-Protocol-Version"] = self._protocol_version
+        async with self._session.post(
+            self._url,
+            json=message.model_dump(exclude_none=True),
+            headers=headers,
+        ) as response:
+            await response.read()
 
     async def request(
         self,

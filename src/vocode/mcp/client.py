@@ -15,7 +15,7 @@ class MCPClientSession:
     def __init__(
         self,
         source: mcp_models.MCPSourceDescriptor,
-        transport: mcp_transports.MCPStdioTransport,
+        transport: mcp_transports.MCPHTTPTransport | mcp_transports.MCPStdioTransport,
         *,
         client_name: str = "vocode",
         client_version: str = "0",
@@ -50,8 +50,7 @@ class MCPClientSession:
             },
         )
         future = self.protocol.register_pending(request)
-        await self.transport.send(request)
-        message = await self.transport.receive()
+        message = await self.transport.request(request)
         if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
             raise MCPClientError("unexpected request received during initialize")
         if isinstance(message, mcp_protocol.MCPJSONRPCNotification):
@@ -60,8 +59,10 @@ class MCPClientSession:
             )
         self.protocol.handle_response(message)
         result = await future
+        if isinstance(self.transport, mcp_transports.MCPHTTPTransport):
+            self.transport.set_protocol_version(result.get("protocolVersion"))
         notification = self.protocol.build_initialized_notification()
-        await self.transport.send(notification)
+        await self.transport.notify(notification)
         self.state = mcp_models.MCPSessionState(
             source=self.source,
             phase=mcp_models.MCPSessionPhase.operating,
@@ -96,8 +97,7 @@ class MCPClientSession:
         try:
             request = self.protocol.create_request(method, params)
             future = self.protocol.register_pending(request)
-            await self.transport.send(request)
-            message = await self.transport.receive()
+            message = await self.transport.request(request)
             if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
                 raise MCPClientError(
                     "unexpected request received while waiting for response"

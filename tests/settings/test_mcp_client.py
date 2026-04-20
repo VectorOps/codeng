@@ -3,12 +3,14 @@ from __future__ import annotations
 import sys
 
 import pytest
+from aiohttp import web
 
 from vocode.mcp.client import MCPClientError
 from vocode.mcp.client import MCPClientSession
 from vocode.mcp.models import MCPClientCapabilities
 from vocode.mcp.models import MCPSourceDescriptor
 from vocode.mcp.models import MCPTransportKind
+from vocode.mcp.transports import MCPHTTPTransport
 from vocode.mcp.transports import MCPStdioTransport
 
 
@@ -133,6 +135,17 @@ def _make_source() -> MCPSourceDescriptor:
         source_name="local",
         transport=MCPTransportKind.stdio,
         scope="workflow",
+        startup_timeout_s=15,
+        shutdown_timeout_s=10,
+        request_timeout_s=30,
+    )
+
+
+def _make_http_source() -> MCPSourceDescriptor:
+    return MCPSourceDescriptor(
+        source_name="remote",
+        transport=MCPTransportKind.http,
+        scope="project",
         startup_timeout_s=15,
         shutdown_timeout_s=10,
         request_timeout_s=30,
@@ -270,3 +283,81 @@ async def test_client_session_call_tool_surfaces_protocol_error() -> None:
         await session.call_tool("explode")
 
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_initialize_and_request_over_http_transport(
+    unused_tcp_port,
+) -> None:
+    state = {"initialized": False, "protocol_headers": []}
+
+    async def handler(request: web.Request) -> web.Response:
+        payload = await request.json()
+        state["protocol_headers"].append(request.headers.get("MCP-Protocol-Version"))
+        method = payload.get("method")
+        if method == "initialize":
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {
+                        "protocolVersion": "2025-03-26",
+                        "serverInfo": {"name": "http-mcp", "version": "1.0.0"},
+                        "capabilities": {"tools": {"listChanged": True}},
+                    },
+                }
+            )
+        if method == "notifications/initialized":
+            state["initialized"] = True
+            return web.json_response({})
+        if method == "tools/list":
+            assert state["initialized"] is True
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {"tools": [{"name": "http-search"}]},
+                }
+            )
+        if method == "tools/call":
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {
+                        "content": [{"type": "text", "text": "http-ok"}],
+                        "isError": False,
+                    },
+                }
+            )
+        raise AssertionError(f"unexpected method: {method}")
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", unused_tcp_port)
+    await site.start()
+
+    session = MCPClientSession(
+        _make_http_source(),
+        MCPHTTPTransport(f"http://127.0.0.1:{unused_tcp_port}/mcp"),
+    )
+
+    await session.start()
+    tools = await session.list_tools()
+    call_result = await session.call_tool("http-search", {"q": "test"})
+
+    assert session.state.initialized is True
+    assert session.state.negotiation.server_info["name"] == "http-mcp"
+    assert tools["tools"][0]["name"] == "http-search"
+    assert call_result["content"][0]["text"] == "http-ok"
+    assert state["protocol_headers"] == [
+        None,
+        "2025-03-26",
+        "2025-03-26",
+        "2025-03-26",
+    ]
+
+    await session.close()
+    await runner.cleanup()
