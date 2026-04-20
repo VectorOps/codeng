@@ -685,3 +685,5 @@ This delivers the core requested capability while keeping the current architectu
 [x] Integrate `Project.start()` and `Project.shutdown()` with the service for project-scoped stdio sources
 [x] Add service tests
 [ ] Add auth tests
+[ ] If workflow did not change, but runner started, stopped or restarted - there's no need to restart MCP servers. Implement differential start/stop of MCP servers needed.
+[ ] Move MCP resolution, state and tool starting logic out of project
