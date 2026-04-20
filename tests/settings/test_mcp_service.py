@@ -85,9 +85,18 @@ async def test_service_starts_and_reuses_session_for_known_source() -> None:
     assert session1 is session2
     assert session1.state.initialized is True
     assert session1.state.negotiation.server_info["name"] == "service-server"
+    assert set(service.list_active_sources().keys()) == {"local"}
+    assert service.list_active_sources()["local"].source_name == "local"
+    assert service.get_negotiation("local") is not None
+    assert service.get_negotiation("local").protocol_version == "2025-03-26"
+    assert service.get_session_state("local") is not None
+    assert service.get_session_state("local").initialized is True
+    assert service.get_negotiation("missing") is None
+    assert service.get_session_state("missing") is None
 
     await service.close_all()
     assert service.list_sessions() == {}
+    assert service.list_active_sources() == {}
 
 
 @pytest.mark.asyncio

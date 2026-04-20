@@ -26,8 +26,30 @@ class MCPService:
     def list_sessions(self) -> Dict[str, mcp_client.MCPClientSession]:
         return dict(self._sessions)
 
+    def list_active_sources(self) -> Dict[str, mcp_models.MCPSourceDescriptor]:
+        out: Dict[str, mcp_models.MCPSourceDescriptor] = {}
+        for name, session in self._sessions.items():
+            out[name] = session.source
+        return out
+
     def get_session(self, source_name: str) -> Optional[mcp_client.MCPClientSession]:
         return self._sessions.get(source_name)
+
+    def get_negotiation(
+        self, source_name: str
+    ) -> Optional[mcp_models.MCPSessionNegotiation]:
+        session = self._sessions.get(source_name)
+        if session is None:
+            return None
+        return session.state.negotiation
+
+    def get_session_state(
+        self, source_name: str
+    ) -> Optional[mcp_models.MCPSessionState]:
+        session = self._sessions.get(source_name)
+        if session is None:
+            return None
+        return session.state
 
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
         existing = self._sessions.get(source_name)
