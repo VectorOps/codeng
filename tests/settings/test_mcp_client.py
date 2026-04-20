@@ -16,6 +16,8 @@ _HANDSHAKE_SERVER = """
 import json
 import sys
 
+initialized = False
+
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get('method') == 'initialize':
@@ -33,7 +35,20 @@ for line in sys.stdin:
         }) + '\\n')
         sys.stdout.flush()
     elif msg.get('method') == 'notifications/initialized':
-        break
+        initialized = True
+    elif msg.get('method') == 'tools/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'tools': [
+                    {'name': 'search'},
+                    {'name': 'fetch'}
+                ],
+                'nextCursor': 'cursor-2'
+            }
+        }) + '\\n')
+        sys.stdout.flush()
 """
 
 
@@ -49,6 +64,30 @@ for line in sys.stdin:
             'method': 'notifications/ready'
         }) + '\\n')
         sys.stdout.flush()
+        break
+"""
+
+
+_NO_TOOLS_SERVER = """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'mcp-no-tools', 'version': '1.0.0'},
+                'capabilities': {
+                    'roots': {'listChanged': False}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
         break
 """
 
@@ -115,5 +154,36 @@ async def test_client_session_rejects_unexpected_notification_during_initialize(
 
     with pytest.raises(MCPClientError, match="unexpected notification"):
         await session.initialize()
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_list_tools_after_initialize() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _HANDSHAKE_SERVER]),
+    )
+
+    await session.start()
+    result = await session.list_tools()
+
+    assert [item["name"] for item in result["tools"]] == ["search", "fetch"]
+    assert result["nextCursor"] == "cursor-2"
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_rejects_tools_list_when_capability_missing() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _NO_TOOLS_SERVER]),
+    )
+
+    await session.start()
+
+    with pytest.raises(MCPClientError, match="tools capability"):
+        await session.list_tools()
 
     await session.close()

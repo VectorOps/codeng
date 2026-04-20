@@ -86,6 +86,39 @@ class MCPClientSession:
             negotiation=self.state.negotiation,
         )
 
+    async def request(
+        self,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not self.state.initialized:
+            raise MCPClientError("session must be initialized before sending requests")
+        try:
+            request = self.protocol.create_request(method, params)
+            future = self.protocol.register_pending(request)
+            await self.transport.send(request)
+            message = await self.transport.receive()
+            if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
+                raise MCPClientError(
+                    "unexpected request received while waiting for response"
+                )
+            if isinstance(message, mcp_protocol.MCPJSONRPCNotification):
+                raise MCPClientError(
+                    "unexpected notification received while waiting for response"
+                )
+            self.protocol.handle_response(message)
+            return await future
+        except mcp_protocol.MCPProtocolError as exc:
+            raise MCPClientError(str(exc)) from exc
+
+    async def list_tools(self, cursor: Optional[str] = None) -> Dict[str, Any]:
+        if not self.state.negotiation.server_capabilities.tools:
+            raise MCPClientError("server does not advertise tools capability")
+        params: Dict[str, Any] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self.request("tools/list", params)
+
     def _parse_server_capabilities(
         self, value: Dict[str, Any]
     ) -> mcp_models.MCPServerCapabilities:
