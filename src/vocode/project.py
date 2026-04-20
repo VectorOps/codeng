@@ -23,6 +23,7 @@ from .history.manager import HistoryManager
 from .connect_auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
+from vocode.mcp.service import MCPService
 
 
 class Project:
@@ -45,6 +46,7 @@ class Project:
         self.processes: Optional[ProcessManager] = None
         self.shells: Optional[ShellManager] = None
         self.skills: List[Skill] = []
+        self.mcp: Optional[MCPService] = None
         self._queue = Queue()
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
@@ -182,6 +184,14 @@ class Project:
         # Register tools
         self.refresh_tools_from_registry()
 
+        if self.mcp is None:
+            mcp_settings = self.settings.mcp if self.settings is not None else None
+            self.mcp = MCPService(mcp_settings)
+        if self.settings and self.settings.mcp and self.settings.mcp.enabled:
+            for name, source in self.settings.mcp.sources.items():
+                if source.scope.value == "project" and source.kind == "stdio":
+                    await self.mcp.start_session(name)
+
         # Discover skills
         self.skills = discover_skills(self.base_path)
 
@@ -191,6 +201,8 @@ class Project:
     async def shutdown(self) -> None:
         """Gracefully shut down project components."""
         await self.input_manager.reset_all()
+        if self.mcp is not None:
+            await self.mcp.close_all()
         # Stop shell manager before underlying processes
         if self.shells is not None:
             await self.shells.stop()
