@@ -53,6 +53,9 @@ class StubProject:
         stats.completion_tokens += int(completion_delta or 0)
         stats.cost_dollars += float(cost_delta or 0.0)
 
+    def refresh_tools_from_registry(self) -> None:
+        return None
+
     async def start(self) -> None:
         return None
 

@@ -450,6 +450,8 @@ _RUNNER_MCP_SERVER = """
 import json
 import sys
 
+initialized = False
+
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get('method') == 'initialize':
@@ -464,7 +466,16 @@ for line in sys.stdin:
         }) + '\\n')
         sys.stdout.flush()
     elif msg.get('method') == 'notifications/initialized':
-        break
+        initialized = True
+    elif msg.get('method') == 'tools/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'tools': []
+            }
+        }) + '\\n')
+        sys.stdout.flush()
 """
 
 
@@ -3049,3 +3060,70 @@ async def test_runner_initializes_and_finishes_workflow_scoped_mcp_sessions() ->
 
     assert runner.status == state.RunnerStatus.FINISHED
     assert project.mcp.list_sessions() == {}
+
+
+@pytest.mark.asyncio
+async def test_runner_refreshes_mcp_tools_once_when_workflow_starts() -> None:
+    settings = vocode_settings.Settings(
+        workflows={
+            "wf-runner-mcp": vocode_settings.WorkflowConfig(
+                mcp=vocode_settings.MCPWorkflowSettings(
+                    tools=[vocode_settings.MCPToolSelector(source="wf_local", tool="*")]
+                )
+            )
+        },
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "wf_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                )
+            }
+        ),
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp)
+
+    refresh_calls: list[str] = []
+    original_refresh_tools = project.mcp.refresh_tools
+
+    async def _refresh_tools(source_name: str):
+        refresh_calls.append(source_name)
+        return await original_refresh_tools(source_name)
+
+    project.mcp.refresh_tools = _refresh_tools  # type: ignore[method-assign]
+
+    registry_refresh_calls = {"count": 0}
+
+    def _refresh_registry() -> None:
+        registry_refresh_calls["count"] += 1
+
+    project.refresh_tools_from_registry = _refresh_registry
+
+    node = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-runner-mcp", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(role=models.Role.USER, text="start"),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert refresh_calls == ["wf_local"]
+    assert registry_refresh_calls["count"] == 2

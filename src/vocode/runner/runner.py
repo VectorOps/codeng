@@ -521,7 +521,11 @@ class Runner:
 
     async def _init_executors(self) -> None:
         if self.project.mcp is not None:
+            self.project.current_workflow = self.workflow.name
             await self.project.mcp.start_workflow(self.workflow.name)
+            for source_name in self.project.mcp.list_sessions().keys():
+                await self.project.mcp.refresh_tools(source_name)
+            self.project.refresh_tools_from_registry()
         for executor in self._executors.values():
             await executor.init()
 
@@ -530,6 +534,7 @@ class Runner:
             await executor.shutdown()
         if self.project.mcp is not None:
             await self.project.mcp.finish_workflow(self.workflow.name)
+            self.project.refresh_tools_from_registry()
 
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
