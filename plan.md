@@ -643,3 +643,45 @@ If implementation must be cut to the smallest safe version, MVP V1 should includ
 V2 then adds hidden tools and discovery UX. V3 then adds prompt and resource access tools.
 
 This delivers the core requested capability while keeping the current architecture intact.
+
+## Current implementation status
+
+### Phase 1 status
+
+[x] Add MCP settings models in `src/vocode/settings/models.py`
+[x] Add workflow-level MCP selector models
+[x] Add roots models and normalization rules
+[x] Add protocol and timeout settings models
+[x] Add auth settings models for HTTP sources
+[x] Add settings and validation tests
+[x] Add stricter validation for source names, URL schemes, and root merge edge cases
+[x] Add loader/include coverage for MCP config composition and interpolation
+
+### Phase 2 status
+
+[x] Create runtime descriptor and session models in `src/vocode/mcp/models.py`
+[x] Implement `src/vocode/mcp/protocol.py` for JSON-RPC, request tracking, initialization sequencing, and timeouts
+[x] Implement stdio transport behavior in `src/vocode/mcp/transports.py`
+[x] Implement HTTP transport behavior in `src/vocode/mcp/transports.py`
+[x] Implement `src/vocode/mcp/process_manager.py` for stdio subprocess lifecycle
+[x] Implement `src/vocode/mcp/client.py` for session orchestration and negotiated metadata capture
+[x] Implement `tools/list` pagination in the client
+[x] Implement `tools/call` in the client
+[x] Add timeout and cancellation handling in the protocol/client layer
+[x] Add protocol, transport, client, process-manager, and negotiation tests
+[ ] Add roots request handling in the client
+[ ] Add roots notification handling in the client
+[ ] Add list-changed notification handling in the client
+
+### Phase 3 status
+
+[ ] Implement `src/vocode/mcp/auth.py` for protected resource discovery, auth server discovery, PKCE flow support, and token handling
+[x] Implement `src/vocode/mcp/registry.py` for source descriptor indexing
+[ ] Extend `src/vocode/mcp/registry.py` with effective root resolution and selector utilities
+[x] Implement `src/vocode/mcp/converters.py` for basic tool normalization
+[x] Implement `src/vocode/mcp/service.py` for source lifecycle, session ownership, negotiated metadata lookup, and tool cache management
+[ ] Extend `src/vocode/mcp/service.py` with auth coordination
+[ ] Extend `src/vocode/mcp/service.py` with roots handling and root recalculation
+[x] Integrate `Project.start()` and `Project.shutdown()` with the service for project-scoped stdio sources
+[x] Add service tests
+[ ] Add auth tests
