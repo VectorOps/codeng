@@ -1,3 +1,4 @@
+from .auth import *
 from .client import *
 from .converters import *
 from .models import *

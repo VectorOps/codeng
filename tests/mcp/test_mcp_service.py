@@ -3,10 +3,13 @@ from __future__ import annotations
 import sys
 
 import pytest
+from aiohttp import web
 
+from vocode.connect_auth import ProjectCredentialManager
 from vocode.mcp.registry import MCPRegistry
 from vocode.mcp.service import MCPService
 from vocode.mcp.service import MCPServiceError
+from vocode.settings import MCPAuthSettings
 from vocode.settings import MCPExternalSourceSettings
 from vocode.settings import MCPProtocolSettings
 from vocode.settings import MCPRootEntry
@@ -277,3 +280,109 @@ async def test_service_refresh_tools_requires_active_session() -> None:
 
     with pytest.raises(MCPServiceError, match="no active session"):
         await service.refresh_tools("local")
+
+
+@pytest.mark.asyncio
+async def test_service_starts_external_http_session_with_auth(
+    tmp_path,
+    unused_tcp_port,
+) -> None:
+    port = unused_tcp_port
+    base_url = f"http://127.0.0.1:{port}"
+    observed: dict[str, object] = {"authorization": None, "token_requests": 0}
+
+    async def protected_resource_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "resource": f"{base_url}/mcp",
+                "authorization_servers": [f"{base_url}/issuer"],
+            }
+        )
+
+    async def authorization_server_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "issuer": f"{base_url}/issuer",
+                "token_endpoint": f"{base_url}/issuer/token",
+            }
+        )
+
+    async def token_handler(request: web.Request) -> web.Response:
+        observed["token_requests"] = int(observed["token_requests"]) + 1
+        data = await request.post()
+        assert data["client_id"] == "client-123"
+        assert data["client_secret"] == "secret"
+        return web.json_response(
+            {
+                "access_token": "http-token",
+                "token_type": "Bearer",
+                "expires_in": 600,
+            }
+        )
+
+    async def mcp_handler(request: web.Request) -> web.Response:
+        observed["authorization"] = request.headers.get("Authorization")
+        payload = await request.json()
+        if payload.get("method") == "initialize":
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {
+                        "protocolVersion": "2025-03-26",
+                        "serverInfo": {
+                            "name": "remote-server",
+                            "version": "1.0.0",
+                        },
+                        "capabilities": {
+                            "tools": {
+                                "listChanged": False,
+                            }
+                        },
+                    },
+                }
+            )
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_get(
+        "/.well-known/oauth-protected-resource/mcp",
+        protected_resource_handler,
+    )
+    app.router.add_get(
+        "/issuer/.well-known/oauth-authorization-server",
+        authorization_server_handler,
+    )
+    app.router.add_post("/issuer/token", token_handler)
+    app.router.add_post("/mcp", mcp_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    settings = MCPSettings(
+        sources={
+            "remote": MCPExternalSourceSettings(
+                url=f"{base_url}/mcp",
+                auth=MCPAuthSettings(
+                    mode="preregistered",
+                    client_id="client-123",
+                    client_secret_env="MCP_SECRET",
+                ),
+            )
+        }
+    )
+    credentials = ProjectCredentialManager(
+        env={"MCP_SECRET": "secret"},
+        credentials_path=tmp_path / "credentials.json",
+    )
+    service = MCPService(settings, credentials=credentials)
+
+    session = await service.start_session("remote")
+
+    assert session.state.initialized is True
+    assert observed["authorization"] == "Bearer http-token"
+    assert observed["token_requests"] == 1
+
+    await service.close_all()
+    await runner.cleanup()

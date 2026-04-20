@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from vocode import settings as vocode_settings
+from vocode.mcp import auth as mcp_auth
 from vocode.mcp import client as mcp_client
 from vocode.mcp import converters as mcp_converters
 from vocode.mcp import models as mcp_models
@@ -23,9 +24,15 @@ class MCPWorkflowSessionChange:
 
 
 class MCPService:
-    def __init__(self, settings: Optional[vocode_settings.MCPSettings]) -> None:
+    def __init__(
+        self,
+        settings: Optional[vocode_settings.MCPSettings],
+        *,
+        credentials: Optional[mcp_auth.MCPTokenManager] = None,
+    ) -> None:
         self._settings = settings
         self._registry = mcp_registry.MCPRegistry(settings)
+        self._auth = mcp_auth.MCPAuthManager(settings, credentials=credentials)
         self._sessions: Dict[str, mcp_client.MCPClientSession] = {}
         self._tool_cache: Dict[str, Dict[str, mcp_models.MCPToolDescriptor]] = {}
 
@@ -132,9 +139,16 @@ class MCPService:
                 shutdown_timeout_s=source.shutdown_timeout_s,
             )
         else:
+            headers = dict(source_settings.headers)
+            headers.update(
+                await self._auth.resolve_headers(
+                    source_name,
+                    source_settings,
+                )
+            )
             transport = mcp_transports.MCPHTTPTransport(
                 source_settings.url,
-                headers=source_settings.headers,
+                headers=headers,
             )
         session = mcp_client.MCPClientSession(source, transport)
         await session.start()

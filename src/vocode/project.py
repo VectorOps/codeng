@@ -257,7 +257,7 @@ class Project:
 
         if self.mcp is None:
             mcp_settings = self.settings.mcp if self.settings is not None else None
-            self.mcp = MCPService(mcp_settings)
+            self.mcp = MCPService(mcp_settings, credentials=self.credentials)
         if self.settings and self.settings.mcp and self.settings.mcp.enabled:
             for name, source in self.settings.mcp.sources.items():
                 if source.scope.value == "project" and source.kind == "stdio":
