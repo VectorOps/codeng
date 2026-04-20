@@ -81,6 +81,26 @@ class MCPService:
         self._sessions[source_name] = session
         return session
 
+    async def start_workflow(self, workflow_name: str) -> None:
+        if self._settings is None or not self._settings.enabled:
+            return
+        for name, source in self._settings.sources.items():
+            if source.scope.value != "workflow":
+                continue
+            await self.start_session(name)
+
+    async def finish_workflow(self, workflow_name: str) -> None:
+        if self._settings is None or not self._settings.enabled:
+            return
+        names_to_close: list[str] = []
+        for name, source in self._settings.sources.items():
+            if source.scope.value != "workflow":
+                continue
+            if name in self._sessions:
+                names_to_close.append(name)
+        for name in names_to_close:
+            await self.close_session(name)
+
     async def close_session(self, source_name: str) -> None:
         session = self._sessions.pop(source_name, None)
         if session is None:

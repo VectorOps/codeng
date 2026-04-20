@@ -4,6 +4,7 @@ from vocode import state, settings as vocode_settings
 from vocode.history.manager import HistoryManager
 from vocode.input_manager import InputManager
 from vocode.connect_auth import ProjectCredentialManager
+from vocode.mcp.service import MCPService
 from vocode.project_state import ProjectState
 from vocode.proc.manager import ProcessManager
 from vocode.proc.shell import ShellManager
@@ -26,6 +27,7 @@ class StubProject:
         self.credentials = ProjectCredentialManager(env={})
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
         self.project_state = ProjectState()
+        self.mcp: MCPService | None = None
         self.processes: ProcessManager | None = process_manager
         self.shells: ShellManager | None = None
         if self.processes is not None:

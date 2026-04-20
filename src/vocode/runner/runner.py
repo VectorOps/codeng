@@ -520,12 +520,16 @@ class Runner:
         return self._handle_run_event_response(req, managed_resp)
 
     async def _init_executors(self) -> None:
+        if self.project.mcp is not None:
+            await self.project.mcp.start_workflow(self.workflow.name)
         for executor in self._executors.values():
             await executor.init()
 
     async def _shutdown_executors(self) -> None:
         for executor in self._executors.values():
             await executor.shutdown()
+        if self.project.mcp is not None:
+            await self.project.mcp.finish_workflow(self.workflow.name)
 
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:

@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from typing import AsyncIterator, Callable, Dict
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from vocode import models, state
 from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
+from vocode.mcp.service import MCPService
 from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
@@ -442,6 +444,28 @@ class DummyWorkflow:
         self.graph = graph
         self.need_input = need_input
         self.need_input_prompt = need_input_prompt
+
+
+_RUNNER_MCP_SERVER = """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'runner-mcp', 'version': '1.0.0'},
+                'capabilities': {'tools': {'listChanged': False}}
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        break
+"""
 
 
 @pytest.mark.asyncio
@@ -2979,3 +3003,49 @@ async def test_runner_stop_preserves_managed_input_queue() -> None:
     )
 
     assert accepted_after_stop is False
+
+
+@pytest.mark.asyncio
+async def test_runner_initializes_and_finishes_workflow_scoped_mcp_sessions() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "wf_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp)
+
+    node = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-runner-mcp", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(role=models.Role.USER, text="start"),
+    )
+
+    assert project.mcp.list_sessions() == {}
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert project.mcp.list_sessions() == {}

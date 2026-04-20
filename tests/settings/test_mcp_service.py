@@ -115,3 +115,18 @@ async def test_service_rejects_when_mcp_disabled() -> None:
 
     with pytest.raises(MCPServiceError, match="not enabled"):
         await service.start_session("local")
+
+
+@pytest.mark.asyncio
+async def test_service_start_and_finish_workflow_manage_workflow_scoped_sessions() -> (
+    None
+):
+    service = MCPService(_make_settings())
+
+    await service.start_workflow("wf")
+
+    assert set(service.list_sessions().keys()) == {"local"}
+
+    await service.finish_workflow("wf")
+
+    assert service.list_sessions() == {}
