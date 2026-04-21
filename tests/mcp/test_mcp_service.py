@@ -6,7 +6,7 @@ import sys
 import pytest
 from aiohttp import web
 
-from vocode.connect_auth import ProjectCredentialManager
+from vocode.auth import ProjectCredentialManager
 from vocode.mcp.registry import MCPRegistry
 from vocode.mcp.service import MCPService
 from vocode.mcp.service import MCPServiceError

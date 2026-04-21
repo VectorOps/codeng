@@ -1,9 +1,9 @@
 from pathlib import Path
 
 from vocode import state, settings as vocode_settings
+from vocode.auth import ProjectCredentialManager
 from vocode.history.manager import HistoryManager
 from vocode.input_manager import InputManager
-from vocode.connect_auth import ProjectCredentialManager
 from vocode.mcp.service import MCPService
 from vocode.project_state import ProjectState
 from vocode.proc.manager import ProcessManager

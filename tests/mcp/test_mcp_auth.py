@@ -5,7 +5,7 @@ import hashlib
 import pytest
 from aiohttp import web
 
-from vocode.connect_auth import ProjectCredentialManager
+from vocode.auth import ProjectCredentialManager
 from vocode.mcp.auth import MCPAuthManager
 from vocode import settings as vocode_settings
 

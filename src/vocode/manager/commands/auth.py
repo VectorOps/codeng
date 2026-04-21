@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from vocode.manager import proto as manager_proto
-from vocode.connect_auth import AuthenticationCancelledError
+from vocode.auth import AuthenticationCancelledError
 
 from .base import CommandError, command, option
 

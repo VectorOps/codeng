@@ -12,7 +12,7 @@ from vocode import state
 from vocode.logger import get_log_manager_internal, init_log_manager, logger
 from vocode.project import Project
 from vocode.runner import proto as runner_proto
-from vocode.connect_auth import ServerAuthenticationSession
+from vocode.auth import ServerAuthenticationSession
 from .mcp_session import ServerMCPAuthenticationSession
 
 from .base import BaseManager, RunnerFrame
