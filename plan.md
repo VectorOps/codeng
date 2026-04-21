@@ -690,25 +690,42 @@ Deliverable:
 
 - MCP tools work through the existing internal tool pipeline
 
-### Phase 6: V2 enhancements
+### Phase 6: protocol, security, and integration cleanups
 
-29. Extend `ToolSpec` with `skip_listing`.
-30. Update effective tool merge logic.
-31. Update LLM tool injection to omit hidden tools.
-32. Add an MCP discovery tool.
-33. Add V2 tests.
+32. Audit capability advertisement so the client only advertises implemented capabilities and only advertises `roots` when configured and supported.
+33. Verify negotiated capability gating for tools and roots operations across session startup, reconnect, and disconnect paths.
+34. Tighten HTTP auth behavior to send the `resource` parameter in both authorization and token requests.
+35. Ensure `WWW-Authenticate` is parsed on both `401` and `403` responses and that `403 insufficient_scope` triggers bounded step-up auth when enabled.
+36. Enforce HTTPS requirements for auth metadata and non-local redirects, and validate redirect URI policy.
+37. Verify token isolation by MCP source and canonical resource URI across persistence, refresh, and logout flows.
+38. Harden tool descriptor validation so malformed schemas disable only the affected tool and case-sensitive uniqueness is enforced within each source.
+39. Verify MCP tools fully participate in existing approval and auditing flows through the internal tool pipeline.
+40. Audit shutdown and disconnect paths for best-effort, idempotent cleanup across project-scoped and workflow-scoped sessions.
+41. Add targeted tests for the above normative requirements and edge cases not already covered.
+
+Deliverable:
+
+- the implemented V1 MCP surface conforms to the remaining normative protocol, auth, security, and tool-pipeline requirements
+
+### Phase 7: V2 enhancements
+
+42. Extend `ToolSpec` with `skip_listing`.
+43. Update effective tool merge logic.
+44. Update LLM tool injection to omit hidden tools.
+45. Add an MCP discovery tool.
+46. Add V2 tests.
 
 Deliverable:
 
 - hidden tools and discovery-driven MCP UX are supported
 
-### Phase 7: V3 prompts and resources
+### Phase 8: V3 prompts and resources
 
-34. Extend capability discovery to include prompts and resources.
-35. Add `mcp_read_resource` helper tool.
-36. Add `mcp_get_prompt` helper tool.
-37. Optionally add list helpers if needed.
-38. Add V3 tests.
+47. Extend capability discovery to include prompts and resources.
+48. Add `mcp_read_resource` helper tool.
+49. Add `mcp_get_prompt` helper tool.
+50. Optionally add list helpers if needed.
+51. Add V3 tests.
 
 Deliverable:
 
@@ -756,9 +773,9 @@ This delivers the core requested capability while keeping the current architectu
 [x] Implement `tools/call` in the client
 [x] Add timeout and cancellation handling in the protocol/client layer
 [x] Add protocol, transport, client, process-manager, and negotiation tests
-[ ] Add roots request handling in the client
-[ ] Add roots notification handling in the client
-[ ] Add list-changed notification handling in the client
+[x] Add roots request handling in the client
+[x] Add roots notification handling in the client
+[x] Add list-changed notification handling in the client
 
 ### Phase 3 status
 
@@ -768,7 +785,7 @@ This delivers the core requested capability while keeping the current architectu
 [x] Implement `src/vocode/mcp/converters.py` for basic tool normalization
 [x] Implement `src/vocode/mcp/service.py` for source lifecycle, session ownership, negotiated metadata lookup, and tool cache management
 [x] Extend `src/vocode/mcp/service.py` with auth coordination
-[ ] Extend `src/vocode/mcp/service.py` with roots handling and root recalculation
+[x] Extend `src/vocode/mcp/service.py` with roots handling and root recalculation
 [x] Integrate `Project.start()` and `Project.shutdown()` with the service for project-scoped stdio sources
 [x] Add service tests
 [x] Add auth tests
@@ -780,7 +797,7 @@ This delivers the core requested capability while keeping the current architectu
 
 [x] Add runner hooks to notify MCP service on workflow start and finish
 [x] Implement workflow-scoped stdio source startup and shutdown behavior
-[ ] Implement workflow-scoped root recalculation and roots change notification
+[x] Implement workflow-scoped root recalculation and roots change notification
 [x] Add workflow lifecycle tests
 [x] Preserve workflow-scoped MCP sessions across runner stop/resume when the workflow does not change
 [x] Refresh MCP tool cache when workflow-scoped sources start
@@ -801,3 +818,32 @@ This delivers the core requested capability while keeping the current architectu
 [x] Persist MCP auth credentials and tokens across restarts using the existing credential store instead of env-only token caching.
 [x] Wire `/mcp` auth and MCP management commands into manager, server, and autocomplete.
 [x] Implement keyring support for credentials manager
+
+### Phase 6 status
+
+[ ] Audit capability advertisement so only implemented capabilities are advertised and `roots` is advertised only when configured and supported
+[ ] Verify negotiated capability gating for tools and roots operations across startup, reconnect, and disconnect paths
+[ ] Ensure HTTP auth sends the `resource` parameter in both authorization and token requests
+[ ] Ensure `WWW-Authenticate` is parsed on both `401` and `403` responses and `403 insufficient_scope` supports bounded step-up auth
+[ ] Enforce HTTPS and redirect URI policy for auth metadata and non-local redirect flows
+[ ] Verify token isolation by source and canonical resource URI across persistence and logout flows
+[ ] Harden malformed tool schema isolation and case-sensitive uniqueness enforcement within each source
+[ ] Verify MCP tools participate in the same approval and auditing flows as internal tools
+[ ] Audit best-effort idempotent shutdown behavior for MCP sessions
+[ ] Add targeted cleanup coverage tests
+
+### Phase 7 status
+
+[ ] Extend `ToolSpec` with `skip_listing`
+[ ] Update effective tool merge logic
+[ ] Update LLM tool injection to omit hidden tools
+[ ] Add an MCP discovery tool
+[ ] Add V2 tests
+
+### Phase 8 status
+
+[ ] Extend capability discovery to include prompts and resources
+[ ] Add `mcp_read_resource` helper tool
+[ ] Add `mcp_get_prompt` helper tool
+[ ] Optionally add list helpers if needed
+[ ] Add V3 tests

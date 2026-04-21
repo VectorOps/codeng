@@ -357,16 +357,12 @@ class MCPService:
         source_name: str,
     ) -> mcp_models.MCPClientCapabilities:
         roots = bool(self._resolve_effective_roots(source_name))
-        if not roots and self._has_workflow_roots:
-            roots = True
         roots_list_changed = False
         if roots:
             roots_list_changed = self._registry.resolve_root_list_changed(
                 self._active_workflow,
                 source_name,
             )
-            if not roots_list_changed and self._has_workflow_roots_list_changed:
-                roots_list_changed = True
         return mcp_models.MCPClientCapabilities(
             roots=roots,
             roots_list_changed=roots_list_changed,
@@ -374,6 +370,20 @@ class MCPService:
 
     async def _reconcile_session_roots(self) -> None:
         for source_name, session in list(self._sessions.items()):
+            desired_capabilities = self._build_client_capabilities(source_name)
+            current_capabilities = session.state.negotiation.client_capabilities
+            if current_capabilities.model_dump() != desired_capabilities.model_dump():
+                await self.close_session(source_name)
+                try:
+                    session = await self.start_session(source_name)
+                except MCPServiceError:
+                    continue
+                if session.state.negotiation.server_capabilities.tools:
+                    try:
+                        await self.refresh_tools(source_name)
+                    except mcp_client.MCPClientError:
+                        pass
+                continue
             try:
                 await session.update_roots(self._resolve_effective_roots(source_name))
             except mcp_client.MCPClientError:

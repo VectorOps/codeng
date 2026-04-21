@@ -52,6 +52,17 @@ def test_rejects_roots_list_changed_without_roots_client_capability() -> None:
         MCPClientCapabilities(roots=False, roots_list_changed=True)
 
 
+def test_client_capabilities_initialize_payload_omits_unimplemented_capabilities() -> (
+    None
+):
+    assert MCPClientCapabilities().to_initialize_payload() == {}
+    assert MCPClientCapabilities(roots=True).to_initialize_payload() == {"roots": {}}
+    assert MCPClientCapabilities(
+        roots=True,
+        roots_list_changed=True,
+    ).to_initialize_payload() == {"roots": {"listChanged": True}}
+
+
 def test_rejects_tools_list_changed_without_tools_server_capability() -> None:
     with pytest.raises(ValueError, match="tools_list_changed requires tools"):
         MCPServerCapabilities(tools=False, tools_list_changed=True)

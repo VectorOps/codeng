@@ -71,9 +71,7 @@ class MCPClientSession:
                         "name": self._client_name,
                         "version": self._client_version,
                     },
-                    "capabilities": self._client_capabilities.model_dump(
-                        exclude_none=True
-                    ),
+                    "capabilities": self._client_capabilities.to_initialize_payload(),
                 },
             )
             future = self.protocol.register_pending(request)

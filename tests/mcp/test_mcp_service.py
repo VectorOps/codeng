@@ -142,10 +142,18 @@ import json
 import sys
 
 request_id = 100
+advertised_roots = False
 
 for line in sys.stdin:
     msg = json.loads(line)
     if msg.get('method') == 'initialize':
+        capabilities = msg.get('params', {}).get('capabilities', {})
+        advertised_roots = 'roots' in capabilities
+        sys.stderr.write(json.dumps({
+            'kind': 'initialize',
+            'capabilities': capabilities
+        }) + '\\n')
+        sys.stderr.flush()
         sys.stdout.write(json.dumps({
             'jsonrpc': '2.0',
             'id': msg['id'],
@@ -157,28 +165,30 @@ for line in sys.stdin:
         }) + '\\n')
         sys.stdout.flush()
     elif msg.get('method') == 'notifications/initialized':
-        sys.stdout.write(json.dumps({
-            'jsonrpc': '2.0',
-            'id': request_id,
-            'method': 'roots/list',
-            'params': {}
-        }) + '\\n')
-        sys.stdout.flush()
-        request_id += 1
+        if advertised_roots:
+            sys.stdout.write(json.dumps({
+                'jsonrpc': '2.0',
+                'id': request_id,
+                'method': 'roots/list',
+                'params': {}
+            }) + '\\n')
+            sys.stdout.flush()
+            request_id += 1
     elif msg.get('method') == 'notifications/roots/list_changed':
         sys.stderr.write(json.dumps({
             'kind': 'notification',
             'value': msg.get('method')
         }) + '\\n')
         sys.stderr.flush()
-        sys.stdout.write(json.dumps({
-            'jsonrpc': '2.0',
-            'id': request_id,
-            'method': 'roots/list',
-            'params': {}
-        }) + '\\n')
-        sys.stdout.flush()
-        request_id += 1
+        if advertised_roots:
+            sys.stdout.write(json.dumps({
+                'jsonrpc': '2.0',
+                'id': request_id,
+                'method': 'roots/list',
+                'params': {}
+            }) + '\\n')
+            sys.stdout.flush()
+            request_id += 1
     elif 'id' in msg and 'result' in msg:
         sys.stderr.write(json.dumps({
             'kind': 'roots',
@@ -222,6 +232,18 @@ async def _wait_for_stderr_lines(
     while len(transport.stderr_lines) < count:
         await asyncio.sleep(0.01)
     return transport.stderr_lines
+
+
+async def _wait_for_restarted_session(
+    service: MCPService,
+    source_name: str,
+    previous_session,
+):
+    while True:
+        session = service.get_session(source_name)
+        if session is not None and session is not previous_session:
+            return session
+        await asyncio.sleep(0.01)
 
 
 def test_registry_builds_source_descriptors_from_settings() -> None:
@@ -569,16 +591,12 @@ async def test_service_recalculates_roots_for_active_project_scoped_session() ->
             )
         }
     )
-    service = MCPService(
-        settings,
-        has_workflow_roots=True,
-        has_workflow_roots_list_changed=True,
-    )
+    service = MCPService(settings)
 
     session = await service.start_session("local")
     lines = await asyncio.wait_for(_wait_for_stderr_lines(session, 1), timeout=1.0)
 
-    assert any('"value": []' in line for line in lines)
+    assert any('"capabilities": {}' in line for line in lines)
 
     await service.start_workflow(
         "wf",
@@ -590,17 +608,27 @@ async def test_service_recalculates_roots_for_active_project_scoped_session() ->
             )
         ),
     )
-    lines = await asyncio.wait_for(_wait_for_stderr_lines(session, 3), timeout=1.0)
+    restarted_session = await asyncio.wait_for(
+        _wait_for_restarted_session(service, "local", session),
+        timeout=1.0,
+    )
+    lines = await asyncio.wait_for(
+        _wait_for_stderr_lines(restarted_session, 2),
+        timeout=1.0,
+    )
 
-    assert any("notifications/roots/list_changed" in line for line in lines)
+    assert any('"roots": {"listChanged": true}' in line for line in lines)
     assert any("file:///workflow" in line for line in lines)
 
     await service.finish_workflow("wf")
-    lines = await asyncio.wait_for(_wait_for_stderr_lines(session, 5), timeout=1.0)
-
-    assert (
-        len([line for line in lines if "notifications/roots/list_changed" in line]) == 2
+    final_session = await asyncio.wait_for(
+        _wait_for_restarted_session(service, "local", restarted_session),
+        timeout=1.0,
     )
-    assert '"value": []' in lines[-1]
+    lines = await asyncio.wait_for(
+        _wait_for_stderr_lines(final_session, 1), timeout=1.0
+    )
+
+    assert any('"capabilities": {}' in line for line in lines)
 
     await service.close_all()

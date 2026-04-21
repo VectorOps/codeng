@@ -29,6 +29,15 @@ class MCPClientCapabilities(BaseModel):
             raise ValueError("roots_list_changed requires roots capability")
         return self
 
+    def to_initialize_payload(self) -> Dict[str, object]:
+        payload: Dict[str, object] = {}
+        if self.roots:
+            roots_payload: Dict[str, object] = {}
+            if self.roots_list_changed:
+                roots_payload["listChanged"] = True
+            payload["roots"] = roots_payload
+        return payload
+
 
 class MCPServerCapabilities(BaseModel):
     tools: bool = Field(default=False)
