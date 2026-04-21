@@ -13,6 +13,7 @@ from vocode.logger import get_log_manager_internal, init_log_manager, logger
 from vocode.project import Project
 from vocode.runner import proto as runner_proto
 from vocode.connect_auth import ServerAuthenticationSession
+from .mcp_session import ServerMCPAuthenticationSession
 
 from .base import BaseManager, RunnerFrame
 from .helpers import BaseEndpoint, IncomingPacketRouter, RpcHelper
@@ -46,6 +47,7 @@ class UIServer:
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
         self._auth_session: Optional[ServerAuthenticationSession] = None
+        self._mcp_auth_session: Optional[ServerMCPAuthenticationSession] = None
         self._progress_last_sent_at_by_id: dict[str, float] = {}
         self._know_repo_label_by_id: dict[str, str] = {}
         self._emit_branch_packets = False
@@ -155,9 +157,29 @@ class UIServer:
         self._auth_session = session
         return session
 
+    def start_mcp_authentication_session(
+        self,
+        operation,
+    ) -> ServerMCPAuthenticationSession:
+        session = ServerMCPAuthenticationSession(operation)
+        self._mcp_auth_session = session
+        return session
+
+    def clear_mcp_authentication_session(self) -> None:
+        self._mcp_auth_session = None
+
     @property
     def auth_session(self) -> Optional[ServerAuthenticationSession]:
         session = self._auth_session
+        if session is None:
+            return None
+        if not session.is_active:
+            return None
+        return session
+
+    @property
+    def mcp_auth_session(self) -> Optional[ServerMCPAuthenticationSession]:
+        session = self._mcp_auth_session
         if session is None:
             return None
         if not session.is_active:

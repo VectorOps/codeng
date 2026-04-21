@@ -8,6 +8,7 @@ from vocode.logger import logger
 from .autocomplete import AutocompleteManager, AutocompleteItem
 from vocode import settings as vocode_settings
 from .commands import auth as auth_commands
+from .commands import mcp as mcp_commands
 
 if TYPE_CHECKING:
     from .server import UIServer
@@ -210,6 +211,90 @@ async def auth_autocomplete_provider(
                     replace_start=start,
                     replace_text=replace_text,
                     insert_text=provider,
+                )
+            )
+        return _filter_noop(text, items) or None
+
+    return None
+
+
+@AutocompleteManager.register_default
+async def mcp_autocomplete_provider(
+    server: "UIServer",
+    text: str,
+    row: int,
+    col: int,
+) -> list[AutocompleteItem] | None:
+    if not text:
+        return None
+    if row != 0:
+        return None
+    if not text.startswith("/mcp"):
+        return None
+    if text != "/mcp" and not text.startswith("/mcp "):
+        return None
+
+    cursor = _clamp_cursor(text, col)
+    start, end = _token_span(text, cursor)
+    word = text[start:end]
+    tokens = text.split()
+    has_trailing_space = text.endswith(" ")
+
+    if len(tokens) <= 1:
+        items = [
+            AutocompleteItem(
+                title=f"/mcp {name}",
+                replace_start=0,
+                replace_text=text,
+                insert_text=f"/mcp {name} ",
+            )
+            for name in mcp_commands.MCP_SUBCOMMANDS
+        ]
+        return _filter_noop(text, items) or None
+
+    action = tokens[1]
+    if len(tokens) == 2 and not has_trailing_space:
+        needle = word
+        items = []
+        for name in mcp_commands.MCP_SUBCOMMANDS:
+            if needle and not name.startswith(needle):
+                continue
+            items.append(
+                AutocompleteItem(
+                    title=f"/mcp {name}",
+                    replace_start=start,
+                    replace_text=word,
+                    insert_text=f"{name} ",
+                )
+            )
+        return _filter_noop(text, items) or None
+
+    if action == "cancel":
+        return None
+
+    if action not in mcp_commands.MCP_SUBCOMMANDS:
+        return None
+
+    settings = server.manager.project.settings
+    if settings is None or settings.mcp is None:
+        return None
+
+    source_names = sorted(settings.mcp.sources.keys())
+    if len(tokens) == 2 or (len(tokens) == 3 and not has_trailing_space):
+        needle = ""
+        replace_text = word
+        if len(tokens) == 3:
+            needle = tokens[2]
+        items = []
+        for source_name in source_names:
+            if needle and not source_name.startswith(needle):
+                continue
+            items.append(
+                AutocompleteItem(
+                    title=f"/mcp {action} {source_name}",
+                    replace_start=start,
+                    replace_text=replace_text,
+                    insert_text=source_name,
                 )
             )
         return _filter_noop(text, items) or None

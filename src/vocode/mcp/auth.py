@@ -384,6 +384,24 @@ class MCPAuthManager:
             token.model_dump_json(),
         )
 
+    async def has_stored_token(self, source_name: str, resource_uri: str) -> bool:
+        if self._credentials is None:
+            return False
+        canonical_resource_uri = self.canonicalize_resource_uri(resource_uri)
+        value = await self._credentials.get_token(
+            self._token_store_key(source_name, canonical_resource_uri)
+        )
+        return value is not None and value != ""
+
+    async def clear_token(self, source_name: str, resource_uri: str) -> None:
+        if self._credentials is None:
+            return
+        canonical_resource_uri = self.canonicalize_resource_uri(resource_uri)
+        await self._credentials.set_token(
+            self._token_store_key(source_name, canonical_resource_uri),
+            None,
+        )
+
     def _token_store_key(self, source_name: str, resource_uri: str) -> str:
         digest = hashlib.sha256(resource_uri.encode("utf-8")).hexdigest()
         normalized = source_name.replace("-", "_").replace(".", "_")

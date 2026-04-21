@@ -24,6 +24,13 @@ class MCPWorkflowSessionChange:
     stopped_sources: list[str]
 
 
+@dataclass(frozen=True)
+class MCPAuthorizationStatus:
+    source_name: str
+    has_token: bool
+    session_active: bool
+
+
 class MCPService:
     def __init__(
         self,
@@ -224,6 +231,54 @@ class MCPService:
         names = list(self._sessions.keys())
         for name in names:
             await self.close_session(name)
+
+    async def authorization_status(self, source_name: str) -> MCPAuthorizationStatus:
+        source = self._registry.get_source(source_name)
+        if source is None:
+            raise MCPServiceError(f"unknown mcp source: {source_name}")
+        source_settings = None
+        if self._settings is not None:
+            source_settings = self._settings.sources.get(source_name)
+        has_token = False
+        if (
+            source_settings is not None
+            and isinstance(source_settings, vocode_settings.MCPExternalSourceSettings)
+            and source_settings.auth is not None
+            and source_settings.auth.enabled
+        ):
+            has_token = await self._auth.has_stored_token(
+                source_name, source_settings.url
+            )
+        return MCPAuthorizationStatus(
+            source_name=source_name,
+            has_token=has_token,
+            session_active=source_name in self._sessions,
+        )
+
+    async def login(self, source_name: str) -> None:
+        if self._settings is None or not self._settings.enabled:
+            raise MCPServiceError("mcp is not enabled")
+        source_settings = self._settings.sources.get(source_name)
+        if source_settings is None:
+            raise MCPServiceError(f"unknown mcp source: {source_name}")
+        if not isinstance(source_settings, vocode_settings.MCPExternalSourceSettings):
+            raise MCPServiceError(f"mcp source {source_name} is not an external source")
+        try:
+            await self._auth.resolve_headers(source_name, source_settings)
+        except mcp_auth.MCPAuthError as exc:
+            raise MCPServiceError(
+                f"failed to authenticate mcp source {source_name}: {exc}"
+            ) from exc
+
+    async def logout(self, source_name: str) -> None:
+        if self._settings is None or not self._settings.enabled:
+            raise MCPServiceError("mcp is not enabled")
+        source_settings = self._settings.sources.get(source_name)
+        if source_settings is None:
+            raise MCPServiceError(f"unknown mcp source: {source_name}")
+        if not isinstance(source_settings, vocode_settings.MCPExternalSourceSettings):
+            raise MCPServiceError(f"mcp source {source_name} is not an external source")
+        await self._auth.clear_token(source_name, source_settings.url)
 
     def _list_workflow_session_names(self) -> list[str]:
         names: list[str] = []
