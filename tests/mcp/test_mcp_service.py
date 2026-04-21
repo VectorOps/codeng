@@ -742,6 +742,49 @@ async def test_service_refresh_tools_rejects_disconnected_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_service_close_session_tolerates_session_close_failure() -> None:
+    service = MCPService(_make_settings())
+
+    session = await service.start_session("local")
+    close_calls = {"count": 0}
+
+    async def _failing_close() -> None:
+        close_calls["count"] += 1
+        session.state = session.state.model_copy(update={"phase": "closed"})
+        raise RuntimeError("boom")
+
+    session.close = _failing_close  # type: ignore[method-assign]
+
+    await service.close_session("local")
+    await service.close_session("local")
+
+    assert close_calls["count"] == 1
+    assert service.list_sessions() == {}
+
+
+@pytest.mark.asyncio
+async def test_service_close_all_tolerates_refresh_task_cancellation_failure() -> None:
+    service = MCPService(_make_settings())
+
+    await service.start_session("local")
+
+    class _BrokenTask:
+        def cancel(self) -> bool:
+            raise RuntimeError("cancel failed")
+
+        def __await__(self):
+            if False:
+                yield None
+            return None
+
+    service._tool_refresh_tasks["local"] = _BrokenTask()  # type: ignore[assignment]
+
+    await service.close_all()
+
+    assert service.list_sessions() == {}
+
+
+@pytest.mark.asyncio
 async def test_service_http_session_retries_on_insufficient_scope_challenge(
     tmp_path,
     unused_tcp_port,

@@ -271,12 +271,25 @@ class MCPService:
     async def close_session(self, source_name: str) -> None:
         refresh_task = self._tool_refresh_tasks.pop(source_name, None)
         if refresh_task is not None:
-            refresh_task.cancel()
+            try:
+                refresh_task.cancel()
+            except Exception:
+                refresh_task = None
+        if refresh_task is not None:
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
         session = self._sessions.pop(source_name, None)
         if session is None:
             return
         self.clear_tool_cache(source_name)
-        await session.close()
+        try:
+            await session.close()
+        except Exception:
+            return
 
     async def close_all(self) -> None:
         names = list(self._sessions.keys())

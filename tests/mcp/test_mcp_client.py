@@ -14,6 +14,7 @@ from vocode.mcp.models import MCPSourceDescriptor
 from vocode.mcp.models import MCPTransportKind
 from vocode.mcp.transports import MCPHTTPTransport
 from vocode.mcp.transports import MCPStdioTransport
+from vocode.mcp.transports import MCPTransportError
 
 
 _HANDSHAKE_SERVER = """
@@ -612,3 +613,33 @@ async def test_client_session_handles_roots_requests_and_notifications() -> None
     assert unchanged is False
 
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_close_is_idempotent_when_transport_close_fails() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _HANDSHAKE_SERVER]),
+    )
+
+    await session.start()
+
+    close_calls = {"count": 0}
+    original_close = session.transport.close
+
+    async def _failing_close() -> None:
+        close_calls["count"] += 1
+        await original_close()
+        raise MCPTransportError("close failed")
+
+    session.transport.close = _failing_close  # type: ignore[method-assign]
+
+    with pytest.raises(MCPTransportError, match="close failed"):
+        await session.close()
+
+    assert session.state.phase == "closed"
+
+    await session.close()
+
+    assert close_calls["count"] == 1
+    assert session.state.phase == "closed"

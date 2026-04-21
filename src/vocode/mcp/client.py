@@ -334,6 +334,10 @@ class MCPClientSession:
         return out
 
     async def _mark_disconnected(self, error: Optional[str]) -> None:
+        if self.state.phase == mcp_models.MCPSessionPhase.closed:
+            if error is not None and self.state.last_error is None:
+                self.state = self.state.model_copy(update={"last_error": error})
+            return
         receive_task = self._receive_task
         self._receive_task = None
         if receive_task is not None and receive_task is not asyncio.current_task():

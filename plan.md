@@ -827,8 +827,8 @@ This delivers the core requested capability while keeping the current architectu
 [x] Ensure `WWW-Authenticate` is parsed on both `401` and `403` responses and `403 insufficient_scope` supports bounded step-up auth
 [x] Enforce HTTPS and redirect URI policy for auth metadata and non-local redirect flows
 [x] Verify token isolation by source and canonical resource URI across persistence and logout flows
-[ ] Harden malformed tool schema isolation and case-sensitive uniqueness enforcement within each source
-[ ] Verify MCP tools participate in the same approval and auditing flows as internal tools
+[x] Harden malformed tool schema isolation and case-sensitive uniqueness enforcement within each source
+[x] Verify MCP tools participate in the same approval and auditing flows as internal tools
 [ ] Audit best-effort idempotent shutdown behavior for MCP sessions
 [x] Add targeted cleanup coverage tests
 
