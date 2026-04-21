@@ -57,6 +57,26 @@ def test_registry_resolves_source_roots_before_global_and_project_default() -> N
     assert [item.uri for item in roots] == ["file:///source"]
 
 
+def test_registry_appends_workflow_roots_when_requested() -> None:
+    registry = MCPRegistry(_make_settings())
+    workflow = WorkflowConfig(
+        mcp=MCPWorkflowSettings(
+            roots=MCPRootSettings(
+                merge_mode="append",
+                entries=[MCPRootEntry(uri="file:///workflow", name="workflow")],
+            )
+        )
+    )
+
+    roots = registry.resolve_effective_roots(
+        workflow,
+        "local",
+        project_root_uri="file:///project",
+    )
+
+    assert [item.uri for item in roots] == ["file:///source", "file:///workflow"]
+
+
 def test_registry_falls_back_to_project_root_for_stdio_without_roots() -> None:
     settings = MCPSettings(
         sources={

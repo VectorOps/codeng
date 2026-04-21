@@ -1,6 +1,7 @@
 #+title: Todo
 
 * [ ] General
+** [ ] Parallel tool calling
 ** [X] Analyze why usage for current session is not being captured correctly with Connect, as if input messages from previous round are not sent over
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
 ** [X] knowlt: reject virtual path writes
@@ -13,9 +14,7 @@
 ** [X] Investigate lag when sending first input message
 ** [X] Remove extra line break from task tool
 ** [ ] Add a way to hide subagent output and make it non-interactive
-** [ ] Parallel subagents
-- Similar to tool calls, non-interactive subagents should be able to run independently and in parallel
-** [X] Add dynamic variable support that's calculated at runtime
+** [ ] ** [X] Add dynamic variable support that's calculated at runtime
 *** [X] Add a way to change variable setting via TUI
 - List variables
 - Add variable types with lookup manager (LLM models, etc)

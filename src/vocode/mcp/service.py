@@ -37,10 +37,17 @@ class MCPService:
         settings: Optional[vocode_settings.MCPSettings],
         *,
         credentials: Optional[mcp_auth.MCPTokenManager] = None,
+        project_root_uri: Optional[str] = None,
+        has_workflow_roots: bool = False,
+        has_workflow_roots_list_changed: bool = False,
     ) -> None:
         self._settings = settings
         self._registry = mcp_registry.MCPRegistry(settings)
         self._auth = mcp_auth.MCPAuthManager(settings, credentials=credentials)
+        self._project_root_uri = project_root_uri
+        self._has_workflow_roots = has_workflow_roots
+        self._has_workflow_roots_list_changed = has_workflow_roots_list_changed
+        self._active_workflow: Optional[vocode_settings.WorkflowConfig] = None
         self._sessions: Dict[str, mcp_client.MCPClientSession] = {}
         self._tool_cache: Dict[str, Dict[str, mcp_models.MCPToolDescriptor]] = {}
         self._tool_refresh_tasks: Dict[str, asyncio.Task[None]] = {}
@@ -136,6 +143,8 @@ class MCPService:
         source = self._registry.get_source(source_name)
         if source is None:
             raise MCPServiceError(f"unknown mcp source: {source_name}")
+        effective_roots = self._resolve_effective_roots(source_name)
+        source = source.model_copy(update={"roots": effective_roots})
         source_settings = self._settings.sources[source_name]
         transport: mcp_transports.MCPHTTPTransport | mcp_transports.MCPStdioTransport
         if isinstance(source_settings, vocode_settings.MCPStdioSourceSettings):
@@ -159,7 +168,12 @@ class MCPService:
                 source_settings.url,
                 headers=headers,
             )
-        session = mcp_client.MCPClientSession(source, transport)
+        session = mcp_client.MCPClientSession(
+            source,
+            transport,
+            client_capabilities=self._build_client_capabilities(source_name),
+            roots=effective_roots,
+        )
         session.add_notification_handler(
             lambda notification: self._on_session_notification(
                 source_name,
@@ -183,6 +197,7 @@ class MCPService:
     ) -> MCPWorkflowSessionChange:
         if self._settings is None or not self._settings.enabled:
             return MCPWorkflowSessionChange([], [])
+        self._active_workflow = workflow
         desired_names = self._resolve_workflow_source_names(workflow)
         current_names = self._list_workflow_session_names()
         started_sources: list[str] = []
@@ -197,6 +212,7 @@ class MCPService:
                 continue
             await self.start_session(name)
             started_sources.append(name)
+        await self._reconcile_session_roots()
         return MCPWorkflowSessionChange(
             started_sources=started_sources,
             stopped_sources=stopped_sources,
@@ -211,10 +227,12 @@ class MCPService:
             return MCPWorkflowSessionChange([], [])
         if keep_sessions:
             return MCPWorkflowSessionChange([], [])
+        self._active_workflow = None
         stopped_sources: list[str] = []
         for name in self._list_workflow_session_names():
             await self.close_session(name)
             stopped_sources.append(name)
+        await self._reconcile_session_roots()
         return MCPWorkflowSessionChange([], stopped_sources)
 
     async def close_session(self, source_name: str) -> None:
@@ -323,3 +341,40 @@ class MCPService:
             current = self._tool_refresh_tasks.get(source_name)
             if current is task:
                 self._tool_refresh_tasks.pop(source_name, None)
+
+    def _resolve_effective_roots(
+        self,
+        source_name: str,
+    ) -> list[mcp_models.MCPRootDescriptor]:
+        return self._registry.resolve_effective_roots(
+            self._active_workflow,
+            source_name,
+            project_root_uri=self._project_root_uri,
+        )
+
+    def _build_client_capabilities(
+        self,
+        source_name: str,
+    ) -> mcp_models.MCPClientCapabilities:
+        roots = bool(self._resolve_effective_roots(source_name))
+        if not roots and self._has_workflow_roots:
+            roots = True
+        roots_list_changed = False
+        if roots:
+            roots_list_changed = self._registry.resolve_root_list_changed(
+                self._active_workflow,
+                source_name,
+            )
+            if not roots_list_changed and self._has_workflow_roots_list_changed:
+                roots_list_changed = True
+        return mcp_models.MCPClientCapabilities(
+            roots=roots,
+            roots_list_changed=roots_list_changed,
+        )
+
+    async def _reconcile_session_roots(self) -> None:
+        for source_name, session in list(self._sessions.items()):
+            try:
+                await session.update_roots(self._resolve_effective_roots(source_name))
+            except mcp_client.MCPClientError:
+                await self.close_session(source_name)

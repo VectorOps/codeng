@@ -24,16 +24,19 @@ class MCPClientSession:
         client_name: str = "vocode",
         client_version: str = "0",
         client_capabilities: Optional[mcp_models.MCPClientCapabilities] = None,
+        roots: Optional[list[mcp_models.MCPRootDescriptor]] = None,
     ) -> None:
-        self.source = source
+        current_roots = list(roots or source.roots)
+        self.source = source.model_copy(update={"roots": current_roots})
         self.transport = transport
         self.protocol = mcp_protocol.MCPProtocolClient()
-        self.state = mcp_models.MCPSessionState(source=source)
+        self.state = mcp_models.MCPSessionState(source=self.source)
         self._client_name = client_name
         self._client_version = client_version
         self._client_capabilities = (
             client_capabilities or mcp_models.MCPClientCapabilities()
         )
+        self._roots = current_roots
         self._notification_handlers: list[
             typing.Callable[[mcp_protocol.MCPJSONRPCNotification], None]
         ] = []
@@ -52,6 +55,9 @@ class MCPClientSession:
         handler: typing.Callable[[mcp_protocol.MCPJSONRPCNotification], None],
     ) -> None:
         self._notification_handlers.append(handler)
+
+    def list_roots(self) -> list[mcp_models.MCPRootDescriptor]:
+        return list(self._roots)
 
     async def initialize(self) -> Dict[str, Any]:
         try:
@@ -202,6 +208,35 @@ class MCPClientSession:
             },
         )
 
+    async def update_roots(
+        self,
+        roots: list[mcp_models.MCPRootDescriptor],
+    ) -> bool:
+        if self._normalize_roots(roots) == self._normalize_roots(self._roots):
+            return False
+        self._set_roots(roots)
+        if not self.state.initialized:
+            return True
+        capabilities = self.state.negotiation
+        if not capabilities.client_capabilities.roots:
+            return True
+        if not capabilities.server_capabilities.roots:
+            return True
+        if not capabilities.client_capabilities.roots_list_changed:
+            return True
+        if not capabilities.server_capabilities.roots_list_changed:
+            return True
+        try:
+            await self.transport.notify(
+                mcp_protocol.MCPJSONRPCNotification(
+                    method="notifications/roots/list_changed"
+                )
+            )
+        except mcp_transports.MCPTransportError as exc:
+            await self._mark_disconnected(str(exc))
+            raise MCPClientError(str(exc)) from exc
+        return True
+
     def _parse_server_capabilities(
         self, value: Dict[str, Any]
     ) -> mcp_models.MCPServerCapabilities:
@@ -235,6 +270,7 @@ class MCPClientSession:
                     self._dispatch_notification(message)
                     continue
                 if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
+                    await self._handle_request(message)
                     continue
                 self.protocol.handle_response(message)
         except asyncio.CancelledError:
@@ -249,6 +285,55 @@ class MCPClientSession:
     ) -> None:
         for handler in self._notification_handlers:
             handler(notification)
+
+    async def _handle_request(
+        self,
+        request: mcp_protocol.MCPJSONRPCRequest,
+    ) -> None:
+        if request.method == "roots/list":
+            if self._client_capabilities.roots:
+                response: (
+                    mcp_protocol.MCPJSONRPCResponse
+                    | mcp_protocol.MCPJSONRPCErrorResponse
+                ) = mcp_protocol.MCPJSONRPCResponse(
+                    id=request.id,
+                    result={
+                        "roots": [
+                            item.model_dump(exclude_none=True) for item in self._roots
+                        ]
+                    },
+                )
+            else:
+                response = mcp_protocol.MCPJSONRPCErrorResponse(
+                    id=request.id,
+                    error=mcp_protocol.MCPJSONRPCError(
+                        code=int(mcp_protocol.MCPJSONRPCErrorCode.method_not_found),
+                        message="roots capability is not enabled for this session",
+                    ),
+                )
+        else:
+            response = mcp_protocol.MCPJSONRPCErrorResponse(
+                id=request.id,
+                error=mcp_protocol.MCPJSONRPCError(
+                    code=int(mcp_protocol.MCPJSONRPCErrorCode.method_not_found),
+                    message=f"unsupported request method: {request.method}",
+                ),
+            )
+        await self.transport.send(response)
+
+    def _set_roots(self, roots: list[mcp_models.MCPRootDescriptor]) -> None:
+        self._roots = list(roots)
+        self.source = self.source.model_copy(update={"roots": list(self._roots)})
+        self.state = self.state.model_copy(update={"source": self.source})
+
+    def _normalize_roots(
+        self,
+        roots: list[mcp_models.MCPRootDescriptor],
+    ) -> list[tuple[str, Optional[str]]]:
+        out: list[tuple[str, Optional[str]]] = []
+        for item in roots:
+            out.append((item.uri, item.name))
+        return out
 
     async def _mark_disconnected(self, error: Optional[str]) -> None:
         receive_task = self._receive_task

@@ -137,6 +137,58 @@ for line in sys.stdin:
 """
 
 
+_SERVICE_ROOTS_SERVER = """
+import json
+import sys
+
+request_id = 100
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'service-roots', 'version': '1.0.0'},
+                'capabilities': {'roots': {'listChanged': True}}
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': request_id,
+            'method': 'roots/list',
+            'params': {}
+        }) + '\\n')
+        sys.stdout.flush()
+        request_id += 1
+    elif msg.get('method') == 'notifications/roots/list_changed':
+        sys.stderr.write(json.dumps({
+            'kind': 'notification',
+            'value': msg.get('method')
+        }) + '\\n')
+        sys.stderr.flush()
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': request_id,
+            'method': 'roots/list',
+            'params': {}
+        }) + '\\n')
+        sys.stdout.flush()
+        request_id += 1
+    elif 'id' in msg and 'result' in msg:
+        sys.stderr.write(json.dumps({
+            'kind': 'roots',
+            'id': msg['id'],
+            'value': msg.get('result', {}).get('roots', [])
+        }) + '\\n')
+        sys.stderr.flush()
+"""
+
+
 def _make_settings() -> MCPSettings:
     return MCPSettings(
         sources={
@@ -159,6 +211,17 @@ def _make_settings() -> MCPSettings:
             shutdown_timeout_s=5,
         ),
     )
+
+
+async def _wait_for_stderr_lines(
+    session,
+    count: int,
+) -> list[str]:
+    transport = session.transport
+    assert isinstance(transport, type(session.transport))
+    while len(transport.stderr_lines) < count:
+        await asyncio.sleep(0.01)
+    return transport.stderr_lines
 
 
 def test_registry_builds_source_descriptors_from_settings() -> None:
@@ -491,5 +554,53 @@ async def test_service_refreshes_tools_after_list_changed_notification() -> None
     cached = await asyncio.wait_for(_wait_for_cache(), timeout=1.0)
 
     assert cached["refreshed"].description == "Refreshed docs"
+
+    await service.close_all()
+
+
+@pytest.mark.asyncio
+async def test_service_recalculates_roots_for_active_project_scoped_session() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_ROOTS_SERVER],
+                scope="project",
+            )
+        }
+    )
+    service = MCPService(
+        settings,
+        has_workflow_roots=True,
+        has_workflow_roots_list_changed=True,
+    )
+
+    session = await service.start_session("local")
+    lines = await asyncio.wait_for(_wait_for_stderr_lines(session, 1), timeout=1.0)
+
+    assert any('"value": []' in line for line in lines)
+
+    await service.start_workflow(
+        "wf",
+        WorkflowConfig(
+            mcp=MCPWorkflowSettings(
+                roots=MCPRootSettings(
+                    entries=[MCPRootEntry(uri="file:///workflow", name="workflow")]
+                )
+            )
+        ),
+    )
+    lines = await asyncio.wait_for(_wait_for_stderr_lines(session, 3), timeout=1.0)
+
+    assert any("notifications/roots/list_changed" in line for line in lines)
+    assert any("file:///workflow" in line for line in lines)
+
+    await service.finish_workflow("wf")
+    lines = await asyncio.wait_for(_wait_for_stderr_lines(session, 5), timeout=1.0)
+
+    assert (
+        len([line for line in lines if "notifications/roots/list_changed" in line]) == 2
+    )
+    assert '"value": []' in lines[-1]
 
     await service.close_all()

@@ -9,6 +9,7 @@ from aiohttp import web
 from vocode.mcp.client import MCPClientError
 from vocode.mcp.client import MCPClientSession
 from vocode.mcp.models import MCPClientCapabilities
+from vocode.mcp.models import MCPRootDescriptor
 from vocode.mcp.models import MCPSourceDescriptor
 from vocode.mcp.models import MCPTransportKind
 from vocode.mcp.transports import MCPHTTPTransport
@@ -212,6 +213,60 @@ for line in sys.stdin:
 """
 
 
+_ROOTS_SERVER = """
+import json
+import sys
+
+request_id = 100
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'roots-server', 'version': '1.0.0'},
+                'capabilities': {
+                    'roots': {'listChanged': True}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': request_id,
+            'method': 'roots/list',
+            'params': {}
+        }) + '\\n')
+        sys.stdout.flush()
+        request_id += 1
+    elif msg.get('method') == 'notifications/roots/list_changed':
+        sys.stderr.write(json.dumps({
+            'kind': 'notification',
+            'value': msg.get('method')
+        }) + '\\n')
+        sys.stderr.flush()
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': request_id,
+            'method': 'roots/list',
+            'params': {}
+        }) + '\\n')
+        sys.stdout.flush()
+        request_id += 1
+    elif 'id' in msg and 'result' in msg:
+        sys.stderr.write(json.dumps({
+            'kind': 'roots',
+            'id': msg['id'],
+            'value': msg.get('result', {}).get('roots', [])
+        }) + '\\n')
+        sys.stderr.flush()
+"""
+
+
 def _make_source() -> MCPSourceDescriptor:
     return MCPSourceDescriptor(
         source_name="local",
@@ -221,6 +276,15 @@ def _make_source() -> MCPSourceDescriptor:
         shutdown_timeout_s=10,
         request_timeout_s=30,
     )
+
+
+async def _wait_for_stderr_lines(
+    transport: MCPStdioTransport,
+    count: int,
+) -> list[str]:
+    while len(transport.stderr_lines) < count:
+        await asyncio.sleep(0.01)
+    return transport.stderr_lines
 
 
 def _make_http_source() -> MCPSourceDescriptor:
@@ -508,5 +572,43 @@ async def test_client_session_dispatches_list_changed_notifications() -> None:
     await asyncio.wait_for(notification_received.wait(), timeout=1.0)
 
     assert notifications == ["notifications/tools/list_changed"]
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_handles_roots_requests_and_notifications() -> None:
+    transport = MCPStdioTransport(sys.executable, args=["-c", _ROOTS_SERVER])
+    session = MCPClientSession(
+        _make_source(),
+        transport,
+        client_capabilities=MCPClientCapabilities(
+            roots=True,
+            roots_list_changed=True,
+        ),
+        roots=[MCPRootDescriptor(uri="file:///initial", name="initial")],
+    )
+
+    await session.start()
+    lines = await asyncio.wait_for(_wait_for_stderr_lines(transport, 1), timeout=1.0)
+    first = [line for line in lines if '"kind": "roots"' in line][0]
+
+    assert "file:///initial" in first
+
+    changed = await session.update_roots(
+        [MCPRootDescriptor(uri="file:///updated", name="updated")]
+    )
+
+    assert changed is True
+
+    lines = await asyncio.wait_for(_wait_for_stderr_lines(transport, 3), timeout=1.0)
+    assert any("notifications/roots/list_changed" in line for line in lines)
+    assert any("file:///updated" in line for line in lines)
+
+    unchanged = await session.update_roots(
+        [MCPRootDescriptor(uri="file:///updated", name="updated")]
+    )
+
+    assert unchanged is False
 
     await session.close()

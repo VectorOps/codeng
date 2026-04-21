@@ -800,4 +800,4 @@ This delivers the core requested capability while keeping the current architectu
 [x] Integrate MCP auth flows into the TUI for operator-guided login and callback handling. Follow existing patterns by introducing a /mcp command with "login" subcommand.
 [x] Persist MCP auth credentials and tokens across restarts using the existing credential store instead of env-only token caching.
 [x] Wire `/mcp` auth and MCP management commands into manager, server, and autocomplete.
-[ ] Implement keyring support for credentials manager
+[x] Implement keyring support for credentials manager

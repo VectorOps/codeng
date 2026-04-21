@@ -254,7 +254,22 @@ class Project:
 
         if self.mcp is None:
             mcp_settings = self.settings.mcp if self.settings is not None else None
-            self.mcp = MCPService(mcp_settings, credentials=self.credentials)
+            has_workflow_roots = False
+            has_workflow_roots_list_changed = False
+            if self.settings is not None:
+                for workflow in self.settings.workflows.values():
+                    if workflow.mcp is None or workflow.mcp.roots is None:
+                        continue
+                    has_workflow_roots = True
+                    if workflow.mcp.roots.list_changed:
+                        has_workflow_roots_list_changed = True
+            self.mcp = MCPService(
+                mcp_settings,
+                credentials=self.credentials,
+                project_root_uri=self.base_path.resolve().as_uri(),
+                has_workflow_roots=has_workflow_roots,
+                has_workflow_roots_list_changed=has_workflow_roots_list_changed,
+            )
         if self.settings and self.settings.mcp and self.settings.mcp.enabled:
             for name, source in self.settings.mcp.sources.items():
                 if source.scope.value == "project" and source.kind == "stdio":
