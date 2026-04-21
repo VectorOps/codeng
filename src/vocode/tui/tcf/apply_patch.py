@@ -17,6 +17,8 @@ from vocode.tui.tcf import render_utils as tcf_render_utils
 
 @tui_tcf.ToolCallFormatterManager.register("apply_patch")
 class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
+    show_execution_stats_default = False
+
     def _try_parse_json(self, value: str) -> typing.Any:
         stripped = value.strip()
         if not stripped:
@@ -77,6 +79,14 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
 
         return str(result), False
 
+    def _truncate_lines(self, value: str, *, max_lines: int = 5) -> str:
+        lines = value.splitlines()
+        if len(lines) <= max_lines:
+            return value
+        if max_lines <= 1:
+            return "..."
+        return "\n".join(lines[: max_lines - 1] + ["..."])
+
     def render(
         self,
         terminal: tui_terminal.Terminal,
@@ -119,6 +129,7 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
         result_text, is_error = self._extract_text(result)
         if not result_text.strip():
             return header
+        result_text = self._truncate_lines(result_text)
         body = rich_text.Text(result_text, no_wrap=False)
         if is_error:
             body.stylize("red")

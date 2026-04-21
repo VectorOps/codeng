@@ -829,7 +829,7 @@ This delivers the core requested capability while keeping the current architectu
 [x] Verify token isolation by source and canonical resource URI across persistence and logout flows
 [x] Harden malformed tool schema isolation and case-sensitive uniqueness enforcement within each source
 [x] Verify MCP tools participate in the same approval and auditing flows as internal tools
-[ ] Audit best-effort idempotent shutdown behavior for MCP sessions
+[x] Audit best-effort idempotent shutdown behavior for MCP sessions
 [x] Add targeted cleanup coverage tests
 
 ### Phase 7 status

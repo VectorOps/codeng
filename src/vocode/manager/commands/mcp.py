@@ -9,7 +9,7 @@ from vocode.mcp.service import MCPServiceError
 from .base import CommandError, command, option
 
 
-MCP_SUBCOMMANDS = ("login", "status", "logout", "cancel")
+MCP_SUBCOMMANDS = ("list", "login", "status", "logout", "cancel")
 
 
 def _get_mcp_settings(server) -> vocode_settings.MCPSettings:
@@ -59,16 +59,178 @@ def _get_mcp_service(server):
     return service
 
 
+def _source_requires_auth(source_settings: vocode_settings.MCPSourceSettings) -> bool:
+    return (
+        isinstance(source_settings, vocode_settings.MCPExternalSourceSettings)
+        and source_settings.auth is not None
+        and source_settings.auth.enabled
+    )
+
+
+def _source_transport_name(source_settings: vocode_settings.MCPSourceSettings) -> str:
+    if isinstance(source_settings, vocode_settings.MCPExternalSourceSettings):
+        return "external"
+    return "stdio"
+
+
+def _build_mcp_help() -> str:
+    lines = [
+        "MCP commands:",
+        "  /mcp status [source] - Show MCP source status",
+        "  /mcp list [source] - List MCP tools and source readiness",
+        "  /mcp login <source> - Authenticate an MCP source",
+        "  /mcp logout <source> - Remove stored MCP authentication",
+        "  /mcp cancel - Cancel active MCP authentication",
+    ]
+    return "\n".join(lines)
+
+
+async def _list_tools_for_source(service, source_name: str):
+    cached_tools = service.list_cached_tools(source_name)
+    if cached_tools:
+        return cached_tools
+    session_state = service.get_session_state(source_name)
+    if session_state is None:
+        return cached_tools
+    if not session_state.negotiation.server_capabilities.tools:
+        return cached_tools
+    try:
+        return await service.refresh_tools(source_name)
+    except MCPServiceError:
+        return cached_tools
+
+
+async def _build_source_status_lines(
+    server,
+    source_name: str,
+) -> list[str]:
+    source_settings = _resolve_source_settings(server, source_name)
+    service = _get_mcp_service(server)
+    status = await service.authorization_status(source_name)
+    cached_tools = await _list_tools_for_source(service, source_name)
+    auth_required = _source_requires_auth(source_settings)
+    auth_mode = "disabled"
+    if (
+        isinstance(source_settings, vocode_settings.MCPExternalSourceSettings)
+        and source_settings.auth is not None
+    ):
+        auth_mode = source_settings.auth.mode.value
+    lines = [f"MCP source: {source_name}"]
+    lines.append(f"Transport: {_source_transport_name(source_settings)}")
+    lines.append(f"Auth required: {'yes' if auth_required else 'no'}")
+    lines.append(f"Auth mode: {auth_mode}")
+    if auth_required:
+        lines.append(f"Has token: {'yes' if status.has_token else 'no'}")
+    lines.append(f"Session active: {'yes' if status.session_active else 'no'}")
+    lines.append(f"Cached tools: {len(cached_tools)}")
+    return lines
+
+
+async def _handle_status(server, args: list[str]) -> None:
+    settings = _get_mcp_settings(server)
+    if len(args) > 1:
+        raise CommandError("Usage: /mcp status [source]")
+    if len(args) == 1:
+        lines = await _build_source_status_lines(server, args[0])
+        await server.send_text_message("\n".join(lines))
+        return
+    source_names = sorted(settings.sources.keys())
+    if not source_names:
+        await server.send_text_message("No MCP sources configured.")
+        return
+    service = _get_mcp_service(server)
+    lines = ["MCP sources:"]
+    for source_name in source_names:
+        source_settings = settings.sources[source_name]
+        status = await service.authorization_status(source_name)
+        auth_required = _source_requires_auth(source_settings)
+        cached_tools = await _list_tools_for_source(service, source_name)
+        parts = [
+            _source_transport_name(source_settings),
+            f"auth required: {'yes' if auth_required else 'no'}",
+        ]
+        if auth_required:
+            parts.append(f"token: {'yes' if status.has_token else 'no'}")
+        parts.append(f"session: {'yes' if status.session_active else 'no'}")
+        parts.append(f"cached tools: {len(cached_tools)}")
+        lines.append(f"  {source_name} - {', '.join(parts)}")
+    await server.send_text_message("\n".join(lines))
+
+
+def _build_tools_unavailable_text(
+    *,
+    auth_required: bool,
+    has_token: bool,
+    session_active: bool,
+) -> str:
+    if auth_required and not has_token:
+        return "unavailable until authentication is configured and a session is started"
+    if not session_active:
+        return "unavailable until a session is started"
+    return "none advertised"
+
+
+async def _handle_list(server, args: list[str]) -> None:
+    settings = _get_mcp_settings(server)
+    service = _get_mcp_service(server)
+    if len(args) > 1:
+        raise CommandError("Usage: /mcp list [source]")
+    if len(args) == 1:
+        source_names = [args[0]]
+        _resolve_source_settings(server, args[0])
+    else:
+        source_names = sorted(settings.sources.keys())
+    if not source_names:
+        await server.send_text_message("No MCP sources configured.")
+        return
+    lines = ["MCP tools:"]
+    for index, source_name in enumerate(source_names):
+        source_settings = settings.sources[source_name]
+        status = await service.authorization_status(source_name)
+        auth_required = _source_requires_auth(source_settings)
+        cached_tools = await _list_tools_for_source(service, source_name)
+        if index > 0:
+            lines.append("")
+        lines.append(f"Source: {source_name}")
+        lines.append(f"  Transport: {_source_transport_name(source_settings)}")
+        lines.append(f"  Auth required: {'yes' if auth_required else 'no'}")
+        if auth_required:
+            lines.append(f"  Has token: {'yes' if status.has_token else 'no'}")
+        lines.append(f"  Session active: {'yes' if status.session_active else 'no'}")
+        if cached_tools:
+            lines.append("  Tools:")
+            tool_state = "active" if status.session_active else "cached"
+            for tool_name in sorted(cached_tools.keys()):
+                descriptor = cached_tools[tool_name]
+                detail = descriptor.title or descriptor.description
+                if detail:
+                    lines.append(f"    - {tool_name} ({tool_state}) - {detail}")
+                else:
+                    lines.append(f"    - {tool_name} ({tool_state})")
+            continue
+        unavailable = _build_tools_unavailable_text(
+            auth_required=auth_required,
+            has_token=status.has_token,
+            session_active=status.session_active,
+        )
+        lines.append(f"  Tools: {unavailable}.")
+    await server.send_text_message("\n".join(lines))
+
+
 @command(
     "mcp",
-    description="Manage MCP source authentication",
-    params=["<login|status|logout|cancel>", "[source]"],
+    description="Manage MCP sources, authentication, and tools",
+    params=["[list|status|login|logout|cancel]", "[source]"],
 )
-@option(0, "action", type=str)
-@option(1, "args", type=str, splat=True)
-async def _mcp(server, action: str, args: list[str]) -> None:
+@option(0, "args", type=str, splat=True)
+async def _mcp(server, args: list[str]) -> None:
+    if not args:
+        await server.send_text_message(_build_mcp_help())
+        return
+    action = args[0]
+    subcommand_args = args[1:]
     if action == "cancel":
-        if args:
+        if subcommand_args:
             raise CommandError("Usage: /mcp cancel")
         session = server.mcp_auth_session
         if session is None:
@@ -80,27 +242,21 @@ async def _mcp(server, action: str, args: list[str]) -> None:
         return
 
     if action not in MCP_SUBCOMMANDS:
-        raise CommandError("Usage: /mcp <login|status|logout|cancel> [source]")
-    if len(args) != 1:
-        raise CommandError("Usage: /mcp <login|status|logout> <source>")
-    source_name = args[0]
-    source_settings = _ensure_external_auth_source(server, source_name)
-    service = _get_mcp_service(server)
+        raise CommandError(f"Unknown subcommand '{action}' for /mcp.\nTry: /mcp")
 
     if action == "status":
-        status = await service.authorization_status(source_name)
-        mode_value = (
-            source_settings.auth.mode.value
-            if source_settings.auth is not None
-            else "disabled"
-        )
-        lines = [f"MCP source: {source_name}"]
-        lines.append(f"Transport: external")
-        lines.append(f"Auth mode: {mode_value}")
-        lines.append(f"Has token: {'yes' if status.has_token else 'no'}")
-        lines.append(f"Session active: {'yes' if status.session_active else 'no'}")
-        await server.send_text_message("\n".join(lines))
+        await _handle_status(server, subcommand_args)
         return
+
+    if action == "list":
+        await _handle_list(server, subcommand_args)
+        return
+
+    if len(subcommand_args) != 1:
+        raise CommandError(f"Usage: /mcp {action} <source>")
+    source_name = subcommand_args[0]
+    source_settings = _ensure_external_auth_source(server, source_name)
+    service = _get_mcp_service(server)
 
     if action == "logout":
         await service.logout(source_name)
@@ -110,7 +266,7 @@ async def _mcp(server, action: str, args: list[str]) -> None:
         return
 
     if action != "login":
-        raise CommandError("Usage: /mcp <login|status|logout|cancel> [source]")
+        raise CommandError(f"Unknown subcommand '{action}' for /mcp.\nTry: /mcp")
 
     if server.mcp_auth_session is not None:
         raise CommandError("MCP authentication is already in progress.")

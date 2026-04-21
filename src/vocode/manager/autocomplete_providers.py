@@ -275,6 +275,9 @@ async def mcp_autocomplete_provider(
     if action not in mcp_commands.MCP_SUBCOMMANDS:
         return None
 
+    if action in {"list", "status"} and len(tokens) >= 3 and has_trailing_space:
+        return None
+
     settings = server.manager.project.settings
     if settings is None or settings.mcp is None:
         return None

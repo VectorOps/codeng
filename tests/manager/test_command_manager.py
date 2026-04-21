@@ -905,6 +905,141 @@ async def test_mcp_status_command_reports_source_status() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mcp_without_subcommand_prints_help() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "MCP commands:" in payload.text
+    assert "/mcp list [source]" in payload.text
+    assert "/mcp status [source]" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_without_source_lists_all_sources() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "local": vocode_settings.MCPStdioSourceSettings(
+                    command="uvx",
+                ),
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                ),
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp status")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "MCP sources:" in payload.text
+    assert "local - stdio, auth required: no" in payload.text
+    assert "remote - external, auth required: yes, token: no" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_command_reports_tools_and_readiness() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "local": vocode_settings.MCPStdioSourceSettings(
+                    command="uvx",
+                ),
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                ),
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [
+            {
+                "name": "search_docs",
+                "description": "Search documentation",
+                "inputSchema": {"type": "object", "properties": {}},
+            }
+        ],
+    )
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp list")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "MCP tools:" in payload.text
+    assert "Source: local" in payload.text
+    assert "- search_docs (cached) - Search documentation" in payload.text
+    assert "Source: remote" in payload.text
+    assert (
+        "Tools: unavailable until authentication is configured and a session is started."
+        in payload.text
+    )
+
+
+@pytest.mark.asyncio
 async def test_mcp_login_and_logout_commands_manage_stored_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
