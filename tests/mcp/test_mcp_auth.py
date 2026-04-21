@@ -119,3 +119,93 @@ async def test_auth_manager_discovers_and_caches_preregistered_token(
     assert cached is not None
 
     await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_auth_manager_reuses_persisted_token_across_restarts(
+    tmp_path,
+    unused_tcp_port,
+) -> None:
+    port = unused_tcp_port
+    base_url = f"http://127.0.0.1:{port}"
+    resource_url = f"{base_url}/mcp"
+    observed = {"token_requests": 0}
+
+    async def protected_resource_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "resource": resource_url,
+                "authorization_servers": [f"{base_url}/issuer"],
+            }
+        )
+
+    async def authorization_server_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "issuer": f"{base_url}/issuer",
+                "token_endpoint": f"{base_url}/issuer/token",
+            }
+        )
+
+    async def token_handler(request: web.Request) -> web.Response:
+        observed["token_requests"] += 1
+        return web.json_response(
+            {
+                "access_token": "persisted-token",
+                "token_type": "Bearer",
+                "expires_in": 600,
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get(
+        "/.well-known/oauth-protected-resource/mcp",
+        protected_resource_handler,
+    )
+    app.router.add_get(
+        "/issuer/.well-known/oauth-authorization-server",
+        authorization_server_handler,
+    )
+    app.router.add_post("/issuer/token", token_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    credentials_path = tmp_path / "credentials.json"
+    source = vocode_settings.MCPExternalSourceSettings(
+        url=resource_url,
+        auth=vocode_settings.MCPAuthSettings(
+            mode="preregistered",
+            client_id="client-123",
+            client_secret_env="MCP_SECRET",
+        ),
+    )
+
+    credentials1 = ProjectCredentialManager(
+        env={"MCP_SECRET": "secret"},
+        credentials_path=credentials_path,
+    )
+    manager1 = MCPAuthManager(
+        vocode_settings.MCPSettings(),
+        credentials=credentials1,
+    )
+
+    headers1 = await manager1.resolve_headers("remote", source)
+
+    credentials2 = ProjectCredentialManager(
+        env={"MCP_SECRET": "secret"},
+        credentials_path=credentials_path,
+    )
+    manager2 = MCPAuthManager(
+        vocode_settings.MCPSettings(),
+        credentials=credentials2,
+    )
+
+    headers2 = await manager2.resolve_headers("remote", source)
+
+    assert headers1["Authorization"] == "Bearer persisted-token"
+    assert headers2["Authorization"] == "Bearer persisted-token"
+    assert observed["token_requests"] == 1
+
+    await runner.cleanup()

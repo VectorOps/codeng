@@ -84,3 +84,15 @@ async def test_project_credential_manager_login_persists_credentials(
     assert stored is not None
     assert stored.provider == "chatgpt"
     assert stored.account_id == "acct_login"
+
+
+@pytest.mark.asyncio
+async def test_project_credential_manager_persists_raw_tokens_to_file(tmp_path) -> None:
+    credentials_path = tmp_path / "credentials.json"
+    manager = ProjectCredentialManager(credentials_path=credentials_path)
+
+    await manager.set_token("MCP_TOKEN_TEST", "token-value")
+
+    reloaded = ProjectCredentialManager(credentials_path=credentials_path)
+
+    assert await reloaded.get_token("MCP_TOKEN_TEST") == "token-value"

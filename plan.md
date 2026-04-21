@@ -798,6 +798,6 @@ This delivers the core requested capability while keeping the current architectu
 [x] Implement `tools/call` handling with protocol-error versus execution-error separation through the internal tool pipeline
 [x] Preserve richer MCP tool result payloads beyond plain text extraction in the adapter layer
 [ ] Integrate MCP auth flows into the TUI for operator-guided login and callback handling. Follow existing patterns by introducing a /mcp command with "login" subcommand.
-[ ] Persist MCP auth credentials and tokens across restarts using the existing credential store instead of env-only token caching.
+[x] Persist MCP auth credentials and tokens across restarts using the existing credential store instead of env-only token caching.
 [ ] Wire `/mcp` auth and MCP management commands into manager, server, and autocomplete.
-
+[ ] Implement keyring support for credentials manager

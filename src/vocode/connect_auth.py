@@ -54,6 +54,9 @@ class ProjectCredentialManager:
     def credentials_path(self) -> Path:
         return self._credentials_path
 
+    def _token_provider_name(self, name: str) -> str:
+        return f"token:{name}"
+
     async def get_token(
         self,
         name: str,
@@ -61,9 +64,16 @@ class ProjectCredentialManager:
         context: Optional[connect_auth.AuthContext] = None,
     ) -> Optional[str]:
         value = self._env.get(name)
-        if not value:
+        if value:
+            return value
+        document = self._credential_store.load_document(self._credentials_path)
+        payload = document.credentials.get(self._token_provider_name(name))
+        if payload is None:
             return None
-        return value
+        token_value = payload.get("access_token")
+        if not isinstance(token_value, str) or not token_value:
+            return None
+        return token_value
 
     async def set_token(
         self,
@@ -72,10 +82,21 @@ class ProjectCredentialManager:
         *,
         context: Optional[connect_auth.AuthContext] = None,
     ) -> None:
+        provider_name = self._token_provider_name(name)
         if value is None:
             self._env.pop(name, None)
+            self._credential_store.delete(
+                self._credentials_path, provider=provider_name
+            )
             return
         self._env[name] = value
+        self._credential_store.save(
+            self._credentials_path,
+            connect_credentials_base.OAuth2Credentials(
+                provider=provider_name,
+                access_token=value,
+            ),
+        )
 
     async def get_oauth2_credentials(
         self,
