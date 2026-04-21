@@ -60,6 +60,22 @@ def test_build_authorization_request_url_includes_resource_parameter() -> None:
     assert params["scope"] == "tools.read tools.write"
 
 
+def test_build_authorization_request_url_rejects_non_https_non_local_redirect_uri() -> (
+    None
+):
+    manager = MCPAuthManager(vocode_settings.MCPSettings())
+
+    with pytest.raises(Exception, match="redirect_uri"):
+        manager.build_authorization_request_url(
+            "https://issuer.example/authorize",
+            client_id="client-123",
+            redirect_uri="http://example.com/callback",
+            state="state-123",
+            code_challenge="challenge-123",
+            resource_uri="https://example.com/mcp",
+        )
+
+
 @pytest.mark.asyncio
 async def test_auth_manager_discovers_and_caches_preregistered_token(
     tmp_path,
@@ -242,6 +258,117 @@ async def test_auth_manager_reuses_persisted_token_across_restarts(
 
 
 @pytest.mark.asyncio
+async def test_auth_manager_isolates_tokens_by_source_and_resource_aliases(
+    tmp_path,
+    unused_tcp_port,
+) -> None:
+    port = unused_tcp_port
+    base_url = f"http://127.0.0.1:{port}"
+    source_url = f"{base_url}/mcp?tenant=alpha"
+    protected_resource_url = f"{base_url}/protected/resource?scope=ignored"
+    observed = {"token_requests": 0}
+
+    async def protected_resource_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "resource": protected_resource_url,
+                "authorization_servers": [f"{base_url}/issuer"],
+            }
+        )
+
+    async def authorization_server_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "issuer": f"{base_url}/issuer",
+                "token_endpoint": f"{base_url}/issuer/token",
+            }
+        )
+
+    async def token_handler(request: web.Request) -> web.Response:
+        observed["token_requests"] += 1
+        return web.json_response(
+            {
+                "access_token": f"token-{observed['token_requests']}",
+                "token_type": "Bearer",
+                "expires_in": 600,
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get(
+        "/.well-known/oauth-protected-resource/mcp",
+        protected_resource_handler,
+    )
+    app.router.add_get(
+        "/issuer/.well-known/oauth-authorization-server",
+        authorization_server_handler,
+    )
+    app.router.add_post("/issuer/token", token_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    credentials = ProjectCredentialManager(
+        env={"MCP_SECRET": "secret"},
+        credentials_path=tmp_path / "credentials.json",
+    )
+    manager = MCPAuthManager(
+        vocode_settings.MCPSettings(),
+        credentials=credentials,
+    )
+    source = vocode_settings.MCPExternalSourceSettings(
+        url=source_url,
+        auth=vocode_settings.MCPAuthSettings(
+            mode="preregistered",
+            client_id="client-123",
+            client_secret_env="MCP_SECRET",
+        ),
+    )
+
+    headers_a1 = await manager.resolve_headers("remote_a", source)
+    headers_a2 = await manager.resolve_headers("remote_a", source)
+    headers_b1 = await manager.resolve_headers("remote_b", source)
+
+    canonical_source_url = manager.canonicalize_resource_uri(source_url)
+    canonical_resource_url = manager.canonicalize_resource_uri(protected_resource_url)
+
+    assert headers_a1["Authorization"] == "Bearer token-1"
+    assert headers_a2["Authorization"] == "Bearer token-1"
+    assert headers_b1["Authorization"] == "Bearer token-2"
+    assert observed["token_requests"] == 2
+    assert (
+        await credentials.get_token(_token_key("remote_a", canonical_source_url))
+        is not None
+    )
+    assert (
+        await credentials.get_token(_token_key("remote_a", canonical_resource_url))
+        is not None
+    )
+    assert (
+        await credentials.get_token(_token_key("remote_b", canonical_source_url))
+        is not None
+    )
+
+    await manager.clear_token("remote_a", source_url)
+
+    assert (
+        await credentials.get_token(_token_key("remote_a", canonical_source_url))
+        is None
+    )
+    assert (
+        await credentials.get_token(_token_key("remote_a", canonical_resource_url))
+        is None
+    )
+    assert (
+        await credentials.get_token(_token_key("remote_b", canonical_source_url))
+        is not None
+    )
+
+    await runner.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_auth_manager_step_up_retries_with_scope_from_403_challenge(
     tmp_path,
     unused_tcp_port,
@@ -333,5 +460,55 @@ async def test_auth_manager_step_up_retries_with_scope_from_403_challenge(
     assert step_up_headers == {"Authorization": "Bearer token-2"}
     assert blocked_headers is None
     assert observed["scopes"] == ["tools.read", "tools.read tools.write"]
+
+    await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_auth_manager_rejects_non_https_authorization_server_metadata(
+    tmp_path,
+    unused_tcp_port,
+) -> None:
+    port = unused_tcp_port
+    base_url = f"http://127.0.0.1:{port}"
+    resource_url = f"{base_url}/mcp"
+
+    async def protected_resource_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "resource": resource_url,
+                "authorization_servers": ["http://example.com/issuer"],
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get(
+        "/.well-known/oauth-protected-resource/mcp",
+        protected_resource_handler,
+    )
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    credentials = ProjectCredentialManager(
+        env={"MCP_SECRET": "secret"},
+        credentials_path=tmp_path / "credentials.json",
+    )
+    manager = MCPAuthManager(
+        vocode_settings.MCPSettings(),
+        credentials=credentials,
+    )
+    source = vocode_settings.MCPExternalSourceSettings(
+        url=resource_url,
+        auth=vocode_settings.MCPAuthSettings(
+            mode="preregistered",
+            client_id="client-123",
+            client_secret_env="MCP_SECRET",
+        ),
+    )
+
+    with pytest.raises(Exception, match="authorization server issuer"):
+        await manager.resolve_headers("remote", source)
 
     await runner.cleanup()

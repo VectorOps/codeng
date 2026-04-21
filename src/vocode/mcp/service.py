@@ -105,12 +105,25 @@ class MCPService:
         source_name: str,
         payloads: list[Dict[str, object]],
     ) -> Dict[str, mcp_models.MCPToolDescriptor]:
-        out: Dict[str, mcp_models.MCPToolDescriptor] = {}
+        normalized: Dict[str, mcp_models.MCPToolDescriptor] = {}
+        duplicate_names: set[str] = set()
         for payload in payloads:
-            descriptor = mcp_converters.normalize_tool_descriptor(source_name, payload)
-            out[descriptor.tool_name] = descriptor
-        self._tool_cache[source_name] = out
-        return dict(out)
+            try:
+                descriptor = mcp_converters.normalize_tool_descriptor(
+                    source_name,
+                    payload,
+                )
+            except mcp_converters.MCPConversionError:
+                continue
+            if descriptor.tool_name in duplicate_names:
+                continue
+            if descriptor.tool_name in normalized:
+                normalized.pop(descriptor.tool_name, None)
+                duplicate_names.add(descriptor.tool_name)
+                continue
+            normalized[descriptor.tool_name] = descriptor
+        self._tool_cache[source_name] = normalized
+        return dict(normalized)
 
     def clear_tool_cache(self, source_name: str) -> None:
         self._tool_cache.pop(source_name, None)

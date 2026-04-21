@@ -431,6 +431,38 @@ def test_service_caches_and_clears_tool_descriptors_per_source() -> None:
     assert service.list_cached_tools("local") == {}
 
 
+def test_service_cache_tool_descriptors_skips_malformed_and_duplicate_names() -> None:
+    service = MCPService(_make_settings())
+
+    cached = service.cache_tool_descriptors(
+        "local",
+        [
+            {
+                "name": "search",
+                "description": "Search docs",
+            },
+            {
+                "name": "search",
+                "description": "Duplicate search",
+            },
+            {
+                "name": "Search",
+                "description": "Case distinct",
+            },
+            {
+                "name": "broken-schema",
+                "inputSchema": {"type": "string"},
+            },
+            {
+                "description": "missing name",
+            },
+        ],
+    )
+
+    assert set(cached.keys()) == {"Search"}
+    assert cached["Search"].description == "Case distinct"
+
+
 @pytest.mark.asyncio
 async def test_service_refresh_tools_populates_cache_from_live_session() -> None:
     service = MCPService(_make_settings())

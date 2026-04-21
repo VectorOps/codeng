@@ -21,11 +21,17 @@ def normalize_tool_descriptor(
         input_schema = {"type": "object", "properties": {}}
     if not isinstance(input_schema, dict):
         raise MCPConversionError("mcp tool inputSchema must be an object when present")
+    schema_type = input_schema.get("type")
+    if schema_type is not None and schema_type != "object":
+        raise MCPConversionError("mcp tool inputSchema must declare type=object")
+    annotations = payload.get("annotations") or {}
+    if not isinstance(annotations, dict):
+        raise MCPConversionError("mcp tool annotations must be an object when present")
     return mcp_models.MCPToolDescriptor(
         source_name=source_name,
         tool_name=tool_name,
         title=payload.get("title"),
         description=payload.get("description"),
         input_schema=input_schema,
-        annotations=(payload.get("annotations") or {}),
+        annotations=annotations,
     )

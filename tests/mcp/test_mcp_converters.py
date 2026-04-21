@@ -46,3 +46,25 @@ def test_normalize_tool_descriptor_rejects_non_object_input_schema() -> None:
                 "inputSchema": "invalid",
             },
         )
+
+
+def test_normalize_tool_descriptor_rejects_non_object_schema_type() -> None:
+    with pytest.raises(MCPConversionError, match="type=object"):
+        normalize_tool_descriptor(
+            "local",
+            {
+                "name": "search",
+                "inputSchema": {"type": "string"},
+            },
+        )
+
+
+def test_normalize_tool_descriptor_rejects_non_object_annotations() -> None:
+    with pytest.raises(MCPConversionError, match="annotations"):
+        normalize_tool_descriptor(
+            "local",
+            {
+                "name": "search",
+                "annotations": "invalid",
+            },
+        )

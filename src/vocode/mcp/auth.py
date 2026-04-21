@@ -91,6 +91,17 @@ class MCPAuthManager:
         token = None
         if not force_refresh:
             token = await self._load_cached_token(source_name, resource_uri)
+            if token is None:
+                token = await self._load_cached_token_for_source(
+                    source_name,
+                    resource_uri,
+                )
+                if token is not None:
+                    await self._store_token(
+                        source_name,
+                        token,
+                        aliases=[resource_uri],
+                    )
         if token is None or token.is_expired():
             token = await self._acquire_token(
                 source_name,
@@ -98,7 +109,11 @@ class MCPAuthManager:
                 resource_uri,
                 scope_overrides=scope_overrides,
             )
-            await self._store_token(source_name, token)
+            await self._store_token(
+                source_name,
+                token,
+                aliases=[resource_uri],
+            )
         return {"Authorization": f"{token.token_type} {token.access_token}"}
 
     async def resolve_headers_for_challenge(
@@ -240,10 +255,15 @@ class MCPAuthManager:
         *,
         session: Optional[aiohttp.ClientSession] = None,
     ) -> MCPAuthorizationServerMetadata:
+        self._validate_https_url(issuer, "authorization server issuer")
         owns_session = session is None
         http_session = session or aiohttp.ClientSession()
         try:
             for url in self._build_authorization_server_metadata_urls(issuer):
+                self._validate_https_url(
+                    url,
+                    "authorization server metadata url",
+                )
                 async with http_session.get(url) as response:
                     if response.status == 404:
                         continue
@@ -258,9 +278,25 @@ class MCPAuthManager:
                         raise MCPAuthError(
                             f"authorization server metadata for {issuer} is missing token_endpoint"
                         )
+                    self._validate_https_url(
+                        token_endpoint,
+                        "authorization server token_endpoint",
+                    )
                     code_methods = payload.get("code_challenge_methods_supported")
                     if not isinstance(code_methods, list):
                         code_methods = []
+                    authorization_endpoint = payload.get("authorization_endpoint")
+                    if authorization_endpoint is not None:
+                        self._validate_https_url(
+                            str(authorization_endpoint),
+                            "authorization server authorization_endpoint",
+                        )
+                    registration_endpoint = payload.get("registration_endpoint")
+                    if registration_endpoint is not None:
+                        self._validate_https_url(
+                            str(registration_endpoint),
+                            "authorization server registration_endpoint",
+                        )
                     return MCPAuthorizationServerMetadata(
                         issuer=(
                             str(payload.get("issuer"))
@@ -308,6 +344,7 @@ class MCPAuthManager:
         resource_uri: str,
         scopes: Optional[list[str]] = None,
     ) -> str:
+        self._validate_redirect_uri(redirect_uri)
         params = {
             "response_type": "code",
             "client_id": client_id,
@@ -464,17 +501,36 @@ class MCPAuthManager:
             return MCPAuthToken(access_token=raw_value, resource=resource_uri)
         return MCPAuthToken.model_validate(data)
 
+    async def _load_cached_token_for_source(
+        self,
+        source_name: str,
+        resource_uri: str,
+    ) -> Optional[MCPAuthToken]:
+        if self._credentials is None:
+            return None
+        resource_metadata = await self.discover_protected_resource_metadata(
+            resource_uri
+        )
+        canonical_resource = self.canonicalize_resource_uri(resource_metadata.resource)
+        if canonical_resource == resource_uri:
+            return None
+        return await self._load_cached_token(source_name, canonical_resource)
+
     async def _store_token(
         self,
         source_name: str,
         token: MCPAuthToken,
+        *,
+        aliases: Optional[list[str]] = None,
     ) -> None:
         if self._credentials is None:
             return
-        await self._credentials.set_token(
-            self._token_store_key(source_name, token.resource),
-            token.model_dump_json(),
-        )
+        resource_aliases = self._build_token_resource_aliases(token.resource, aliases)
+        for resource_uri in resource_aliases:
+            await self._credentials.set_token(
+                self._token_store_key(source_name, resource_uri),
+                token.model_dump_json(),
+            )
 
     async def has_stored_token(self, source_name: str, resource_uri: str) -> bool:
         if self._credentials is None:
@@ -489,10 +545,16 @@ class MCPAuthManager:
         if self._credentials is None:
             return
         canonical_resource_uri = self.canonicalize_resource_uri(resource_uri)
-        await self._credentials.set_token(
-            self._token_store_key(source_name, canonical_resource_uri),
-            None,
+        token = await self._load_cached_token(source_name, canonical_resource_uri)
+        resource_aliases = self._build_token_resource_aliases(
+            canonical_resource_uri,
+            [token.resource] if token is not None else None,
         )
+        for current_resource_uri in resource_aliases:
+            await self._credentials.set_token(
+                self._token_store_key(source_name, current_resource_uri),
+                None,
+            )
 
     def _token_store_key(self, source_name: str, resource_uri: str) -> str:
         digest = hashlib.sha256(resource_uri.encode("utf-8")).hexdigest()
@@ -515,6 +577,49 @@ class MCPAuthManager:
             f"{normalized}/.well-known/oauth-authorization-server",
             f"{normalized}/.well-known/openid-configuration",
         ]
+
+    def _build_token_resource_aliases(
+        self,
+        resource_uri: str,
+        aliases: Optional[list[str]] = None,
+    ) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for current in [resource_uri, *(aliases or [])]:
+            canonical = self.canonicalize_resource_uri(current)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            out.append(canonical)
+        return out
+
+    def _validate_https_url(self, value: str, label: str) -> None:
+        parsed = parse.urlsplit(value)
+        if parsed.hostname is None:
+            raise MCPAuthError(f"{label} must include a hostname")
+        if parsed.scheme == "https":
+            return
+        if parsed.scheme == "http" and parsed.hostname.lower() in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
+            return
+        raise MCPAuthError(f"{label} must use https unless it targets localhost")
+
+    def _validate_redirect_uri(self, value: str) -> None:
+        parsed = parse.urlsplit(value)
+        if parsed.hostname is None:
+            raise MCPAuthError("redirect_uri must include a hostname")
+        if parsed.scheme == "https":
+            return
+        if parsed.scheme == "http" and parsed.hostname.lower() in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
+            return
+        raise MCPAuthError("redirect_uri must use localhost http or https")
 
     def _base64url_encode(self, value: bytes) -> str:
         encoded = base64.urlsafe_b64encode(value).decode("ascii")

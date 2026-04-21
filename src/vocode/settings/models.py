@@ -16,6 +16,7 @@ from pathlib import Path
 from os import PathLike
 import os
 import json
+from urllib import parse
 from importlib import resources
 from pydantic import BaseModel, Field, PrivateAttr
 from pydantic import model_validator, field_validator
@@ -340,12 +341,23 @@ class MCPAuthSettings(vars_mod.BaseVarModel):
 
     @model_validator(mode="after")
     def _validate_auth(self) -> "MCPAuthSettings":
+        redirect_host = self.redirect_host.strip().lower()
+        if not redirect_host:
+            raise ValueError("redirect_host must be non-empty")
         if self.redirect_port is not None and self.redirect_port <= 0:
             raise ValueError("redirect_port must be greater than 0")
         if self.max_step_up_attempts < 0:
             raise ValueError("max_step_up_attempts must be greater than or equal to 0")
+        if redirect_host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("redirect_host must use localhost, 127.0.0.1, or ::1")
         if self.mode == MCPAuthMode.preregistered and not self.client_id:
             raise ValueError("client_id is required for preregistered auth mode")
+        if self.client_metadata_url is not None:
+            parsed = parse.urlsplit(self.client_metadata_url)
+            if parsed.scheme != "https":
+                raise ValueError("client_metadata_url must use https")
+            if parsed.hostname is None:
+                raise ValueError("client_metadata_url must include a hostname")
         if self.mode == MCPAuthMode.client_metadata and not self.client_metadata_url:
             raise ValueError(
                 "client_metadata_url is required for client_metadata auth mode"

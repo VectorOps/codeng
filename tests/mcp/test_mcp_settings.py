@@ -220,6 +220,39 @@ mcp:
         load_settings(str(_write_tmp(tmp_path, cfg)))
 
 
+def test_rejects_client_metadata_url_without_https(tmp_path: Path) -> None:
+    cfg = """
+mcp:
+  sources:
+    remote:
+      kind: external
+      url: https://example.com/mcp
+      auth:
+        mode: client_metadata
+        client_metadata_url: http://example.com/metadata
+"""
+
+    with pytest.raises(ValueError, match="client_metadata_url must use https"):
+        load_settings(str(_write_tmp(tmp_path, cfg)))
+
+
+def test_rejects_non_local_redirect_host(tmp_path: Path) -> None:
+    cfg = """
+mcp:
+  sources:
+    remote:
+      kind: external
+      url: https://example.com/mcp
+      auth:
+        mode: preregistered
+        client_id: client-123
+        redirect_host: example.com
+"""
+
+    with pytest.raises(ValueError, match="redirect_host must use localhost"):
+        load_settings(str(_write_tmp(tmp_path, cfg)))
+
+
 def test_rejects_dynamic_mode_without_registration_enabled(tmp_path: Path) -> None:
     cfg = """
 mcp:
