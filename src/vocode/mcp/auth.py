@@ -249,6 +249,41 @@ class MCPAuthManager:
         challenge = self._base64url_encode(digest)
         return verifier, challenge
 
+    def build_authorization_request_url(
+        self,
+        authorization_endpoint: str,
+        *,
+        client_id: str,
+        redirect_uri: str,
+        state: str,
+        code_challenge: str,
+        resource_uri: str,
+        scopes: Optional[list[str]] = None,
+    ) -> str:
+        params = {
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "resource": self.canonicalize_resource_uri(resource_uri),
+        }
+        if scopes:
+            params["scope"] = " ".join(scopes)
+        parsed = parse.urlsplit(authorization_endpoint)
+        existing = parse.parse_qsl(parsed.query, keep_blank_values=True)
+        merged_query = parse.urlencode([*existing, *params.items()])
+        return parse.urlunsplit(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                merged_query,
+                parsed.fragment,
+            )
+        )
+
     async def _acquire_token(
         self,
         source_name: str,
@@ -285,11 +320,14 @@ class MCPAuthManager:
             scopes = list(auth_settings.scopes)
             if not scopes and resource_metadata.scopes_supported:
                 scopes = list(resource_metadata.scopes_supported)
+            canonical_resource = self.canonicalize_resource_uri(
+                resource_metadata.resource
+            )
             form_data = {
                 "grant_type": "client_credentials",
                 "client_id": auth_settings.client_id,
                 "client_secret": client_secret,
-                "resource": resource_metadata.resource,
+                "resource": canonical_resource,
             }
             if scopes:
                 form_data["scope"] = " ".join(scopes)
@@ -327,7 +365,7 @@ class MCPAuthManager:
                     refresh_token=(
                         str(refresh_token) if refresh_token is not None else None
                     ),
-                    resource=resource_metadata.resource,
+                    resource=canonical_resource,
                     scope=str(scope_value) if scope_value is not None else None,
                 )
 

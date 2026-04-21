@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from urllib import parse
 
 import pytest
 from aiohttp import web
@@ -30,6 +31,33 @@ def test_parse_www_authenticate_header_extracts_bearer_params() -> None:
         "resource": "https://example.com/mcp",
         "scope": "tools.read",
     }
+
+
+def test_build_authorization_request_url_includes_resource_parameter() -> None:
+    manager = MCPAuthManager(vocode_settings.MCPSettings())
+
+    url = manager.build_authorization_request_url(
+        "https://issuer.example/authorize?audience=existing",
+        client_id="client-123",
+        redirect_uri="http://127.0.0.1:8123/callback",
+        state="state-123",
+        code_challenge="challenge-123",
+        resource_uri="https://example.com/mcp?ignored=yes",
+        scopes=["tools.read", "tools.write"],
+    )
+
+    parsed = parse.urlsplit(url)
+    params = dict(parse.parse_qsl(parsed.query, keep_blank_values=True))
+
+    assert params["audience"] == "existing"
+    assert params["response_type"] == "code"
+    assert params["client_id"] == "client-123"
+    assert params["redirect_uri"] == "http://127.0.0.1:8123/callback"
+    assert params["state"] == "state-123"
+    assert params["code_challenge"] == "challenge-123"
+    assert params["code_challenge_method"] == "S256"
+    assert params["resource"] == "https://example.com/mcp"
+    assert params["scope"] == "tools.read tools.write"
 
 
 @pytest.mark.asyncio
@@ -149,6 +177,8 @@ async def test_auth_manager_reuses_persisted_token_across_restarts(
 
     async def token_handler(request: web.Request) -> web.Response:
         observed["token_requests"] += 1
+        data = await request.post()
+        assert data["resource"] == resource_url
         return web.json_response(
             {
                 "access_token": "persisted-token",
