@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import typing
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -127,6 +128,11 @@ class MCPHTTPTransport:
         auth_token: Optional[str] = None,
         protocol_version: Optional[str] = None,
         session: Optional[aiohttp.ClientSession] = None,
+        auth_challenge_handler: Optional[
+            typing.Callable[
+                [int, Optional[str], int], typing.Awaitable[Optional[Dict[str, str]]]
+            ]
+        ] = None,
     ) -> None:
         self._url = url
         self._headers = dict(headers or {})
@@ -134,6 +140,7 @@ class MCPHTTPTransport:
         self._protocol_version = protocol_version
         self._session = session
         self._owns_session = session is None
+        self._auth_challenge_handler = auth_challenge_handler
 
     @property
     def is_running(self) -> bool:
@@ -155,50 +162,71 @@ class MCPHTTPTransport:
         raise MCPTransportError("HTTP transport does not support buffered receive")
 
     async def notify(self, message: mcp_protocol.MCPJSONRPCNotification) -> None:
-        if not self.is_running or self._session is None:
-            raise MCPTransportError("http transport is not running")
-        headers = dict(self._headers)
-        if self._auth_token is not None:
-            headers["Authorization"] = f"Bearer {self._auth_token}"
-        if self._protocol_version is not None:
-            headers["MCP-Protocol-Version"] = self._protocol_version
-        async with self._session.post(
-            self._url,
-            json=message.model_dump(exclude_none=True),
-            headers=headers,
-        ) as response:
-            await response.read()
+        await self._post_message(message, expect_response=False)
 
     async def request(
         self,
         message: mcp_protocol.MCPJSONRPCMessage,
     ) -> mcp_protocol.MCPJSONRPCMessage:
+        response_text = await self._post_message(message, expect_response=True)
+        if response_text is None:
+            raise MCPTransportError("http transport returned an empty response")
+        try:
+            data = json.loads(response_text)
+        except json.JSONDecodeError as exc:
+            raise MCPTransportError(
+                "received invalid JSON from http transport"
+            ) from exc
+        if "method" in data and "id" in data:
+            return mcp_protocol.MCPJSONRPCRequest.model_validate(data)
+        if "method" in data:
+            return mcp_protocol.MCPJSONRPCNotification.model_validate(data)
+        if "error" in data:
+            return mcp_protocol.MCPJSONRPCErrorResponse.model_validate(data)
+        return mcp_protocol.MCPJSONRPCResponse.model_validate(data)
+
+    async def _post_message(
+        self,
+        message: mcp_protocol.MCPJSONRPCMessage,
+        *,
+        expect_response: bool,
+    ) -> Optional[str]:
         if not self.is_running or self._session is None:
             raise MCPTransportError("http transport is not running")
-        headers = dict(self._headers)
-        if self._auth_token is not None:
-            headers["Authorization"] = f"Bearer {self._auth_token}"
-        if self._protocol_version is not None:
-            headers["MCP-Protocol-Version"] = self._protocol_version
-        async with self._session.post(
-            self._url,
-            json=message.model_dump(exclude_none=True),
-            headers=headers,
-        ) as response:
-            text = await response.text()
-            try:
-                data = json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise MCPTransportError(
-                    "received invalid JSON from http transport"
-                ) from exc
-            if "method" in data and "id" in data:
-                return mcp_protocol.MCPJSONRPCRequest.model_validate(data)
-            if "method" in data:
-                return mcp_protocol.MCPJSONRPCNotification.model_validate(data)
-            if "error" in data:
-                return mcp_protocol.MCPJSONRPCErrorResponse.model_validate(data)
-            return mcp_protocol.MCPJSONRPCResponse.model_validate(data)
+        auth_attempt = 0
+        while True:
+            headers = dict(self._headers)
+            if self._auth_token is not None:
+                headers["Authorization"] = f"Bearer {self._auth_token}"
+            if self._protocol_version is not None:
+                headers["MCP-Protocol-Version"] = self._protocol_version
+            async with self._session.post(
+                self._url,
+                json=message.model_dump(exclude_none=True),
+                headers=headers,
+            ) as response:
+                if (
+                    response.status in {401, 403}
+                    and self._auth_challenge_handler is not None
+                ):
+                    refreshed_headers = await self._auth_challenge_handler(
+                        response.status,
+                        response.headers.get("WWW-Authenticate"),
+                        auth_attempt,
+                    )
+                    await response.read()
+                    if refreshed_headers is not None and auth_attempt < 3:
+                        self._headers.update(refreshed_headers)
+                        auth_attempt += 1
+                        continue
+                text = await response.text()
+                if response.status >= 400:
+                    raise MCPTransportError(
+                        f"http transport request failed with status {response.status}: {text}"
+                    )
+                if not expect_response:
+                    return None
+                return text
 
     async def close(self) -> None:
         if self._session is None:

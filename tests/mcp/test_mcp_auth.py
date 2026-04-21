@@ -239,3 +239,99 @@ async def test_auth_manager_reuses_persisted_token_across_restarts(
     assert observed["token_requests"] == 1
 
     await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_auth_manager_step_up_retries_with_scope_from_403_challenge(
+    tmp_path,
+    unused_tcp_port,
+) -> None:
+    port = unused_tcp_port
+    base_url = f"http://127.0.0.1:{port}"
+    resource_url = f"{base_url}/mcp"
+    observed = {"scopes": []}
+
+    async def protected_resource_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "resource": resource_url,
+                "authorization_servers": [f"{base_url}/issuer"],
+            }
+        )
+
+    async def authorization_server_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "issuer": f"{base_url}/issuer",
+                "token_endpoint": f"{base_url}/issuer/token",
+            }
+        )
+
+    async def token_handler(request: web.Request) -> web.Response:
+        data = await request.post()
+        observed["scopes"].append(data.get("scope"))
+        return web.json_response(
+            {
+                "access_token": f"token-{len(observed['scopes'])}",
+                "token_type": "Bearer",
+                "expires_in": 600,
+                "scope": data.get("scope"),
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get(
+        "/.well-known/oauth-protected-resource/mcp",
+        protected_resource_handler,
+    )
+    app.router.add_get(
+        "/issuer/.well-known/oauth-authorization-server",
+        authorization_server_handler,
+    )
+    app.router.add_post("/issuer/token", token_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    credentials = ProjectCredentialManager(
+        env={"MCP_SECRET": "secret"},
+        credentials_path=tmp_path / "credentials.json",
+    )
+    manager = MCPAuthManager(
+        vocode_settings.MCPSettings(),
+        credentials=credentials,
+    )
+    source = vocode_settings.MCPExternalSourceSettings(
+        url=resource_url,
+        auth=vocode_settings.MCPAuthSettings(
+            mode="preregistered",
+            client_id="client-123",
+            client_secret_env="MCP_SECRET",
+            scopes=["tools.read"],
+            max_step_up_attempts=2,
+        ),
+    )
+
+    initial_headers = await manager.resolve_headers("remote", source)
+    step_up_headers = await manager.resolve_headers_for_challenge(
+        "remote",
+        source,
+        status_code=403,
+        www_authenticate='Bearer error="insufficient_scope", scope="tools.write"',
+        step_up_attempt=0,
+    )
+    blocked_headers = await manager.resolve_headers_for_challenge(
+        "remote",
+        source,
+        status_code=403,
+        www_authenticate='Bearer error="insufficient_scope", scope="tools.admin"',
+        step_up_attempt=2,
+    )
+
+    assert initial_headers["Authorization"] == "Bearer token-1"
+    assert step_up_headers == {"Authorization": "Bearer token-2"}
+    assert blocked_headers is None
+    assert observed["scopes"] == ["tools.read", "tools.read tools.write"]
+
+    await runner.cleanup()

@@ -707,3 +707,127 @@ async def test_service_refresh_tools_rejects_disconnected_session() -> None:
 
     with pytest.raises(MCPServiceError, match="no active session"):
         await service.call_tool("local", "search", {})
+
+
+@pytest.mark.asyncio
+async def test_service_http_session_retries_on_insufficient_scope_challenge(
+    tmp_path,
+    unused_tcp_port,
+) -> None:
+    port = unused_tcp_port
+    base_url = f"http://127.0.0.1:{port}"
+    observed: dict[str, object] = {"token_scopes": [], "auth_headers": []}
+
+    async def protected_resource_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "resource": f"{base_url}/mcp",
+                "authorization_servers": [f"{base_url}/issuer"],
+            }
+        )
+
+    async def authorization_server_handler(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "issuer": f"{base_url}/issuer",
+                "token_endpoint": f"{base_url}/issuer/token",
+            }
+        )
+
+    async def token_handler(request: web.Request) -> web.Response:
+        data = await request.post()
+        scopes = data.get("scope")
+        token_value = "base-token"
+        if scopes == "tools.read tools.write":
+            token_value = "step-up-token"
+        observed["token_scopes"].append(scopes)
+        return web.json_response(
+            {
+                "access_token": token_value,
+                "token_type": "Bearer",
+                "expires_in": 600,
+                "scope": scopes,
+            }
+        )
+
+    async def mcp_handler(request: web.Request) -> web.Response:
+        authorization = request.headers.get("Authorization")
+        observed["auth_headers"].append(authorization)
+        payload = await request.json()
+        if authorization == "Bearer base-token":
+            return web.Response(
+                status=403,
+                headers={
+                    "WWW-Authenticate": 'Bearer error="insufficient_scope", scope="tools.write"'
+                },
+                text="insufficient scope",
+            )
+        if payload.get("method") == "initialize":
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {
+                        "protocolVersion": "2025-03-26",
+                        "serverInfo": {
+                            "name": "remote-server",
+                            "version": "1.0.0",
+                        },
+                        "capabilities": {
+                            "tools": {
+                                "listChanged": False,
+                            }
+                        },
+                    },
+                }
+            )
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_get(
+        "/.well-known/oauth-protected-resource/mcp",
+        protected_resource_handler,
+    )
+    app.router.add_get(
+        "/issuer/.well-known/oauth-authorization-server",
+        authorization_server_handler,
+    )
+    app.router.add_post("/issuer/token", token_handler)
+    app.router.add_post("/mcp", mcp_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    settings = MCPSettings(
+        sources={
+            "remote": MCPExternalSourceSettings(
+                url=f"{base_url}/mcp",
+                auth=MCPAuthSettings(
+                    mode="preregistered",
+                    client_id="client-123",
+                    client_secret_env="MCP_SECRET",
+                    scopes=["tools.read"],
+                    max_step_up_attempts=2,
+                ),
+            )
+        }
+    )
+    credentials = ProjectCredentialManager(
+        env={"MCP_SECRET": "secret"},
+        credentials_path=tmp_path / "credentials.json",
+    )
+    service = MCPService(settings, credentials=credentials)
+
+    session = await service.start_session("remote")
+
+    assert session.state.initialized is True
+    assert observed["token_scopes"] == ["tools.read", "tools.read tools.write"]
+    assert observed["auth_headers"] == [
+        "Bearer base-token",
+        "Bearer step-up-token",
+        "Bearer step-up-token",
+    ]
+
+    await service.close_all()
+    await runner.cleanup()

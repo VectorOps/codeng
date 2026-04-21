@@ -80,20 +80,68 @@ class MCPAuthManager:
         self,
         source_name: str,
         source_settings: vocode_settings.MCPExternalSourceSettings,
+        *,
+        force_refresh: bool = False,
+        scope_overrides: Optional[list[str]] = None,
     ) -> dict[str, str]:
         auth_settings = source_settings.auth
         if auth_settings is None or not auth_settings.enabled:
             return {}
         resource_uri = self.canonicalize_resource_uri(source_settings.url)
-        token = await self._load_cached_token(source_name, resource_uri)
+        token = None
+        if not force_refresh:
+            token = await self._load_cached_token(source_name, resource_uri)
         if token is None or token.is_expired():
             token = await self._acquire_token(
                 source_name,
                 source_settings,
                 resource_uri,
+                scope_overrides=scope_overrides,
             )
             await self._store_token(source_name, token)
         return {"Authorization": f"{token.token_type} {token.access_token}"}
+
+    async def resolve_headers_for_challenge(
+        self,
+        source_name: str,
+        source_settings: vocode_settings.MCPExternalSourceSettings,
+        *,
+        status_code: int,
+        www_authenticate: Optional[str],
+        step_up_attempt: int = 0,
+    ) -> Optional[dict[str, str]]:
+        challenge = self.parse_www_authenticate(www_authenticate)
+        if challenge is None or challenge.scheme.lower() != "bearer":
+            return None
+        auth_settings = source_settings.auth
+        if auth_settings is None or not auth_settings.enabled:
+            return None
+        if status_code == 401:
+            return await self.resolve_headers(
+                source_name,
+                source_settings,
+                force_refresh=True,
+            )
+        if status_code != 403:
+            return None
+        if challenge.params.get("error") != "insufficient_scope":
+            return None
+        if not auth_settings.retry_step_up:
+            return None
+        if step_up_attempt >= auth_settings.max_step_up_attempts:
+            return None
+        scope_value = challenge.params.get("scope")
+        scope_overrides: list[str] = []
+        if scope_value:
+            for item in scope_value.split():
+                if item and item not in scope_overrides:
+                    scope_overrides.append(item)
+        return await self.resolve_headers(
+            source_name,
+            source_settings,
+            force_refresh=True,
+            scope_overrides=scope_overrides,
+        )
 
     def canonicalize_resource_uri(self, value: str) -> str:
         parsed = parse.urlsplit(value)
@@ -289,6 +337,8 @@ class MCPAuthManager:
         source_name: str,
         source_settings: vocode_settings.MCPExternalSourceSettings,
         resource_uri: str,
+        *,
+        scope_overrides: Optional[list[str]] = None,
     ) -> MCPAuthToken:
         auth_settings = source_settings.auth
         if auth_settings is None or not auth_settings.enabled:
@@ -320,6 +370,10 @@ class MCPAuthManager:
             scopes = list(auth_settings.scopes)
             if not scopes and resource_metadata.scopes_supported:
                 scopes = list(resource_metadata.scopes_supported)
+            if scope_overrides:
+                for scope in scope_overrides:
+                    if scope not in scopes:
+                        scopes.append(scope)
             canonical_resource = self.canonicalize_resource_uri(
                 resource_metadata.resource
             )

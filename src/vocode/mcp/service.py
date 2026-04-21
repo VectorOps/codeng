@@ -160,15 +160,33 @@ class MCPService:
             )
         else:
             headers = dict(source_settings.headers)
+            auth_challenge_handler = None
             headers.update(
                 await self._auth.resolve_headers(
                     source_name,
                     source_settings,
                 )
             )
+            if source_settings.auth is not None and source_settings.auth.enabled:
+
+                async def _handle_auth_challenge(
+                    status_code: int,
+                    www_authenticate: Optional[str],
+                    step_up_attempt: int,
+                ) -> Optional[Dict[str, str]]:
+                    return await self._auth.resolve_headers_for_challenge(
+                        source_name,
+                        source_settings,
+                        status_code=status_code,
+                        www_authenticate=www_authenticate,
+                        step_up_attempt=step_up_attempt,
+                    )
+
+                auth_challenge_handler = _handle_auth_challenge
             transport = mcp_transports.MCPHTTPTransport(
                 source_settings.url,
                 headers=headers,
+                auth_challenge_handler=auth_challenge_handler,
             )
         session = mcp_client.MCPClientSession(
             source,
