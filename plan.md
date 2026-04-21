@@ -731,6 +731,24 @@ Deliverable:
 
 - prompts and resources are available through helper tools without capability explosion
 
+### Phase 9: architectural cleanup and hardening
+
+52. Remove broad wildcard re-exports from `src/vocode/mcp/__init__.py` and define an explicit public module surface.
+53. Consolidate shared auth and credential concepts between `src/vocode/auth.py` and `src/vocode/mcp/auth.py` so provider auth and MCP auth reuse the same durable abstractions where possible.
+54. Reduce `Project` orchestration leakage by moving MCP-specific tool materialization, internal-name generation, and refresh coordination behind `MCPService` or a dedicated MCP adapter factory.
+55. Introduce a stable MCP internal tool naming utility and reverse lookup contract instead of rebuilding names ad hoc at integration points.
+56. Strengthen workflow/session identity so concurrent runs and nested workflow scenarios do not rely only on workflow name.
+57. Standardize manager command output, help formatting, and `/mcp` command semantics across the command surface using the same conventions as the rest of the TUI.
+58. Add structured lifecycle logging and diagnostics for MCP session startup, negotiation, auth, refresh, and shutdown paths.
+59. Revisit credential persistence boundaries so persisted tokens, environment overrides, and in-memory cache behavior are explicit and do not create hidden side effects.
+60. Harden stdio transport concurrency by explicitly serializing writes, documenting in-flight request guarantees, and tolerating late responses for timed-out or cancelled requests without collapsing the session receive loop.
+61. Harden HTTP transport concurrency by removing shared mutable header update side effects during auth retries, clarifying per-request auth refresh behavior, and verifying concurrent requests cannot leak auth state across calls.
+62. Add targeted refactoring and regression tests for the above cleanup work, especially around concurrent workflows, resume behavior, command UX consistency, and parallel MCP request behavior.
+
+Deliverable:
+
+- the MCP integration has cleaner boundaries, more explicit public contracts, and lower long-term maintenance risk
+
 ## Minimal viable V1 scope
 
 If implementation must be cut to the smallest safe version, MVP V1 should include:
@@ -847,3 +865,17 @@ This delivers the core requested capability while keeping the current architectu
 [ ] Add `mcp_get_prompt` helper tool
 [ ] Optionally add list helpers if needed
 [ ] Add V3 tests
+
+### Phase 9 status
+
+[ ] Remove broad wildcard re-exports from `src/vocode/mcp/__init__.py` and define an explicit public module surface
+[ ] Consolidate shared auth and credential concepts between `src/vocode/auth.py` and `src/vocode/mcp/auth.py`
+[ ] Reduce `Project` MCP orchestration leakage by moving tool materialization, naming, and refresh coordination behind MCP-specific boundaries
+[ ] Introduce a stable MCP internal tool naming and reverse lookup utility
+[ ] Strengthen workflow/session identity for concurrent and nested workflow cases
+[ ] Standardize manager command output and `/mcp` command semantics across the TUI
+[ ] Add structured MCP lifecycle logging and diagnostics
+[ ] Revisit credential persistence boundaries for env overrides, stored tokens, and cache semantics
+[ ] Harden stdio transport concurrency, including serialized writes and safe handling of late timed-out responses
+[ ] Harden HTTP transport concurrency and eliminate shared mutable auth retry side effects across concurrent requests
+[ ] Add targeted cleanup regression tests
