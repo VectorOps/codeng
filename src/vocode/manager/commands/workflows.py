@@ -4,6 +4,7 @@ from uuid import UUID
 
 from vocode import settings as vocode_settings
 
+from . import output as command_output
 from .base import CommandManager, CommandHandler, CommandError
 
 
@@ -15,10 +16,14 @@ async def register_workflow_commands(manager: CommandManager) -> None:
             return
         workflows = sorted(config.workflows.keys())
         if not workflows:
-            text = "No workflows configured."
+            await command_output.send_warning(server, "No workflows configured.")
         else:
-            text = "Workflows:\n" + "\n".join(f"  - {name}" for name in workflows)
-        await server.send_text_message(text)
+            text = (
+                command_output.heading("Workflows:")
+                + "\n"
+                + "\n".join(f"  - {name}" for name in workflows)
+            )
+            await command_output.send_rich(server, text)
 
     await manager.register(
         "workflows",
@@ -99,12 +104,12 @@ async def register_workflow_commands(manager: CommandManager) -> None:
             if len(args) != 1:
                 raise CommandError("Usage: /branch list")
             summaries = history.list_branch_summaries(execution)
-            lines = ["Branches:"]
+            lines = [command_output.heading("Branches:")]
             for summary in summaries:
                 label = summary.label or str(summary.id)
                 active = " active" if summary.is_active else ""
                 lines.append(f"  - {summary.id}: {label}{active}")
-            await server.send_text_message("\n".join(lines))
+            await command_output.send_rich(server, "\n".join(lines))
             return
 
         if subcommand == "switch":

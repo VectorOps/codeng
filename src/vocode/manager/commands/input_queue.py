@@ -3,6 +3,7 @@ from __future__ import annotations
 from vocode import models
 from vocode import state as vocode_state
 
+from . import output as command_output
 from .base import command, option
 
 
@@ -10,18 +11,20 @@ MAX_LIST_ITEMS = 10
 
 
 USAGE = (
-    "Input queue commands:\n\n"
-    "  /queue list\n"
-    "    Show pending waiters and the first 10 queued input messages.\n\n"
-    "  /queue add <text>\n"
-    "    Append a user message to the input queue.\n\n"
-    "  /queue delete [number]\n"
-    "    Remove a queued input message by number, or the first message when omitted.\n"
-    "    Negative numbers count from the end.\n\n"
-    "  /queue pop\n"
-    "    Remove the last queued input message.\n\n"
-    "  /queue clear\n"
-    "    Remove all queued input messages.\n"
+    "Input queue commands:",
+    [
+        (
+            "/queue list",
+            "Show pending waiters and the first 10 queued input messages.",
+        ),
+        ("/queue add <text>", "Append a user message to the input queue."),
+        (
+            "/queue delete [number]",
+            "Remove a queued input message by number, or the first message when omitted. Negative numbers count from the end.",
+        ),
+        ("/queue pop", "Remove the last queued input message."),
+        ("/queue clear", "Remove all queued input messages."),
+    ],
 )
 
 
@@ -33,7 +36,7 @@ USAGE = (
 @option(0, "args", type=str, splat=True)
 async def _queue(server, args: list[str]) -> None:
     if not args or args[0] == "help":
-        await server.send_text_message(USAGE)
+        await command_output.send_rich(server, command_output.format_help(*USAGE))
         return
 
     action = args[0]
@@ -49,11 +52,11 @@ async def _queue(server, args: list[str]) -> None:
 
     if action in {"list", "peek", "snoop"}:
         if len(args) != 1:
-            await server.send_text_message("Usage: /queue list")
+            await command_output.send_warning(server, "Usage: /queue list")
             return
         snapshot = await input_manager.snapshot()
         lines = [
-            "Input queue",
+            command_output.heading("Input queue:"),
             f"  Pending waiters: {len(snapshot.waiters)}",
             f"  Queued messages: {len(snapshot.queued_messages)}",
         ]
@@ -65,25 +68,26 @@ async def _queue(server, args: list[str]) -> None:
             remaining = len(queued_messages) - MAX_LIST_ITEMS
             if remaining > 0:
                 lines.append(f"\n... and {remaining} more")
-        await server.send_text_message("\n".join(lines))
+        await command_output.send_rich(server, "\n".join(lines))
         return
 
     if action in {"add", "push"}:
         if len(args) < 2:
-            await server.send_text_message("Usage: /queue add <text>")
+            await command_output.send_warning(server, "Usage: /queue add <text>")
             return
         text = " ".join(args[1:])
         message = vocode_state.Message(role=models.Role.USER, text=text)
         await input_manager.publish(message, queue=True)
         snapshot = await input_manager.snapshot()
-        await server.send_text_message(
-            f"Queued input message. Queue size: {len(snapshot.queued_messages)}"
+        await command_output.send_success(
+            server,
+            f"Queued input message. Queue size: {len(snapshot.queued_messages)}",
         )
         return
 
     if action in {"delete", "del", "remove"}:
         if len(args) > 2:
-            await server.send_text_message("Usage: /queue delete [number]")
+            await command_output.send_warning(server, "Usage: /queue delete [number]")
             return
         if len(args) == 1:
             message = await input_manager.dequeue()
@@ -91,40 +95,47 @@ async def _queue(server, args: list[str]) -> None:
             try:
                 queue_number = int(args[1])
             except ValueError:
-                await server.send_text_message("Usage: /queue delete [number]")
+                await command_output.send_warning(
+                    server, "Usage: /queue delete [number]"
+                )
                 return
             if queue_number == 0:
-                await server.send_text_message("Queue number must not be 0.")
+                await command_output.send_warning(server, "Queue number must not be 0.")
                 return
             queue_index = queue_number - 1 if queue_number > 0 else queue_number
             message = await input_manager.remove_at(queue_index)
         if message is None:
-            await server.send_text_message("Input queue is empty.")
+            await command_output.send_warning(server, "Input queue is empty.")
             return
-        await server.send_text_message(
-            f"Deleted input message: {message.role.value}: {message.text}"
+        await command_output.send_success(
+            server,
+            f"Deleted input message: {message.role.value}: {message.text}",
         )
         return
 
     if action == "pop":
         if len(args) != 1:
-            await server.send_text_message("Usage: /queue pop")
+            await command_output.send_warning(server, "Usage: /queue pop")
             return
         message = await input_manager.remove_at(-1)
         if message is None:
-            await server.send_text_message("Input queue is empty.")
+            await command_output.send_warning(server, "Input queue is empty.")
             return
-        await server.send_text_message(
-            f"Popped input message: {message.role.value}: {message.text}"
+        await command_output.send_success(
+            server,
+            f"Popped input message: {message.role.value}: {message.text}",
         )
         return
 
     if action == "clear":
         if len(args) != 1:
-            await server.send_text_message("Usage: /queue clear")
+            await command_output.send_warning(server, "Usage: /queue clear")
             return
         count = await input_manager.clear_queue()
-        await server.send_text_message(f"Cleared {count} queued input message(s).")
+        await command_output.send_success(
+            server,
+            f"Cleared {count} queued input message(s).",
+        )
         return
 
-    await server.send_text_message(USAGE)
+    await command_output.send_rich(server, command_output.format_help(*USAGE))

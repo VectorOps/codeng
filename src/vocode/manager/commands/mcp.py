@@ -6,6 +6,7 @@ from vocode.manager import proto as manager_proto
 from vocode import settings as vocode_settings
 from vocode.mcp.service import MCPServiceError
 
+from . import output as command_output
 from .base import CommandError, command, option
 
 
@@ -74,15 +75,19 @@ def _source_transport_name(source_settings: vocode_settings.MCPSourceSettings) -
 
 
 def _build_mcp_help() -> str:
-    lines = [
+    return command_output.format_help(
         "MCP commands:",
-        "  /mcp status [source] - Show MCP source status",
-        "  /mcp list [source] - List MCP tools and source readiness",
-        "  /mcp login <source> - Authenticate an MCP source",
-        "  /mcp logout <source> - Remove stored MCP authentication",
-        "  /mcp cancel - Cancel active MCP authentication",
-    ]
-    return "\n".join(lines)
+        [
+            ("/mcp status [source]", "Show MCP source status"),
+            ("/mcp list [source]", "List MCP tools and source readiness"),
+            ("/mcp login <source>", "Authenticate an MCP source"),
+            (
+                "/mcp logout <source>",
+                "Remove stored MCP authentication",
+            ),
+            ("/mcp cancel", "Cancel active MCP authentication"),
+        ],
+    )
 
 
 async def _list_tools_for_source(service, source_name: str):
@@ -132,14 +137,15 @@ async def _handle_status(server, args: list[str]) -> None:
         raise CommandError("Usage: /mcp status [source]")
     if len(args) == 1:
         lines = await _build_source_status_lines(server, args[0])
-        await server.send_text_message("\n".join(lines))
+        lines[0] = command_output.heading(lines[0])
+        await command_output.send_rich(server, "\n".join(lines))
         return
     source_names = sorted(settings.sources.keys())
     if not source_names:
         await server.send_text_message("No MCP sources configured.")
         return
     service = _get_mcp_service(server)
-    lines = ["MCP sources:"]
+    lines = [command_output.heading("MCP sources:")]
     for source_name in source_names:
         source_settings = settings.sources[source_name]
         status = await service.authorization_status(source_name)
@@ -154,7 +160,7 @@ async def _handle_status(server, args: list[str]) -> None:
         parts.append(f"session: {'yes' if status.session_active else 'no'}")
         parts.append(f"cached tools: {len(cached_tools)}")
         lines.append(f"  {source_name} - {', '.join(parts)}")
-    await server.send_text_message("\n".join(lines))
+    await command_output.send_rich(server, "\n".join(lines))
 
 
 def _build_tools_unavailable_text(
@@ -183,7 +189,7 @@ async def _handle_list(server, args: list[str]) -> None:
     if not source_names:
         await server.send_text_message("No MCP sources configured.")
         return
-    lines = ["MCP tools:"]
+    lines = [command_output.heading("MCP tools:")]
     for index, source_name in enumerate(source_names):
         source_settings = settings.sources[source_name]
         status = await service.authorization_status(source_name)
@@ -191,7 +197,7 @@ async def _handle_list(server, args: list[str]) -> None:
         cached_tools = await _list_tools_for_source(service, source_name)
         if index > 0:
             lines.append("")
-        lines.append(f"Source: {source_name}")
+        lines.append(command_output.heading(f"Source: {source_name}"))
         lines.append(f"  Transport: {_source_transport_name(source_settings)}")
         lines.append(f"  Auth required: {'yes' if auth_required else 'no'}")
         if auth_required:
@@ -214,7 +220,7 @@ async def _handle_list(server, args: list[str]) -> None:
             session_active=status.session_active,
         )
         lines.append(f"  Tools: {unavailable}.")
-    await server.send_text_message("\n".join(lines))
+    await command_output.send_rich(server, "\n".join(lines))
 
 
 @command(
@@ -225,7 +231,7 @@ async def _handle_list(server, args: list[str]) -> None:
 @option(0, "args", type=str, splat=True)
 async def _mcp(server, args: list[str]) -> None:
     if not args:
-        await server.send_text_message(_build_mcp_help())
+        await command_output.send_rich(server, _build_mcp_help())
         return
     action = args[0]
     subcommand_args = args[1:]
@@ -238,7 +244,7 @@ async def _mcp(server, args: list[str]) -> None:
         cancelled = await session.cancel()
         if not cancelled:
             raise CommandError("No MCP authentication is currently in progress.")
-        await server.send_text_message("MCP authentication cancelled.")
+        await command_output.send_success(server, "MCP authentication cancelled.")
         return
 
     if action not in MCP_SUBCOMMANDS:
@@ -260,8 +266,9 @@ async def _mcp(server, args: list[str]) -> None:
 
     if action == "logout":
         await service.logout(source_name)
-        await server.send_text_message(
-            f"Removed stored MCP authentication for {source_name}."
+        await command_output.send_success(
+            server,
+            f"Removed stored MCP authentication for {source_name}.",
         )
         return
 
@@ -292,7 +299,7 @@ async def _mcp(server, args: list[str]) -> None:
     try:
         await session.run()
     except asyncio.CancelledError:
-        await server.send_text_message("MCP authentication cancelled.")
+        await command_output.send_success(server, "MCP authentication cancelled.")
         return
     except MCPServiceError as exc:
         raise CommandError(str(exc)) from exc
@@ -300,4 +307,7 @@ async def _mcp(server, args: list[str]) -> None:
         server.clear_mcp_authentication_session()
         await server._emit_progress_end(progress_id=progress_id)
 
-    await server.send_text_message(f"MCP authentication successful for {source_name}.")
+    await command_output.send_success(
+        server,
+        f"MCP authentication successful for {source_name}.",
+    )

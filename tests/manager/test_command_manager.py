@@ -359,7 +359,8 @@ async def test_uiserver_unknown_command_sends_error() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
-    assert payload.text == "Unknown command: /unknown"
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Unknown command: /unknown" in payload.text
 
 
 @pytest.mark.asyncio
@@ -383,6 +384,7 @@ async def test_help_command_lists_debug_and_workflows() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     text = payload.text
     assert "/debug" in text
     assert "/workflows" in text
@@ -417,6 +419,7 @@ async def test_queue_list_command_reports_queue_contents() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Input queue" in payload.text
     assert "Queued messages: 2" in payload.text
     assert "[ 1] user" in payload.text
@@ -446,6 +449,7 @@ async def test_queue_add_and_delete_commands_mutate_queue() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Queued input message." in payload.text
 
     snapshot = await project.input_manager.snapshot()
@@ -470,6 +474,7 @@ async def test_queue_add_and_delete_commands_mutate_queue() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Deleted input message" in payload.text
     assert "q" in payload.text
 
@@ -508,6 +513,7 @@ async def test_queue_delete_with_number_removes_selected_item() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Deleted input message" in payload.text
     assert "queued-2" in payload.text
 
@@ -542,6 +548,7 @@ async def test_queue_list_shows_only_first_ten_items() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "[ 1] user" in payload.text
     assert "[10] user" in payload.text
     assert "queued-11" not in payload.text
@@ -575,6 +582,7 @@ async def test_queue_list_truncates_multiline_messages_to_three_lines() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "line-1" in payload.text
     assert "line-2" in payload.text
     assert "line-3" in payload.text
@@ -609,6 +617,7 @@ async def test_queue_pop_removes_last_added_item() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Popped input message" in payload.text
     assert "queued-2" in payload.text
 
@@ -647,6 +656,7 @@ async def test_queue_delete_with_negative_number_removes_from_end() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Deleted input message" in payload.text
     assert "queued-3" in payload.text
 
@@ -684,7 +694,8 @@ async def test_queue_clear_command_empties_queue() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
-    assert "Cleared 2 queued input message(s)." == payload.text
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Cleared 2 queued input message(s)." in payload.text
 
     snapshot = await project.input_manager.snapshot()
     assert len(snapshot.queued_messages) == 0
@@ -710,7 +721,8 @@ async def test_auth_status_command_reports_credential_status() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
-    assert payload.text == "Authentication is configured for chatgpt."
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Authentication is configured for chatgpt." in payload.text
 
 
 @pytest.mark.asyncio
@@ -796,6 +808,7 @@ async def test_auth_login_command_runs_login_flow(
     )
     assert any(
         isinstance(packet, manager_proto.TextMessagePacket)
+        and packet.format == manager_proto.TextMessageFormat.RICH_TEXT
         and "Authentication successful for chatgpt." in packet.text
         for packet in packets
     )
@@ -861,7 +874,8 @@ async def test_auth_cancel_command_stops_active_login(
 
     assert any(
         isinstance(packet, manager_proto.TextMessagePacket)
-        and packet.text == "Authentication cancelled."
+        and packet.format == manager_proto.TextMessageFormat.RICH_TEXT
+        and "Authentication cancelled." in packet.text
         for packet in packets
     )
 
@@ -899,6 +913,7 @@ async def test_mcp_status_command_reports_source_status() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "MCP source: remote" in payload.text
     assert "Has token: no" in payload.text
     assert "Session active: no" in payload.text
@@ -937,9 +952,10 @@ async def test_mcp_without_subcommand_prints_help() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "MCP commands:" in payload.text
-    assert "/mcp list [source]" in payload.text
-    assert "/mcp status [source]" in payload.text
+    assert "/mcp list \\[source]" in payload.text
+    assert "/mcp status \\[source]" in payload.text
 
 
 @pytest.mark.asyncio
@@ -978,6 +994,7 @@ async def test_mcp_status_without_source_lists_all_sources() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "MCP sources:" in payload.text
     assert "local - stdio, auth required: no" in payload.text
     assert "remote - external, auth required: yes, token: no" in payload.text
@@ -1029,6 +1046,7 @@ async def test_mcp_list_command_reports_tools_and_readiness() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "MCP tools:" in payload.text
     assert "Source: local" in payload.text
     assert "- search_docs (cached) - Search documentation" in payload.text
@@ -1092,6 +1110,7 @@ async def test_mcp_login_and_logout_commands_manage_stored_token(
 
     assert any(
         isinstance(packet, manager_proto.TextMessagePacket)
+        and packet.format == manager_proto.TextMessageFormat.RICH_TEXT
         and "MCP authentication successful for remote." in packet.text
         for packet in login_packets
     )
@@ -1112,6 +1131,7 @@ async def test_mcp_login_and_logout_commands_manage_stored_token(
     logout_envelope = await client_endpoint.recv()
     logout_payload = logout_envelope.payload
     assert isinstance(logout_payload, manager_proto.TextMessagePacket)
+    assert logout_payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Removed stored MCP authentication for remote." in logout_payload.text
 
 
@@ -1184,7 +1204,8 @@ async def test_mcp_cancel_command_stops_active_login(
 
     assert any(
         isinstance(packet, manager_proto.TextMessagePacket)
-        and packet.text == "MCP authentication cancelled."
+        and packet.format == manager_proto.TextMessageFormat.RICH_TEXT
+        and "MCP authentication cancelled." in packet.text
         for packet in packets
     )
 
@@ -1212,6 +1233,7 @@ async def test_repo_list_command_outputs_repos() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Repos:" in payload.text
     assert "main" in payload.text
     assert "other" in payload.text
@@ -1240,6 +1262,7 @@ async def test_repo_without_subcommand_prints_help() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Repository" in payload.text
     assert "/repo list" in payload.text
 
@@ -1428,6 +1451,7 @@ async def test_branch_list_command_outputs_branches() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert str(branch.id) in payload.text
     assert "main" in payload.text
 
