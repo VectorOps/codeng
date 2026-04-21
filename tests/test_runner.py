@@ -7,6 +7,8 @@ import pytest
 from vocode import models, state
 from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
+from vocode.mcp import models as mcp_models
+from vocode.mcp import service as mcp_service
 from vocode.mcp.service import MCPService
 from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
@@ -15,6 +17,7 @@ from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.runner import proto as runner_proto
 from vocode.runner.runner import RunEvent, Runner, RunnerStopped
 from vocode.tools import base as tools_base
+from vocode.tools.mcp_tool import MCPToolAdapter
 from tests.stub_project import StubProject
 
 
@@ -2313,6 +2316,157 @@ async def test_runner_marks_tool_protocol_failure_as_failed() -> None:
     assert response.result["error_type"] == "protocol"
     assert response.result["error"] == "protocol failure"
     assert response.result["source"] == "mcp"
+
+
+@pytest.mark.asyncio
+async def test_runner_mcp_adapter_participates_in_confirmation_and_audit_flow() -> None:
+    project = StubProject()
+    calls: list[tuple[str, str, dict]] = []
+
+    class FakeMCPService:
+        async def start_workflow(self, workflow_name: str, workflow):
+            return mcp_service.MCPWorkflowSessionChange([], [])
+
+        async def finish_workflow(
+            self,
+            workflow_name: str,
+            keep_sessions: bool = False,
+        ):
+            return mcp_service.MCPWorkflowSessionChange([], [])
+
+        async def call_tool(self, source_name: str, tool_name: str, arguments: dict):
+            calls.append((source_name, tool_name, arguments))
+            return {
+                "content": [{"type": "text", "text": "mcp ok"}],
+                "structuredContent": {"source": "remote"},
+                "isError": False,
+            }
+
+    project.mcp = FakeMCPService()  # type: ignore[assignment]
+    project.tools["test-tool"] = MCPToolAdapter(
+        project,
+        mcp_models.MCPToolDescriptor(
+            source_name="remote",
+            tool_name="search",
+            description="Search docs",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        "test-tool",
+    )
+
+    node = models.Node(
+        name="tool-node",
+        type="tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-mcp-tool-audit", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    def handler(event: RunEvent) -> RunEventResp:
+        step = event.step
+        if (
+            step is not None
+            and step.type == state.StepType.TOOL_REQUEST
+            and step.message is not None
+            and step.message.tool_call_requests
+            and step.message.tool_call_requests[0].status
+            == state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+        ):
+            return RunEventResp(
+                resp_type=RunEventResponseType.APPROVE,
+                message=None,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(runner.run(), handler, ignore_non_step=False)
+
+    assert calls == [("remote", "search", {"x": 1})]
+    assert any(
+        event.stats is not None
+        and event.stats.status == state.RunnerStatus.WAITING_INPUT
+        for event in events
+    )
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.TOOL_REQUEST
+        and event.step.message is not None
+        and event.step.message.tool_call_requests
+        and event.step.message.tool_call_requests[0].status
+        == state.ToolCallReqStatus.COMPLETE
+        and event.step.message.tool_call_requests[0].handled_at is not None
+        and event.step.message.tool_call_responses
+        and event.step.message.tool_call_responses[0].result is not None
+        and event.step.message.tool_call_responses[0].result["structuredContent"][
+            "source"
+        ]
+        == "remote"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_mcp_adapter_protocol_failure_is_recorded_as_failed() -> None:
+    project = StubProject()
+
+    class FailingMCPService:
+        async def call_tool(self, source_name: str, tool_name: str, arguments: dict):
+            raise mcp_service.MCPServiceError("remote unavailable")
+
+    project.mcp = FailingMCPService()  # type: ignore[assignment]
+    project.tools["test-tool"] = MCPToolAdapter(
+        project,
+        mcp_models.MCPToolDescriptor(
+            source_name="remote",
+            tool_name="search",
+            description="Search docs",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        "test-tool",
+    )
+
+    node = models.Node(
+        name="dummy",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-mcp-tool-protocol-error",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    result = await runner._execute_tool_call(
+        state.ToolCallReq(
+            id="call-test-tool",
+            name="test-tool",
+            arguments={"x": 1},
+        )
+    )
+
+    assert result.kind == runner_proto.ToolExecResultKind.RESPONSE
+    response = result.response
+    assert response.status == state.ToolCallStatus.FAILED
+    assert response.result is not None
+    assert response.result["error_type"] == "protocol"
+    assert response.result["error"] == "remote unavailable"
 
 
 @pytest.mark.asyncio
