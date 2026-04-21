@@ -199,6 +199,28 @@ for line in sys.stdin:
 """
 
 
+_SERVICE_DISCONNECTS_SERVER = """
+import json
+import sys
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'disconnecting-service', 'version': '1.0.0'},
+                'capabilities': {'tools': {'listChanged': False}}
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        break
+"""
+
+
 def _make_settings() -> MCPSettings:
     return MCPSettings(
         sources={
@@ -243,6 +265,11 @@ async def _wait_for_restarted_session(
         session = service.get_session(source_name)
         if session is not None and session is not previous_session:
             return session
+        await asyncio.sleep(0.01)
+
+
+async def _wait_for_session_close(session) -> None:
+    while session.state.phase != "closed":
         await asyncio.sleep(0.01)
 
 
@@ -632,3 +659,51 @@ async def test_service_recalculates_roots_for_active_project_scoped_session() ->
     assert any('"capabilities": {}' in line for line in lines)
 
     await service.close_all()
+
+
+@pytest.mark.asyncio
+async def test_service_drops_disconnected_session_and_restarts_on_next_start() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_DISCONNECTS_SERVER],
+            )
+        }
+    )
+    service = MCPService(settings)
+
+    first_session = await service.start_session("local")
+    await asyncio.wait_for(_wait_for_session_close(first_session), timeout=1.0)
+
+    assert service.get_session("local") is None
+    assert service.list_sessions() == {}
+
+    second_session = await service.start_session("local")
+
+    assert second_session is not first_session
+    assert second_session.state.initialized is True
+
+    await service.close_all()
+
+
+@pytest.mark.asyncio
+async def test_service_refresh_tools_rejects_disconnected_session() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_DISCONNECTS_SERVER],
+            )
+        }
+    )
+    service = MCPService(settings)
+
+    session = await service.start_session("local")
+    await asyncio.wait_for(_wait_for_session_close(session), timeout=1.0)
+
+    with pytest.raises(MCPServiceError, match="no active session"):
+        await service.refresh_tools("local")
+
+    with pytest.raises(MCPServiceError, match="no active session"):
+        await service.call_tool("local", "search", {})

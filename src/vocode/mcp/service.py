@@ -57,21 +57,23 @@ class MCPService:
         return self._registry
 
     def list_sessions(self) -> Dict[str, mcp_client.MCPClientSession]:
+        self._prune_inactive_sessions()
         return dict(self._sessions)
 
     def list_active_sources(self) -> Dict[str, mcp_models.MCPSourceDescriptor]:
         out: Dict[str, mcp_models.MCPSourceDescriptor] = {}
-        for name, session in self._sessions.items():
+        for name, session in self.list_sessions().items():
             out[name] = session.source
         return out
 
     def get_session(self, source_name: str) -> Optional[mcp_client.MCPClientSession]:
+        self._drop_inactive_session(source_name)
         return self._sessions.get(source_name)
 
     def get_negotiation(
         self, source_name: str
     ) -> Optional[mcp_models.MCPSessionNegotiation]:
-        session = self._sessions.get(source_name)
+        session = self.get_session(source_name)
         if session is None:
             return None
         return session.state.negotiation
@@ -79,7 +81,7 @@ class MCPService:
     def get_session_state(
         self, source_name: str
     ) -> Optional[mcp_models.MCPSessionState]:
-        session = self._sessions.get(source_name)
+        session = self.get_session(source_name)
         if session is None:
             return None
         return session.state
@@ -117,7 +119,7 @@ class MCPService:
         self,
         source_name: str,
     ) -> Dict[str, mcp_models.MCPToolDescriptor]:
-        session = self._sessions.get(source_name)
+        session = self.get_session(source_name)
         if session is None:
             raise MCPServiceError(f"no active session for mcp source: {source_name}")
         payloads = await session.list_all_tools()
@@ -129,13 +131,13 @@ class MCPService:
         tool_name: str,
         arguments: Optional[Dict[str, object]] = None,
     ) -> Dict[str, object]:
-        session = self._sessions.get(source_name)
+        session = self.get_session(source_name)
         if session is None:
             raise MCPServiceError(f"no active session for mcp source: {source_name}")
         return await session.call_tool(tool_name, arguments or {})
 
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
-        existing = self._sessions.get(source_name)
+        existing = self.get_session(source_name)
         if existing is not None:
             return existing
         if self._settings is None or not self._settings.enabled:
@@ -319,7 +321,7 @@ class MCPService:
     ) -> None:
         if notification.method != "notifications/tools/list_changed":
             return
-        session = self._sessions.get(source_name)
+        session = self.get_session(source_name)
         if session is None:
             return
         if not session.state.negotiation.server_capabilities.tools_list_changed:
@@ -370,6 +372,9 @@ class MCPService:
 
     async def _reconcile_session_roots(self) -> None:
         for source_name, session in list(self._sessions.items()):
+            if not self._is_session_active(session):
+                self._drop_inactive_session(source_name)
+                continue
             desired_capabilities = self._build_client_capabilities(source_name)
             current_capabilities = session.state.negotiation.client_capabilities
             if current_capabilities.model_dump() != desired_capabilities.model_dump():
@@ -388,3 +393,23 @@ class MCPService:
                 await session.update_roots(self._resolve_effective_roots(source_name))
             except mcp_client.MCPClientError:
                 await self.close_session(source_name)
+
+    def _prune_inactive_sessions(self) -> None:
+        for source_name in list(self._sessions.keys()):
+            self._drop_inactive_session(source_name)
+
+    def _drop_inactive_session(self, source_name: str) -> None:
+        session = self._sessions.get(source_name)
+        if session is None or self._is_session_active(session):
+            return
+        refresh_task = self._tool_refresh_tasks.pop(source_name, None)
+        if refresh_task is not None:
+            refresh_task.cancel()
+        self._sessions.pop(source_name, None)
+        self.clear_tool_cache(source_name)
+
+    def _is_session_active(self, session: mcp_client.MCPClientSession) -> bool:
+        return (
+            session.state.initialized
+            and session.state.phase == mcp_models.MCPSessionPhase.operating
+        )
