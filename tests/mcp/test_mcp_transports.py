@@ -6,6 +6,7 @@ import sys
 import pytest
 from aiohttp import web
 
+from vocode.mcp import transports as mcp_transports
 from vocode.mcp.protocol import MCPJSONRPCNotification
 from vocode.mcp.protocol import MCPJSONRPCRequest
 from vocode.mcp.protocol import MCPJSONRPCResponse
@@ -39,6 +40,26 @@ for line in sys.stdin:
         }) + '\\n')
         sys.stdout.flush()
 """
+
+
+class _RecordedLogger:
+    def __init__(self, records, context=None) -> None:
+        self._records = records
+        self._context = dict(context or {})
+
+    def bind(self, **kwargs):
+        merged = dict(self._context)
+        merged.update(kwargs)
+        return _RecordedLogger(self._records, merged)
+
+    def info(self, event: str, **kwargs) -> None:
+        self._records.append(("info", event, {**self._context, **kwargs}))
+
+    def warning(self, event: str, **kwargs) -> None:
+        self._records.append(("warning", event, {**self._context, **kwargs}))
+
+    def exception(self, event: str, **kwargs) -> None:
+        self._records.append(("exception", event, {**self._context, **kwargs}))
 
 
 @pytest.mark.asyncio
@@ -153,6 +174,73 @@ async def test_http_transport_posts_jsonrpc_and_injects_headers(
         "method": "initialize",
         "params": {},
     }
+
+    await transport.close()
+    await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_logs_auth_challenge_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    unused_tcp_port,
+) -> None:
+    records = []
+    monkeypatch.setattr(mcp_transports, "logger", _RecordedLogger(records))
+    attempts = {"count": 0}
+
+    async def handler(request: web.Request) -> web.Response:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return web.Response(
+                status=401,
+                headers={"WWW-Authenticate": 'Bearer realm="mcp"'},
+                text="unauthorized",
+            )
+        return web.json_response(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2025-03-26",
+                },
+            }
+        )
+
+    async def auth_challenge_handler(
+        status_code: int,
+        www_authenticate: str | None,
+        step_up_attempt: int,
+    ) -> dict[str, str] | None:
+        assert status_code == 401
+        assert www_authenticate == 'Bearer realm="mcp"'
+        assert step_up_attempt == 0
+        return {"X-Auth-Retry": "1"}
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = unused_tcp_port
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    transport = MCPHTTPTransport(
+        f"http://127.0.0.1:{port}/mcp",
+        auth_challenge_handler=auth_challenge_handler,
+    )
+    await transport.start()
+
+    response = await transport.request(MCPJSONRPCRequest(id=1, method="initialize"))
+
+    assert isinstance(response, MCPJSONRPCResponse)
+    events = [event for _, event, _ in records]
+    assert "MCP HTTP auth challenge received" in events
+    assert "MCP HTTP auth challenge resolved" in events
+
+    challenge_record = next(
+        record for record in records if record[1] == "MCP HTTP auth challenge received"
+    )
+    assert challenge_record[2]["status_code"] == 401
 
     await transport.close()
     await runner.cleanup()

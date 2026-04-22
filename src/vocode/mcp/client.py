@@ -6,6 +6,7 @@ import typing
 
 from typing import Any, Dict, Optional
 
+from vocode.logger import logger
 from vocode.mcp import models as mcp_models
 from vocode.mcp import protocol as mcp_protocol
 from vocode.mcp import transports as mcp_transports
@@ -31,6 +32,12 @@ class MCPClientSession:
         self.transport = transport
         self.protocol = mcp_protocol.MCPProtocolClient()
         self.state = mcp_models.MCPSessionState(source=self.source)
+        self._log = logger.bind(
+            component="mcp_client_session",
+            source_name=self.source.source_name,
+            transport=self.source.transport,
+            scope=self.source.scope,
+        )
         self._client_name = client_name
         self._client_version = client_version
         self._client_capabilities = (
@@ -43,6 +50,7 @@ class MCPClientSession:
         self._receive_task: Optional[asyncio.Task[None]] = None
 
     async def start(self) -> None:
+        self._log.info("MCP session start requested")
         await self.transport.start()
         try:
             await self.initialize()
@@ -61,6 +69,11 @@ class MCPClientSession:
 
     async def initialize(self) -> Dict[str, Any]:
         try:
+            self._log.info(
+                "MCP session initialize started",
+                client_capabilities=self._client_capabilities.model_dump(),
+                root_count=len(self._roots),
+            )
             if not self.transport.is_running:
                 await self.transport.start()
             request = self.protocol.create_request(
@@ -103,9 +116,19 @@ class MCPClientSession:
                     server_info=self.protocol.state.negotiation.server_info,
                 ),
             )
+            self._log.info(
+                "MCP session initialize succeeded",
+                protocol_version=self.state.negotiation.protocol_version,
+                server_capabilities=self.state.negotiation.server_capabilities.model_dump(),
+                server_info=self.state.negotiation.server_info,
+            )
             self._ensure_receive_loop()
             return result
         except Exception as exc:
+            self._log.warning(
+                "MCP session initialize failed",
+                error=str(exc),
+            )
             await self._mark_disconnected(str(exc))
             if isinstance(exc, MCPClientError):
                 raise
@@ -163,13 +186,29 @@ class MCPClientSession:
             await self.transport.notify(
                 self.protocol.build_cancel_notification(request.id)
             )
+            self._log.warning(
+                "MCP session request timed out",
+                method=method,
+                request_id=request.id,
+                timeout_s=timeout_s,
+            )
             raise MCPClientError(
                 f"request timed out after {timeout_s} seconds"
             ) from exc
         except mcp_transports.MCPTransportError as exc:
+            self._log.warning(
+                "MCP session transport request failed",
+                method=method,
+                error=str(exc),
+            )
             await self._mark_disconnected(str(exc))
             raise MCPClientError(str(exc)) from exc
         except mcp_protocol.MCPProtocolError as exc:
+            self._log.warning(
+                "MCP session protocol request failed",
+                method=method,
+                error=str(exc),
+            )
             raise MCPClientError(str(exc)) from exc
 
     async def list_tools(self, cursor: Optional[str] = None) -> Dict[str, Any]:
@@ -296,6 +335,10 @@ class MCPClientSession:
         except mcp_transports.MCPTransportError as exc:
             await self._mark_disconnected(str(exc))
             raise MCPClientError(str(exc)) from exc
+        self._log.info(
+            "MCP session roots updated",
+            root_count=len(self._roots),
+        )
         return True
 
     def _parse_server_capabilities(
@@ -338,6 +381,10 @@ class MCPClientSession:
             raise
         except mcp_transports.MCPTransportError as exc:
             if self.state.phase != mcp_models.MCPSessionPhase.closed:
+                self._log.warning(
+                    "MCP session receive loop stopped",
+                    error=str(exc),
+                )
                 await self._mark_disconnected(str(exc))
 
     def _dispatch_notification(
@@ -416,4 +463,8 @@ class MCPClientSession:
                 phase=mcp_models.MCPSessionPhase.closed,
                 initialized=False,
                 last_error=error,
+            )
+            self._log.info(
+                "MCP session disconnected",
+                error=error,
             )

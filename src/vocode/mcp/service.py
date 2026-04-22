@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from vocode import settings as vocode_settings
 from vocode.auth import TokenCredentialManager
+from vocode.logger import logger
 from vocode.mcp import auth as mcp_auth
 from vocode.mcp import client as mcp_client
 from vocode.mcp import converters as mcp_converters
@@ -52,6 +53,7 @@ class MCPService:
         self._settings = settings
         self._registry = mcp_registry.MCPRegistry(settings)
         self._auth = mcp_auth.MCPAuthManager(settings, credentials=credentials)
+        self._log = logger.bind(component="mcp_service")
         self._project_root_uri = project_root_uri
         self._has_workflow_roots = has_workflow_roots
         self._has_workflow_roots_list_changed = has_workflow_roots_list_changed
@@ -145,7 +147,13 @@ class MCPService:
         if session is None:
             raise MCPServiceError(f"no active session for mcp source: {source_name}")
         payloads = await session.list_all_tools()
-        return self.cache_tool_descriptors(source_name, payloads)
+        cached = self.cache_tool_descriptors(source_name, payloads)
+        self._log.info(
+            "MCP tool refresh completed",
+            source_name=source_name,
+            tool_count=len(cached),
+        )
+        return cached
 
     async def call_tool(
         self,
@@ -303,6 +311,13 @@ class MCPService:
         effective_roots = self._resolve_effective_roots(source_name)
         source = source.model_copy(update={"roots": effective_roots})
         source_settings = self._settings.sources[source_name]
+        self._log.info(
+            "MCP session start requested",
+            source_name=source_name,
+            transport=source.transport,
+            scope=source.scope,
+            root_count=len(effective_roots),
+        )
         transport: mcp_transports.MCPHTTPTransport | mcp_transports.MCPStdioTransport
         if isinstance(source_settings, vocode_settings.MCPStdioSourceSettings):
             transport = mcp_transports.MCPStdioTransport(
@@ -358,8 +373,22 @@ class MCPService:
         self._sessions[source_name] = session
         try:
             await session.start()
+            self._log.info(
+                "MCP session started",
+                source_name=source_name,
+                transport=source.transport,
+                scope=source.scope,
+                protocol_version=session.state.negotiation.protocol_version,
+            )
         except mcp_client.MCPClientError as exc:
             self._sessions.pop(source_name, None)
+            self._log.warning(
+                "MCP session start failed",
+                source_name=source_name,
+                transport=source.transport,
+                scope=source.scope,
+                error=str(exc),
+            )
             raise MCPServiceError(
                 f"failed to start mcp source {source_name}: {exc}"
             ) from exc
@@ -393,6 +422,13 @@ class MCPService:
             await self.start_session(name)
             started_sources.append(name)
         await self._reconcile_session_roots()
+        self._log.info(
+            "MCP workflow sessions reconciled",
+            workflow_name=workflow_name,
+            workflow_run_id=workflow_run_id,
+            started_sources=started_sources,
+            stopped_sources=stopped_sources,
+        )
         return MCPWorkflowSessionChange(
             started_sources=started_sources,
             stopped_sources=stopped_sources,
@@ -422,6 +458,12 @@ class MCPService:
             await self.close_session(name)
             stopped_sources.append(name)
         await self._reconcile_session_roots()
+        self._log.info(
+            "MCP workflow sessions finished",
+            workflow_name=workflow_name,
+            workflow_run_id=workflow_run_id,
+            stopped_sources=stopped_sources,
+        )
         return MCPWorkflowSessionChange([], stopped_sources)
 
     async def close_session(self, source_name: str) -> None:
@@ -442,10 +484,29 @@ class MCPService:
         if session is None:
             return
         self.clear_tool_cache(source_name)
+        self._log.info(
+            "MCP session closing",
+            source_name=source_name,
+            transport=session.source.transport,
+            scope=session.source.scope,
+        )
         try:
             await session.close()
-        except Exception:
+        except Exception as exc:
+            self._log.warning(
+                "MCP session close failed",
+                source_name=source_name,
+                transport=session.source.transport,
+                scope=session.source.scope,
+                error=str(exc),
+            )
             return
+        self._log.info(
+            "MCP session closed",
+            source_name=source_name,
+            transport=session.source.transport,
+            scope=session.source.scope,
+        )
 
     async def close_all(self) -> None:
         names = list(self._sessions.keys())
@@ -484,8 +545,15 @@ class MCPService:
         if not isinstance(source_settings, vocode_settings.MCPExternalSourceSettings):
             raise MCPServiceError(f"mcp source {source_name} is not an external source")
         try:
+            self._log.info("MCP login requested", source_name=source_name)
             await self._auth.resolve_headers(source_name, source_settings)
+            self._log.info("MCP login completed", source_name=source_name)
         except mcp_auth.MCPAuthError as exc:
+            self._log.warning(
+                "MCP login failed",
+                source_name=source_name,
+                error=str(exc),
+            )
             raise MCPServiceError(
                 f"failed to authenticate mcp source {source_name}: {exc}"
             ) from exc
@@ -499,6 +567,7 @@ class MCPService:
         if not isinstance(source_settings, vocode_settings.MCPExternalSourceSettings):
             raise MCPServiceError(f"mcp source {source_name} is not an external source")
         await self._auth.clear_token(source_name, source_settings.url)
+        self._log.info("MCP logout completed", source_name=source_name)
 
     def _list_workflow_session_names(self) -> list[str]:
         names: list[str] = []
@@ -585,6 +654,10 @@ class MCPService:
         refresh_task = self._tool_refresh_tasks.get(source_name)
         if refresh_task is not None and not refresh_task.done():
             return
+        self._log.info(
+            "MCP tools list changed notification received",
+            source_name=source_name,
+        )
         self._tool_refresh_tasks[source_name] = asyncio.create_task(
             self._refresh_tools_from_notification(source_name)
         )
@@ -593,7 +666,12 @@ class MCPService:
         task = self._tool_refresh_tasks.get(source_name)
         try:
             await self.refresh_tools(source_name)
-        except MCPServiceError:
+        except MCPServiceError as exc:
+            self._log.warning(
+                "MCP tool refresh from notification failed",
+                source_name=source_name,
+                error=str(exc),
+            )
             return
         finally:
             current = self._tool_refresh_tasks.get(source_name)
@@ -663,6 +741,13 @@ class MCPService:
             refresh_task.cancel()
         self._sessions.pop(source_name, None)
         self.clear_tool_cache(source_name)
+        self._log.info(
+            "MCP inactive session dropped",
+            source_name=source_name,
+            transport=session.source.transport,
+            scope=session.source.scope,
+            last_error=session.state.last_error,
+        )
 
     def _is_session_active(self, session: mcp_client.MCPClientSession) -> bool:
         return (

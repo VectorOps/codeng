@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
+from vocode.logger import logger
 from vocode.mcp import process_manager as mcp_process_manager
 from vocode.mcp import protocol as mcp_protocol
 
@@ -30,6 +31,11 @@ class MCPStdioTransport:
         self._args = list(args or [])
         self._env = dict(env or {})
         self._cwd = cwd
+        self._log = logger.bind(
+            component="mcp_stdio_transport",
+            command=command,
+            cwd=cwd,
+        )
         self._process_manager = mcp_process_manager.MCPStdioProcessManager(
             command,
             args=self._args,
@@ -55,7 +61,9 @@ class MCPStdioTransport:
         try:
             await self._process_manager.start()
         except mcp_process_manager.MCPProcessError as exc:
+            self._log.warning("MCP stdio transport start failed", error=str(exc))
             raise MCPTransportError(str(exc)) from exc
+        self._log.info("MCP stdio transport started", args=self._args)
         self._stderr_task = asyncio.create_task(self._collect_stderr())
 
     async def send(self, message: mcp_protocol.MCPJSONRPCMessage) -> None:
@@ -103,10 +111,15 @@ class MCPStdioTransport:
         try:
             await self._process_manager.close()
         except mcp_process_manager.MCPProcessError as exc:
+            self._log.warning("MCP stdio transport close failed", error=str(exc))
             raise MCPTransportError(str(exc)) from exc
         if self._stderr_task is not None:
             await self._stderr_task
             self._stderr_task = None
+        self._log.info(
+            "MCP stdio transport closed",
+            stderr_line_count=len(self._stderr_lines),
+        )
 
     async def _collect_stderr(self) -> None:
         proc = self._process_manager.process
@@ -116,7 +129,12 @@ class MCPStdioTransport:
             line = await proc.stderr.readline()
             if not line:
                 break
-            self._stderr_lines.append(line.decode("utf-8", errors="replace"))
+            decoded = line.decode("utf-8", errors="replace")
+            self._stderr_lines.append(decoded)
+            self._log.warning(
+                "MCP stdio transport stderr",
+                line=decoded.rstrip("\n"),
+            )
 
 
 class MCPHTTPTransport:
@@ -141,6 +159,7 @@ class MCPHTTPTransport:
         self._session = session
         self._owns_session = session is None
         self._auth_challenge_handler = auth_challenge_handler
+        self._log = logger.bind(component="mcp_http_transport", url=url)
 
     @property
     def is_running(self) -> bool:
@@ -151,6 +170,7 @@ class MCPHTTPTransport:
             return
         self._session = aiohttp.ClientSession()
         self._owns_session = True
+        self._log.info("MCP HTTP transport started")
 
     def set_protocol_version(self, value: Optional[str]) -> None:
         self._protocol_version = value
@@ -209,6 +229,11 @@ class MCPHTTPTransport:
                     response.status in {401, 403}
                     and self._auth_challenge_handler is not None
                 ):
+                    self._log.info(
+                        "MCP HTTP auth challenge received",
+                        status_code=response.status,
+                        auth_attempt=auth_attempt,
+                    )
                     refreshed_headers = await self._auth_challenge_handler(
                         response.status,
                         response.headers.get("WWW-Authenticate"),
@@ -217,10 +242,19 @@ class MCPHTTPTransport:
                     await response.read()
                     if refreshed_headers is not None and auth_attempt < 3:
                         self._headers.update(refreshed_headers)
+                        self._log.info(
+                            "MCP HTTP auth challenge resolved",
+                            status_code=response.status,
+                            auth_attempt=auth_attempt,
+                        )
                         auth_attempt += 1
                         continue
                 text = await response.text()
                 if response.status >= 400:
+                    self._log.warning(
+                        "MCP HTTP request failed",
+                        status_code=response.status,
+                    )
                     raise MCPTransportError(
                         f"http transport request failed with status {response.status}: {text}"
                     )
@@ -234,3 +268,4 @@ class MCPHTTPTransport:
         if self._owns_session and not self._session.closed:
             await self._session.close()
         self._session = None
+        self._log.info("MCP HTTP transport closed")

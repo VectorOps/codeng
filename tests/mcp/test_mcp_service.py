@@ -7,9 +7,12 @@ import pytest
 from aiohttp import web
 
 from vocode.auth import ProjectCredentialManager
+from vocode.mcp import client as mcp_client
 from vocode.mcp.registry import MCPRegistry
+from vocode.mcp import service as mcp_service
 from vocode.mcp.service import MCPService
 from vocode.mcp.service import MCPServiceError
+from vocode.mcp import transports as mcp_transports
 from vocode.settings import MCPAuthSettings
 from vocode.settings import MCPExternalSourceSettings
 from vocode.settings import MCPProtocolSettings
@@ -369,6 +372,35 @@ async def _wait_for_session_close(session) -> None:
         await asyncio.sleep(0.01)
 
 
+class _RecordedLogger:
+    def __init__(self, records, context=None) -> None:
+        self._records = records
+        self._context = dict(context or {})
+
+    def bind(self, **kwargs):
+        merged = dict(self._context)
+        merged.update(kwargs)
+        return _RecordedLogger(self._records, merged)
+
+    def info(self, event: str, **kwargs) -> None:
+        self._records.append(("info", event, {**self._context, **kwargs}))
+
+    def warning(self, event: str, **kwargs) -> None:
+        self._records.append(("warning", event, {**self._context, **kwargs}))
+
+    def exception(self, event: str, **kwargs) -> None:
+        self._records.append(("exception", event, {**self._context, **kwargs}))
+
+
+def _install_recorded_mcp_loggers(monkeypatch: pytest.MonkeyPatch):
+    records = []
+    recorded_logger = _RecordedLogger(records)
+    monkeypatch.setattr(mcp_service, "logger", recorded_logger)
+    monkeypatch.setattr(mcp_client, "logger", recorded_logger)
+    monkeypatch.setattr(mcp_transports, "logger", recorded_logger)
+    return records
+
+
 def test_registry_builds_source_descriptors_from_settings() -> None:
     registry = MCPRegistry(_make_settings())
 
@@ -403,6 +435,34 @@ async def test_service_starts_and_reuses_session_for_known_source() -> None:
     assert service.get_session_state("missing") is None
 
     await service.close_all()
+
+
+@pytest.mark.asyncio
+async def test_service_emits_mcp_lifecycle_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = _install_recorded_mcp_loggers(monkeypatch)
+    service = MCPService(_make_settings())
+
+    await service.start_session("local")
+    await service.refresh_tools("local")
+    await service.close_all()
+
+    events = [event for _, event, _ in records]
+
+    assert "MCP session start requested" in events
+    assert "MCP stdio transport started" in events
+    assert "MCP session initialize succeeded" in events
+    assert "MCP session started" in events
+    assert "MCP tool refresh completed" in events
+    assert "MCP session closing" in events
+    assert "MCP session closed" in events
+
+    refresh_record = next(
+        record for record in records if record[1] == "MCP tool refresh completed"
+    )
+    assert refresh_record[2]["source_name"] == "local"
+    assert refresh_record[2]["tool_count"] == 2
     assert service.list_sessions() == {}
     assert service.list_active_sources() == {}
 
