@@ -233,6 +233,77 @@ async def test_http_transport_posts_jsonrpc_and_injects_headers(
 
 
 @pytest.mark.asyncio
+async def test_http_transport_keeps_auth_retry_headers_request_local(
+    unused_tcp_port,
+) -> None:
+    attempts_by_method: dict[str, int] = {"one": 0, "two": 0}
+    observed_headers: dict[str, list[str | None]] = {"one": [], "two": []}
+    release_retry = asyncio.Event()
+
+    async def handler(request: web.Request) -> web.Response:
+        payload = await request.json()
+        method = payload["method"]
+        auth_retry = request.headers.get("X-Auth-Retry")
+        observed_headers[method].append(auth_retry)
+        attempts_by_method[method] += 1
+        if method == "one" and attempts_by_method[method] == 1:
+            return web.Response(
+                status=401,
+                headers={"WWW-Authenticate": 'Bearer realm="mcp"'},
+                text="retry one",
+            )
+        if method == "one" and attempts_by_method[method] == 2:
+            await release_retry.wait()
+        return web.json_response(
+            {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {"ok": method},
+            }
+        )
+
+    async def auth_challenge_handler(
+        status_code: int,
+        www_authenticate: str | None,
+        step_up_attempt: int,
+    ) -> dict[str, str] | None:
+        assert status_code == 401
+        assert www_authenticate == 'Bearer realm="mcp"'
+        assert step_up_attempt == 0
+        return {"X-Auth-Retry": "one-retry"}
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = unused_tcp_port
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    transport = MCPHTTPTransport(
+        f"http://127.0.0.1:{port}/mcp",
+        auth_challenge_handler=auth_challenge_handler,
+    )
+    await transport.start()
+
+    first_request = asyncio.create_task(
+        transport.request(MCPJSONRPCRequest(id=1, method="one"))
+    )
+    await asyncio.sleep(0.01)
+    second_response = await transport.request(MCPJSONRPCRequest(id=2, method="two"))
+    release_retry.set()
+    first_response = await first_request
+
+    assert isinstance(first_response, MCPJSONRPCResponse)
+    assert isinstance(second_response, MCPJSONRPCResponse)
+    assert observed_headers["one"] == [None, "one-retry"]
+    assert observed_headers["two"] == [None]
+
+    await transport.close()
+    await runner.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_http_transport_logs_auth_challenge_resolution(
     monkeypatch: pytest.MonkeyPatch,
     unused_tcp_port,

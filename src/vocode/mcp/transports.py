@@ -156,6 +156,7 @@ class MCPHTTPTransport:
     ) -> None:
         self._url = url
         self._headers = dict(headers or {})
+        self._authorization_header = self._headers.pop("Authorization", None)
         self._auth_token = auth_token
         self._protocol_version = protocol_version
         self._session = session
@@ -216,12 +217,17 @@ class MCPHTTPTransport:
         if not self.is_running or self._session is None:
             raise MCPTransportError("http transport is not running")
         auth_attempt = 0
+        retry_headers: Dict[str, str] = {}
+        next_authorization_header: Optional[str] = None
         while True:
             headers = dict(self._headers)
+            if self._authorization_header is not None:
+                headers["Authorization"] = self._authorization_header
             if self._auth_token is not None:
                 headers["Authorization"] = f"Bearer {self._auth_token}"
             if self._protocol_version is not None:
                 headers["MCP-Protocol-Version"] = self._protocol_version
+            headers.update(retry_headers)
             async with self._session.post(
                 self._url,
                 json=message.model_dump(exclude_none=True),
@@ -243,7 +249,10 @@ class MCPHTTPTransport:
                     )
                     await response.read()
                     if refreshed_headers is not None and auth_attempt < 3:
-                        self._headers.update(refreshed_headers)
+                        retry_headers = dict(refreshed_headers)
+                        next_authorization_header = refreshed_headers.get(
+                            "Authorization"
+                        )
                         self._log.info(
                             "MCP HTTP auth challenge resolved",
                             status_code=response.status,
@@ -260,6 +269,8 @@ class MCPHTTPTransport:
                     raise MCPTransportError(
                         f"http transport request failed with status {response.status}: {text}"
                     )
+                if next_authorization_header is not None:
+                    self._authorization_header = next_authorization_header
                 if not expect_response:
                     return None
                 return text
