@@ -1058,6 +1058,45 @@ async def test_mcp_list_command_reports_tools_and_readiness() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mcp_unknown_subcommand_reports_family_guidance() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp sync")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Command error:" in payload.text
+    assert "Unknown subcommand 'sync' for /mcp." in payload.text
+    assert "Try: /mcp" in payload.text
+
+
+@pytest.mark.asyncio
 async def test_mcp_login_and_logout_commands_manage_stored_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1132,7 +1171,7 @@ async def test_mcp_login_and_logout_commands_manage_stored_token(
     logout_payload = logout_envelope.payload
     assert isinstance(logout_payload, manager_proto.TextMessagePacket)
     assert logout_payload.format == manager_proto.TextMessageFormat.RICH_TEXT
-    assert "Removed stored MCP authentication for remote." in logout_payload.text
+    assert "Removed MCP authentication for remote." in logout_payload.text
 
 
 @pytest.mark.asyncio

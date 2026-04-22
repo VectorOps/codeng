@@ -873,7 +873,7 @@ This delivers the core requested capability while keeping the current architectu
 [x] Reduce `Project` MCP orchestration leakage by moving tool materialization, naming, and refresh coordination behind MCP-specific boundaries
 [x] Introduce a stable MCP internal tool naming and reverse lookup utility
 [x] Strengthen workflow/session identity for concurrent and nested workflow cases
-[ ] Standardize manager command output and `/mcp` command semantics across the TUI
+[x] Standardize manager command output and `/mcp` command semantics across the TUI
 [ ] Add structured MCP lifecycle logging and diagnostics
 [ ] Revisit credential persistence boundaries for env overrides, stored tokens, and cache semantics
 [ ] Harden stdio transport concurrency, including serialized writes and safe handling of late timed-out responses

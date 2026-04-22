@@ -14,10 +14,6 @@ from vocode.mcp import models as mcp_models
 from vocode.mcp import naming as mcp_naming
 from vocode.mcp import registry as mcp_registry
 from vocode.mcp import transports as mcp_transports
-from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
-from vocode.tools.mcp_get_prompt_tool import MCPGetPromptTool
-from vocode.tools.mcp_read_resource_tool import MCPReadResourceTool
-from vocode.tools.mcp_tool import MCPToolAdapter
 
 
 class MCPServiceError(Exception):
@@ -243,6 +239,11 @@ class MCPService:
         disabled_tool_names: set[str],
         workflow: Optional[vocode_settings.WorkflowConfig] = None,
     ) -> Dict[str, Any]:
+        from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
+        from vocode.tools.mcp_get_prompt_tool import MCPGetPromptTool
+        from vocode.tools.mcp_read_resource_tool import MCPReadResourceTool
+        from vocode.tools.mcp_tool import MCPToolAdapter
+
         effective_workflow = workflow
         if effective_workflow is None:
             effective_workflow = self._active_workflow

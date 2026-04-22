@@ -78,12 +78,12 @@ def _build_mcp_help() -> str:
     return command_output.format_help(
         "MCP commands:",
         [
+            ("/mcp list [source]", "List MCP tools for one source or all sources"),
             ("/mcp status [source]", "Show MCP source status"),
-            ("/mcp list [source]", "List MCP tools and source readiness"),
-            ("/mcp login <source>", "Authenticate an MCP source"),
+            ("/mcp login <source>", "Start authentication for an MCP source"),
             (
                 "/mcp logout <source>",
-                "Remove stored MCP authentication",
+                "Remove MCP authentication for a source",
             ),
             ("/mcp cancel", "Cancel active MCP authentication"),
         ],
@@ -163,6 +163,17 @@ async def _handle_status(server, args: list[str]) -> None:
     await command_output.send_rich(server, "\n".join(lines))
 
 
+def _validate_source_argument_count(action: str, args: list[str]) -> str:
+    if len(args) != 1:
+        raise CommandError(f"Usage: /mcp {action} <source>")
+    return args[0]
+
+
+def _validate_action(action: str) -> None:
+    if action not in MCP_SUBCOMMANDS:
+        raise CommandError(f"Unknown subcommand '{action}' for /mcp.\nTry: /mcp")
+
+
 def _build_tools_unavailable_text(
     *,
     auth_required: bool,
@@ -235,6 +246,8 @@ async def _mcp(server, args: list[str]) -> None:
         return
     action = args[0]
     subcommand_args = args[1:]
+    _validate_action(action)
+
     if action == "cancel":
         if subcommand_args:
             raise CommandError("Usage: /mcp cancel")
@@ -247,9 +260,6 @@ async def _mcp(server, args: list[str]) -> None:
         await command_output.send_success(server, "MCP authentication cancelled.")
         return
 
-    if action not in MCP_SUBCOMMANDS:
-        raise CommandError(f"Unknown subcommand '{action}' for /mcp.\nTry: /mcp")
-
     if action == "status":
         await _handle_status(server, subcommand_args)
         return
@@ -258,22 +268,17 @@ async def _mcp(server, args: list[str]) -> None:
         await _handle_list(server, subcommand_args)
         return
 
-    if len(subcommand_args) != 1:
-        raise CommandError(f"Usage: /mcp {action} <source>")
-    source_name = subcommand_args[0]
-    source_settings = _ensure_external_auth_source(server, source_name)
+    source_name = _validate_source_argument_count(action, subcommand_args)
+    _ensure_external_auth_source(server, source_name)
     service = _get_mcp_service(server)
 
     if action == "logout":
         await service.logout(source_name)
         await command_output.send_success(
             server,
-            f"Removed stored MCP authentication for {source_name}.",
+            f"Removed MCP authentication for {source_name}.",
         )
         return
-
-    if action != "login":
-        raise CommandError(f"Unknown subcommand '{action}' for /mcp.\nTry: /mcp")
 
     if server.mcp_auth_session is not None:
         raise CommandError("MCP authentication is already in progress.")
@@ -292,7 +297,7 @@ async def _mcp(server, args: list[str]) -> None:
     await server.emit_progress_update(
         progress_id=progress_id,
         title=f"Authenticating MCP source {source_name}",
-        message="Requesting token. Use /mcp cancel to abort.",
+        message="Waiting for authentication. Use /mcp cancel to abort.",
         mode=manager_proto.ProgressMode.INDETERMINATE,
         bar_type=manager_proto.ProgressBarType.PULSE,
     )

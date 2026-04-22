@@ -282,7 +282,20 @@ async def mcp_autocomplete_provider(
     if settings is None or settings.mcp is None:
         return None
 
-    source_names = sorted(settings.mcp.sources.keys())
+    source_names: list[str] = []
+    for source_name, source_settings in settings.mcp.sources.items():
+        if action in {"list", "status"}:
+            source_names.append(source_name)
+            continue
+        if not isinstance(
+            source_settings,
+            vocode_settings.MCPExternalSourceSettings,
+        ):
+            continue
+        if source_settings.auth is None or not source_settings.auth.enabled:
+            continue
+        source_names.append(source_name)
+    source_names.sort()
     if len(tokens) == 2 or (len(tokens) == 3 and not has_trailing_space):
         needle = ""
         replace_text = word
