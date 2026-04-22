@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 from vocode import settings as vocode_settings
+from vocode.auth import TokenCredentialManager
 from vocode.mcp import auth as mcp_auth
 from vocode.mcp import client as mcp_client
 from vocode.mcp import converters as mcp_converters
@@ -36,7 +37,7 @@ class MCPService:
         self,
         settings: Optional[vocode_settings.MCPSettings],
         *,
-        credentials: Optional[mcp_auth.MCPTokenManager] = None,
+        credentials: Optional[TokenCredentialManager] = None,
         project_root_uri: Optional[str] = None,
         has_workflow_roots: bool = False,
         has_workflow_roots_list_changed: bool = False,

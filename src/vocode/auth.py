@@ -8,7 +8,7 @@ import logging
 import os
 import secrets
 from pathlib import Path
-from typing import MutableMapping, Optional
+from typing import MutableMapping, Optional, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -187,6 +187,23 @@ class ProviderAuthorizationStatus(BaseModel):
 
 class AuthenticationCancelledError(RuntimeError):
     pass
+
+
+class TokenCredentialManager(Protocol):
+    async def get_token(
+        self,
+        name: str,
+        *,
+        context: Optional[connect_auth.AuthContext] = None,
+    ) -> Optional[str]: ...
+
+    async def set_token(
+        self,
+        name: str,
+        value: Optional[str],
+        *,
+        context: Optional[connect_auth.AuthContext] = None,
+    ) -> None: ...
 
 
 class ProjectCredentialManager:

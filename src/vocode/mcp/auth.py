@@ -13,24 +13,11 @@ import aiohttp
 from pydantic import BaseModel, Field
 
 from vocode import settings as vocode_settings
+from vocode.auth import TokenCredentialManager
 
 
 class MCPAuthError(Exception):
     pass
-
-
-class MCPTokenManager(Protocol):
-    async def get_token(
-        self, name: str, *, context: object = None
-    ) -> Optional[str]: ...
-
-    async def set_token(
-        self,
-        name: str,
-        value: Optional[str],
-        *,
-        context: object = None,
-    ) -> None: ...
 
 
 class MCPAuthChallenge(BaseModel):
@@ -71,7 +58,7 @@ class MCPAuthManager:
         self,
         settings: Optional[vocode_settings.MCPSettings],
         *,
-        credentials: Optional[MCPTokenManager] = None,
+        credentials: Optional[TokenCredentialManager] = None,
     ) -> None:
         self._settings = settings
         self._credentials = credentials
