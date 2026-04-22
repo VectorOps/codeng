@@ -63,6 +63,19 @@ class MCPService:
         self._tool_cache: Dict[str, Dict[str, mcp_models.MCPToolDescriptor]] = {}
         self._tool_refresh_tasks: Dict[str, asyncio.Task[None]] = {}
 
+    def _session_log_fields(self, session: object) -> Dict[str, object]:
+        source = None
+        try:
+            source = session.source
+        except AttributeError:
+            source = None
+        if source is not None:
+            return {
+                "transport": source.transport,
+                "scope": source.scope,
+            }
+        return {}
+
     @property
     def registry(self) -> mcp_registry.MCPRegistry:
         return self._registry
@@ -487,8 +500,7 @@ class MCPService:
         self._log.info(
             "MCP session closing",
             source_name=source_name,
-            transport=session.source.transport,
-            scope=session.source.scope,
+            **self._session_log_fields(session),
         )
         try:
             await session.close()
@@ -496,16 +508,14 @@ class MCPService:
             self._log.warning(
                 "MCP session close failed",
                 source_name=source_name,
-                transport=session.source.transport,
-                scope=session.source.scope,
+                **self._session_log_fields(session),
                 error=str(exc),
             )
             return
         self._log.info(
             "MCP session closed",
             source_name=source_name,
-            transport=session.source.transport,
-            scope=session.source.scope,
+            **self._session_log_fields(session),
         )
 
     async def close_all(self) -> None:
@@ -744,8 +754,7 @@ class MCPService:
         self._log.info(
             "MCP inactive session dropped",
             source_name=source_name,
-            transport=session.source.transport,
-            scope=session.source.scope,
+            **self._session_log_fields(session),
             last_error=session.state.last_error,
         )
 
