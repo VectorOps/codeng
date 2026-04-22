@@ -1,17 +1,34 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from pathlib import Path
 import typing
+
+from vocode.config import default_config_dir
+
+
+HISTORY_FILE_NAME: typing.Final[str] = "tui-input-history.json"
+SAVE_INTERVAL_S: typing.Final[float] = 60.0
 
 
 class HistoryManager:
-    def __init__(self, max_entries: int | None = None) -> None:
+    def __init__(
+        self,
+        max_entries: int | None = None,
+        history_path: Path | None = None,
+    ) -> None:
         self._entries: list[str] = []
         self._max_entries = max_entries
+        self._history_path = history_path or default_config_dir() / HISTORY_FILE_NAME
         self._index: int | None = None
         self._current_buffer: str | None = None
         self._search_query: str | None = None
         self._search_index: int | None = None
         self._edits: dict[int, str] = {}
+        self._dirty = False
+        self._save_task: asyncio.Task[None] | None = None
+        self.load()
 
     @property
     def entries(self) -> tuple[str, ...]:
@@ -26,11 +43,70 @@ class HistoryManager:
             self.reset_navigation()
             return
         self._entries.append(text)
-        if self._max_entries is not None and len(self._entries) > self._max_entries:
-            overflow = len(self._entries) - self._max_entries
-            if overflow > 0:
-                self._entries = self._entries[overflow:]
+        self._trim_entries()
+        self._dirty = True
         self.reset_navigation()
+
+    def load(self) -> None:
+        path = self._history_path
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+        data = json.loads(raw)
+        if not isinstance(data, list):
+            return
+        entries: list[str] = []
+        for item in data:
+            if not isinstance(item, str):
+                continue
+            text = item.rstrip("\n")
+            if not text:
+                continue
+            entries.append(text)
+        self._entries = entries
+        self._trim_entries()
+
+    def save(self) -> None:
+        path = self._history_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self._entries), encoding="utf-8")
+        self._dirty = False
+
+    async def start(self) -> None:
+        if self._save_task is not None and not self._save_task.done():
+            return
+        loop = asyncio.get_running_loop()
+        self._save_task = loop.create_task(self._run_periodic_save())
+
+    async def stop(self) -> None:
+        task = self._save_task
+        self._save_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if self._dirty:
+            await asyncio.to_thread(self.save)
+
+    async def _run_periodic_save(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(SAVE_INTERVAL_S)
+            except asyncio.CancelledError:
+                return
+            if not self._dirty:
+                continue
+            await asyncio.to_thread(self.save)
+
+    def _trim_entries(self) -> None:
+        if self._max_entries is None or len(self._entries) <= self._max_entries:
+            return
+        overflow = len(self._entries) - self._max_entries
+        if overflow > 0:
+            self._entries = self._entries[overflow:]
 
     def reset_navigation(self) -> None:
         self._index = None
