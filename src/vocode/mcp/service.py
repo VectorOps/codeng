@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from vocode import settings as vocode_settings
 from vocode.auth import TokenCredentialManager
@@ -11,8 +11,13 @@ from vocode.mcp import auth as mcp_auth
 from vocode.mcp import client as mcp_client
 from vocode.mcp import converters as mcp_converters
 from vocode.mcp import models as mcp_models
+from vocode.mcp import naming as mcp_naming
 from vocode.mcp import registry as mcp_registry
 from vocode.mcp import transports as mcp_transports
+from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
+from vocode.tools.mcp_get_prompt_tool import MCPGetPromptTool
+from vocode.tools.mcp_read_resource_tool import MCPReadResourceTool
+from vocode.tools.mcp_tool import MCPToolAdapter
 
 
 class MCPServiceError(Exception):
@@ -231,6 +236,59 @@ class MCPService:
 
     def list_resource_sources(self) -> list[str]:
         return self._list_sources_with_capability("resources")
+
+    def build_project_tools(
+        self,
+        prj,
+        disabled_tool_names: set[str],
+        workflow: Optional[vocode_settings.WorkflowConfig] = None,
+    ) -> Dict[str, Any]:
+        effective_workflow = workflow
+        if effective_workflow is None:
+            effective_workflow = self._active_workflow
+        workflow_mcp = (
+            effective_workflow.mcp if effective_workflow is not None else None
+        )
+        if workflow_mcp is not None and not workflow_mcp.enabled:
+            return {}
+        out: Dict[str, Any] = {}
+        if (
+            self._should_enable_discovery_tool(effective_workflow)
+            and MCPDiscoveryTool.name not in disabled_tool_names
+        ):
+            out[MCPDiscoveryTool.name] = MCPDiscoveryTool(prj)
+        if (
+            self._should_enable_get_prompt_tool(effective_workflow)
+            and MCPGetPromptTool.name not in disabled_tool_names
+        ):
+            out[MCPGetPromptTool.name] = MCPGetPromptTool(prj)
+        if (
+            self._should_enable_read_resource_tool(effective_workflow)
+            and MCPReadResourceTool.name not in disabled_tool_names
+        ):
+            out[MCPReadResourceTool.name] = MCPReadResourceTool(prj)
+        for source_name, descriptors in self.list_tool_cache().items():
+            for descriptor in descriptors.values():
+                if not self.registry.is_workflow_tool_enabled(
+                    effective_workflow,
+                    source_name,
+                    descriptor.tool_name,
+                ):
+                    continue
+                if self._should_hide_listed_tools(effective_workflow):
+                    continue
+                internal_name = mcp_naming.build_internal_tool_name(
+                    source_name,
+                    descriptor.tool_name,
+                )
+                if internal_name in disabled_tool_names:
+                    continue
+                out[internal_name] = MCPToolAdapter(
+                    prj,
+                    descriptor,
+                    internal_name,
+                )
+        return out
 
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
         existing = self.get_session(source_name)
@@ -454,6 +512,62 @@ class MCPService:
         workflow: Optional[vocode_settings.WorkflowConfig],
     ) -> list[str]:
         return list(self._registry.resolve_workflow_sources(workflow).keys())
+
+    def _should_hide_listed_tools(
+        self,
+        workflow: Optional[vocode_settings.WorkflowConfig],
+    ) -> bool:
+        hidden = False
+        if self._settings is not None:
+            hidden = self._settings.hide_listed_tools
+        if workflow is None or workflow.mcp is None:
+            return hidden
+        return workflow.mcp.hide_listed_tools
+
+    def _should_enable_discovery_tool(
+        self,
+        workflow: Optional[vocode_settings.WorkflowConfig],
+    ) -> bool:
+        if self._settings is None:
+            return False
+        discovery_settings = self._settings.discovery
+        if discovery_settings is not None and not discovery_settings.enabled:
+            return False
+        for source_name, descriptors in self.list_tool_cache().items():
+            if not descriptors:
+                continue
+            for descriptor in descriptors.values():
+                if self.registry.is_workflow_tool_enabled(
+                    workflow,
+                    source_name,
+                    descriptor.tool_name,
+                ):
+                    return True
+        return False
+
+    def _should_enable_get_prompt_tool(
+        self,
+        workflow: Optional[vocode_settings.WorkflowConfig],
+    ) -> bool:
+        if not self._has_enabled_workflow(workflow):
+            return False
+        return bool(self.list_prompt_sources())
+
+    def _should_enable_read_resource_tool(
+        self,
+        workflow: Optional[vocode_settings.WorkflowConfig],
+    ) -> bool:
+        if not self._has_enabled_workflow(workflow):
+            return False
+        return bool(self.list_resource_sources())
+
+    def _has_enabled_workflow(
+        self,
+        workflow: Optional[vocode_settings.WorkflowConfig],
+    ) -> bool:
+        return (
+            workflow is not None and workflow.mcp is not None and workflow.mcp.enabled
+        )
 
     def _on_session_notification(
         self,

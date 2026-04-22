@@ -870,7 +870,7 @@ This delivers the core requested capability while keeping the current architectu
 
 [x] Remove broad wildcard re-exports from `src/vocode/mcp/__init__.py` and define an explicit public module surface
 [x] Consolidate shared auth and credential concepts between `src/vocode/auth.py` and `src/vocode/mcp/auth.py`
-[ ] Reduce `Project` MCP orchestration leakage by moving tool materialization, naming, and refresh coordination behind MCP-specific boundaries
+[x] Reduce `Project` MCP orchestration leakage by moving tool materialization, naming, and refresh coordination behind MCP-specific boundaries
 [x] Introduce a stable MCP internal tool naming and reverse lookup utility
 [x] Strengthen workflow/session identity for concurrent and nested workflow cases
 [ ] Standardize manager command output and `/mcp` command semantics across the TUI

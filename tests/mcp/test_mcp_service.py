@@ -532,6 +532,72 @@ async def test_service_ignores_stale_workflow_finish_for_different_run_id() -> N
     assert service.list_sessions() == {}
 
 
+def test_service_build_project_tools_materializes_helpers_and_filtered_adapters() -> (
+    None
+):
+    settings = MCPSettings(
+        discovery={"enabled": True},
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_HANDSHAKE_SERVER],
+            )
+        },
+    )
+    service = MCPService(settings)
+    workflow = WorkflowConfig(
+        mcp=MCPWorkflowSettings(
+            tools=[MCPToolSelector(source="local", tool="*")],
+            disabled_tools=[MCPToolSelector(source="local", tool="search")],
+        )
+    )
+    service._active_workflow = workflow
+    service.cache_tool_descriptors(
+        "local",
+        [
+            {"name": "search", "description": "Search docs"},
+            {"name": "fetch", "description": "Fetch docs"},
+        ],
+    )
+
+    class _PromptResourceSession:
+        def __init__(self) -> None:
+            self.state = type(
+                "_State",
+                (),
+                {
+                    "initialized": True,
+                    "phase": "operating",
+                    "negotiation": type(
+                        "_Negotiation",
+                        (),
+                        {
+                            "server_capabilities": type(
+                                "_Capabilities",
+                                (),
+                                {"prompts": True, "resources": True},
+                            )()
+                        },
+                    )(),
+                },
+            )()
+            self.source = type("_Source", (), {"scope": "workflow"})()
+
+    class _Project:
+        def __init__(self) -> None:
+            self.mcp = service
+
+    service._sessions["local"] = _PromptResourceSession()  # type: ignore[assignment]
+
+    tools = service.build_project_tools(_Project(), {"mcp__local__blocked"})
+
+    assert "mcp_discovery" in tools
+    assert "mcp_get_prompt" in tools
+    assert "mcp_read_resource" in tools
+    assert "mcp__local__search" not in tools
+    assert "mcp__local__fetch" in tools
+
+
 def test_service_caches_and_clears_tool_descriptors_per_source() -> None:
     service = MCPService(_make_settings())
 

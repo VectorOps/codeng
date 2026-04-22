@@ -23,12 +23,7 @@ from .history.manager import HistoryManager
 from .auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
-from vocode.mcp import naming as mcp_naming
 from vocode.mcp.service import MCPService
-from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
-from vocode.tools.mcp_get_prompt_tool import MCPGetPromptTool
-from vocode.tools.mcp_read_resource_tool import MCPReadResourceTool
-from vocode.tools.mcp_tool import MCPToolAdapter
 
 
 class Project:
@@ -120,7 +115,7 @@ class Project:
         self.tools = {
             name: cls(self)
             for name, cls in all_tools.items()
-            if name not in disabled_tool_names and name != MCPDiscoveryTool.name
+            if name not in disabled_tool_names and name != "mcp_discovery"
         }
 
         if self.settings and self.settings.know_enabled and self.settings.know:
@@ -129,114 +124,16 @@ class Project:
                     self.tools[t.tool_name] = convert_know_tool(self, t)
 
         if self.mcp is not None:
-            workflow_mcp = None
-            if (
-                self.settings is not None
-                and self.current_workflow is not None
-                and self.current_workflow in self.settings.workflows
-            ):
-                workflow_mcp = self.settings.workflows[self.current_workflow].mcp
-            if workflow_mcp is not None and not workflow_mcp.enabled:
-                return
-            if (
-                self._should_enable_mcp_discovery_tool()
-                and MCPDiscoveryTool.name not in disabled_tool_names
-            ):
-                self.tools[MCPDiscoveryTool.name] = MCPDiscoveryTool(self)
-            if (
-                self._should_enable_mcp_get_prompt_tool()
-                and MCPGetPromptTool.name not in disabled_tool_names
-            ):
-                self.tools[MCPGetPromptTool.name] = MCPGetPromptTool(self)
-            if (
-                self._should_enable_mcp_read_resource_tool()
-                and MCPReadResourceTool.name not in disabled_tool_names
-            ):
-                self.tools[MCPReadResourceTool.name] = MCPReadResourceTool(self)
-            for source_name, descriptors in self.mcp.list_tool_cache().items():
-                for descriptor in descriptors.values():
-                    if not self._is_mcp_tool_enabled_for_current_workflow(
-                        source_name,
-                        descriptor.tool_name,
-                    ):
-                        continue
-                    if self._should_hide_listed_mcp_tools_for_current_workflow():
-                        continue
-                    internal_name = mcp_naming.build_internal_tool_name(
-                        source_name,
-                        descriptor.tool_name,
-                    )
-                    if internal_name in disabled_tool_names:
-                        continue
-                    self.tools[internal_name] = MCPToolAdapter(
-                        self,
-                        descriptor,
-                        internal_name,
-                    )
-
-    def _is_mcp_tool_enabled_for_current_workflow(
-        self,
-        source_name: str,
-        tool_name: str,
-    ) -> bool:
-        if self.settings is None or self.current_workflow is None or self.mcp is None:
-            return False
-        workflow = self.settings.workflows.get(self.current_workflow)
-        return self.mcp.registry.is_workflow_tool_enabled(
-            workflow,
-            source_name,
-            tool_name,
-        )
-
-    def _should_hide_listed_mcp_tools_for_current_workflow(self) -> bool:
-        if self.settings is None:
-            return False
-        hidden = False
-        if self.settings.mcp is not None:
-            hidden = self.settings.mcp.hide_listed_tools
-        if self.current_workflow is None:
-            return hidden
-        workflow = self.settings.workflows.get(self.current_workflow)
-        if workflow is None or workflow.mcp is None:
-            return hidden
-        return workflow.mcp.hide_listed_tools
-
-    def _should_enable_mcp_discovery_tool(self) -> bool:
-        if self.mcp is None or self.settings is None:
-            return False
-        discovery_settings = None
-        if self.settings.mcp is not None:
-            discovery_settings = self.settings.mcp.discovery
-        if discovery_settings is not None and not discovery_settings.enabled:
-            return False
-        for source_name, descriptors in self.mcp.list_tool_cache().items():
-            if not descriptors:
-                continue
-            for descriptor in descriptors.values():
-                if self._is_mcp_tool_enabled_for_current_workflow(
-                    source_name,
-                    descriptor.tool_name,
-                ):
-                    return True
-        return False
-
-    def _should_enable_mcp_get_prompt_tool(self) -> bool:
-        if not self._has_current_mcp_workflow():
-            return False
-        return bool(self.mcp is not None and self.mcp.list_prompt_sources())
-
-    def _should_enable_mcp_read_resource_tool(self) -> bool:
-        if not self._has_current_mcp_workflow():
-            return False
-        return bool(self.mcp is not None and self.mcp.list_resource_sources())
-
-    def _has_current_mcp_workflow(self) -> bool:
-        if self.mcp is None or self.settings is None or self.current_workflow is None:
-            return False
-        workflow = self.settings.workflows.get(self.current_workflow)
-        return (
-            workflow is not None and workflow.mcp is not None and workflow.mcp.enabled
-        )
+            workflow = None
+            if self.settings is not None and self.current_workflow is not None:
+                workflow = self.settings.workflows.get(self.current_workflow)
+            self.tools.update(
+                self.mcp.build_project_tools(
+                    self,
+                    disabled_tool_names,
+                    workflow=workflow,
+                )
+            )
 
     # LLM usage totals
     def add_llm_usage(
