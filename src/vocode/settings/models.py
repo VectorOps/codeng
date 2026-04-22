@@ -144,6 +144,7 @@ class ToolSpec(vars_mod.BaseVarModel):
 
     name: str
     enabled: bool = True
+    skip_listing: bool = False
     auto_approve: Optional[bool] = None
     auto_approve_rules: List[ToolAutoApproveRule] = Field(default_factory=list)
     config: Dict[str, Any] = Field(default_factory=dict)
@@ -161,6 +162,7 @@ class ToolSpec(vars_mod.BaseVarModel):
             out = {
                 "name": name,
                 "enabled": v.get("enabled", True),
+                "skip_listing": v.get("skip_listing", False),
                 "auto_approve": v.get("auto_approve", None),
                 "auto_approve_rules": v.get("auto_approve_rules", []) or [],
                 "config": v.get("config", {}) or {},
