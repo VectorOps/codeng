@@ -996,6 +996,34 @@ def test_build_effective_tool_specs_global_skip_listing_overrides_node() -> None
     assert effective_specs["echo"].skip_listing is True
 
 
+def test_build_effective_tool_specs_global_skip_listing_false_overrides_node() -> None:
+    project = StubProject()
+    project.settings.tools = [
+        vocode_settings.ToolSpec(
+            name="echo",
+            enabled=True,
+            skip_listing=False,
+        )
+    ]
+
+    node = LLMNode(
+        name="node-tools-skip-listing-global-false",
+        type="llm",
+        model="gpt-3.5-turbo",
+        tools=[
+            vocode_settings.ToolSpec(
+                name="echo",
+                enabled=True,
+                skip_listing=True,
+            )
+        ],
+    )
+
+    effective_specs = llm_helpers.build_effective_tool_specs(project, node)
+
+    assert effective_specs["echo"].skip_listing is False
+
+
 def test_build_effective_tool_specs_keeps_node_skip_listing_without_global() -> None:
     project = StubProject()
 

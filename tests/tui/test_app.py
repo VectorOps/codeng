@@ -19,9 +19,15 @@ async def test_tui_app_sends_user_input_packet(
 ) -> None:
     class FakeTUIState:
         def __init__(
-            self, on_input, on_autocomplete_request=None, on_stop=None, on_eof=None
+            self,
+            on_input,
+            on_autocomplete_request=None,
+            on_stop=None,
+            on_eof=None,
+            persist_history=False,
         ) -> None:
             self._on_input = on_input
+            self._persist_history = persist_history
 
         def add_markdown(self, markdown: str) -> None:
             return None
@@ -49,6 +55,7 @@ async def test_tui_app_sends_user_input_packet(
 
     app = App(project_path=tmp_path)
     text = "hello from tui"
+    assert app._state._persist_history is True
     await app.on_input(text)
 
     envelope = await app._endpoint_server.recv()
@@ -67,11 +74,17 @@ async def test_tui_app_clears_prompt_on_input_prompt_packet(
 ) -> None:
     class FakeTUIState:
         def __init__(
-            self, on_input, on_autocomplete_request=None, on_stop=None, on_eof=None
+            self,
+            on_input,
+            on_autocomplete_request=None,
+            on_stop=None,
+            on_eof=None,
+            persist_history=False,
         ) -> None:
             self._on_input = on_input
             self.last_title: str | None = None
             self.last_subtitle: str | None = None
+            self._persist_history = persist_history
 
         def add_markdown(self, markdown: str) -> None:
             return None
@@ -100,6 +113,7 @@ async def test_tui_app_clears_prompt_on_input_prompt_packet(
 
     app = App(project_path=tmp_path)
     state = app._state  # FakeTUIState
+    assert state._persist_history is True
 
     prompt_packet = manager_proto.InputPromptPacket(title=None, subtitle=None)
     envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=prompt_packet)
@@ -116,10 +130,16 @@ async def test_tui_app_sends_stop_request_packet(
 ) -> None:
     class FakeTUIState:
         def __init__(
-            self, on_input, on_autocomplete_request=None, on_stop=None, on_eof=None
+            self,
+            on_input,
+            on_autocomplete_request=None,
+            on_stop=None,
+            on_eof=None,
+            persist_history=False,
         ) -> None:
             self._on_input = on_input
             self._on_stop = on_stop
+            self._persist_history = persist_history
 
         def add_markdown(self, markdown: str) -> None:
             return None
@@ -146,6 +166,7 @@ async def test_tui_app_sends_stop_request_packet(
     )
 
     app = App(project_path=tmp_path)
+    assert app._state._persist_history is True
 
     await app.on_stop_request()
 

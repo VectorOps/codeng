@@ -78,9 +78,11 @@ async def test_tui_app_handles_ui_state_packet(
             on_autocomplete_request=None,
             on_stop=None,
             on_eof=None,
+            persist_history=False,
         ) -> None:
             self._on_input = on_input
             self.last_ui_state: manager_proto.UIServerStatePacket | None = None
+            self._persist_history = persist_history
 
         def add_markdown(self, markdown: str) -> None:
             return None
@@ -110,6 +112,7 @@ async def test_tui_app_handles_ui_state_packet(
 
     app = tui_app.App(project_path=tmp_path)
     state_obj = app._state  # FakeTUIState
+    assert state_obj._persist_history is True
 
     execution = state.WorkflowExecution(workflow_name="wf-app-ui-state")
     runner_frame = manager_proto.RunnerStackFrame(

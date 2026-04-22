@@ -116,7 +116,7 @@ class Project:
         self.tools = {
             name: cls(self)
             for name, cls in all_tools.items()
-            if name not in disabled_tool_names
+            if name not in disabled_tool_names and name != MCPDiscoveryTool.name
         }
 
         if self.settings and self.settings.know_enabled and self.settings.know:

@@ -852,11 +852,11 @@ This delivers the core requested capability while keeping the current architectu
 
 ### Phase 7 status
 
-[ ] Extend `ToolSpec` with `skip_listing`
-[ ] Update effective tool merge logic
-[ ] Update LLM tool injection to omit hidden tools
-[ ] Add an MCP discovery tool
-[ ] Add V2 tests
+[x] Extend `ToolSpec` with `skip_listing`
+[x] Update effective tool merge logic
+[x] Update LLM tool injection to omit hidden tools
+[x] Add an MCP discovery tool
+[x] Add V2 tests
 
 ### Phase 8 status
 

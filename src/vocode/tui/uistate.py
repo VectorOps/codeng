@@ -66,6 +66,7 @@ class TUIState:
         on_stop: typing.Callable[[], typing.Awaitable[None]] | None = None,
         on_eof: typing.Callable[[], typing.Awaitable[None]] | None = None,
         tui_options: vocode_settings.TUIOptions | None = None,
+        persist_history: bool = False,
     ) -> None:
         self._on_input = on_input
         self._on_autocomplete_request = on_autocomplete_request
@@ -114,7 +115,10 @@ class TUIState:
         history_limit = 10000
         if tui_options is not None:
             history_limit = tui_options.history_limit
-        self._history_manager = tui_history.HistoryManager(max_entries=history_limit)
+        self._history_manager = tui_history.HistoryManager(
+            max_entries=history_limit,
+            persist_history=persist_history,
+        )
         self._input_keymap = self._create_input_keymap()
         self._step_components: dict[
             str, tui_step_output_component.StepOutputComponent

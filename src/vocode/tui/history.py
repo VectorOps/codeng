@@ -17,10 +17,12 @@ class HistoryManager:
         self,
         max_entries: int | None = None,
         history_path: Path | None = None,
+        persist_history: bool = False,
     ) -> None:
         self._entries: list[str] = []
         self._max_entries = max_entries
         self._history_path = history_path or default_config_dir() / HISTORY_FILE_NAME
+        self._persist_history = persist_history
         self._index: int | None = None
         self._current_buffer: str | None = None
         self._search_query: str | None = None
@@ -28,7 +30,8 @@ class HistoryManager:
         self._edits: dict[int, str] = {}
         self._dirty = False
         self._save_task: asyncio.Task[None] | None = None
-        self.load()
+        if self._persist_history:
+            self.load()
 
     @property
     def entries(self) -> tuple[str, ...]:
@@ -68,18 +71,26 @@ class HistoryManager:
         self._trim_entries()
 
     def save(self) -> None:
+        if not self._persist_history:
+            self._dirty = False
+            return
         path = self._history_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self._entries), encoding="utf-8")
         self._dirty = False
 
     async def start(self) -> None:
+        if not self._persist_history:
+            return
         if self._save_task is not None and not self._save_task.done():
             return
         loop = asyncio.get_running_loop()
         self._save_task = loop.create_task(self._run_periodic_save())
 
     async def stop(self) -> None:
+        if not self._persist_history:
+            self._dirty = False
+            return
         task = self._save_task
         self._save_task = None
         if task is not None and not task.done():

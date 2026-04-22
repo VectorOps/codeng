@@ -67,6 +67,7 @@ class App:
             tui_options = project.settings.tui
         if "tui_options" in init_params and tui_options is not None:
             state_kwargs["tui_options"] = tui_options
+        state_kwargs["persist_history"] = True
         self._state = tui_uistate.TUIState(**state_kwargs)
 
     def _next_msg_id(self) -> int:

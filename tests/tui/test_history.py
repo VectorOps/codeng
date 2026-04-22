@@ -80,14 +80,18 @@ def test_history_loads_from_disk_and_trims_to_limit(tmp_path) -> None:
     path = tmp_path / "history.json"
     path.write_text(json.dumps(["one", "two", "three"]), encoding="utf-8")
 
-    manager = tui_history.HistoryManager(max_entries=2, history_path=path)
+    manager = tui_history.HistoryManager(
+        max_entries=2,
+        history_path=path,
+        persist_history=True,
+    )
 
     assert manager.entries == ("two", "three")
 
 
 def test_history_save_persists_entries(tmp_path) -> None:
     path = tmp_path / "history.json"
-    manager = tui_history.HistoryManager(history_path=path)
+    manager = tui_history.HistoryManager(history_path=path, persist_history=True)
     manager.add("one")
     manager.add("two")
 
@@ -98,7 +102,7 @@ def test_history_save_persists_entries(tmp_path) -> None:
 
 def test_history_stop_flushes_dirty_entries(tmp_path) -> None:
     path = tmp_path / "history.json"
-    manager = tui_history.HistoryManager(history_path=path)
+    manager = tui_history.HistoryManager(history_path=path, persist_history=True)
     manager.add("one")
 
     asyncio.run(manager.stop())
