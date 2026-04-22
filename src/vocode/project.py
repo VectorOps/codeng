@@ -56,6 +56,7 @@ class Project:
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
         self.current_workflow: Optional[str] = None
+        self.current_workflow_run_id: Optional[str] = None
         self.last_root_workflow: Optional[str] = None
         self.session_id: str = uuid.uuid4().hex
         save_interval_s = 120.0
@@ -247,14 +248,23 @@ class Project:
         stats.completion_tokens += int(completion_delta or 0)
         stats.cost_dollars += float(cost_delta or 0.0)
 
-    async def on_workflow_started(self, workflow_name: str) -> None:
+    async def on_workflow_started(
+        self,
+        workflow_name: str,
+        workflow_run_id: Optional[str] = None,
+    ) -> None:
         self.current_workflow = workflow_name
+        self.current_workflow_run_id = workflow_run_id
         if self.mcp is None:
             return
         workflow = None
         if self.settings is not None:
             workflow = self.settings.workflows.get(workflow_name)
-        change = await self.mcp.start_workflow(workflow_name, workflow)
+        change = await self.mcp.start_workflow(
+            workflow_name,
+            workflow,
+            workflow_run_id=workflow_run_id,
+        )
         for source_name in change.started_sources:
             await self.mcp.refresh_tools(source_name)
         if change.started_sources or change.stopped_sources:
@@ -264,13 +274,18 @@ class Project:
         self,
         workflow_name: str,
         keep_mcp_sessions: bool = False,
+        workflow_run_id: Optional[str] = None,
     ) -> None:
         if self.mcp is None:
             return
         change = await self.mcp.finish_workflow(
             workflow_name,
             keep_mcp_sessions,
+            workflow_run_id=workflow_run_id,
         )
+        if self.current_workflow_run_id == workflow_run_id:
+            self.current_workflow = None
+            self.current_workflow_run_id = None
         if change.started_sources or change.stopped_sources:
             self.refresh_tools_from_registry()
 

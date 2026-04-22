@@ -1,6 +1,6 @@
 import asyncio
 import sys
-from typing import AsyncIterator, Callable, Dict
+from typing import AsyncIterator, Callable, Dict, Optional
 
 import pytest
 
@@ -2324,13 +2324,19 @@ async def test_runner_mcp_adapter_participates_in_confirmation_and_audit_flow() 
     calls: list[tuple[str, str, dict]] = []
 
     class FakeMCPService:
-        async def start_workflow(self, workflow_name: str, workflow):
+        async def start_workflow(
+            self,
+            workflow_name: str,
+            workflow,
+            workflow_run_id: Optional[str] = None,
+        ):
             return mcp_service.MCPWorkflowSessionChange([], [])
 
         async def finish_workflow(
             self,
             workflow_name: str,
             keep_sessions: bool = False,
+            workflow_run_id: Optional[str] = None,
         ):
             return mcp_service.MCPWorkflowSessionChange([], [])
 

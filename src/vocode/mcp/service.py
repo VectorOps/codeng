@@ -32,6 +32,12 @@ class MCPAuthorizationStatus:
     session_active: bool
 
 
+@dataclass(frozen=True)
+class MCPActiveWorkflowRef:
+    workflow_name: str
+    run_id: Optional[str]
+
+
 class MCPService:
     def __init__(
         self,
@@ -49,6 +55,7 @@ class MCPService:
         self._has_workflow_roots = has_workflow_roots
         self._has_workflow_roots_list_changed = has_workflow_roots_list_changed
         self._active_workflow: Optional[vocode_settings.WorkflowConfig] = None
+        self._active_workflow_ref: Optional[MCPActiveWorkflowRef] = None
         self._sessions: Dict[str, mcp_client.MCPClientSession] = {}
         self._tool_cache: Dict[str, Dict[str, mcp_models.MCPToolDescriptor]] = {}
         self._tool_refresh_tasks: Dict[str, asyncio.Task[None]] = {}
@@ -303,10 +310,15 @@ class MCPService:
         self,
         workflow_name: str,
         workflow: Optional[vocode_settings.WorkflowConfig] = None,
+        workflow_run_id: Optional[str] = None,
     ) -> MCPWorkflowSessionChange:
         if self._settings is None or not self._settings.enabled:
             return MCPWorkflowSessionChange([], [])
         self._active_workflow = workflow
+        self._active_workflow_ref = MCPActiveWorkflowRef(
+            workflow_name=workflow_name,
+            run_id=workflow_run_id,
+        )
         desired_names = self._resolve_workflow_source_names(workflow)
         current_names = self._list_workflow_session_names()
         started_sources: list[str] = []
@@ -331,12 +343,21 @@ class MCPService:
         self,
         workflow_name: str,
         keep_sessions: bool = False,
+        workflow_run_id: Optional[str] = None,
     ) -> MCPWorkflowSessionChange:
         if self._settings is None or not self._settings.enabled:
             return MCPWorkflowSessionChange([], [])
         if keep_sessions:
             return MCPWorkflowSessionChange([], [])
+        active_workflow_ref = self._active_workflow_ref
+        if active_workflow_ref is not None:
+            if active_workflow_ref.run_id is not None and workflow_run_id is not None:
+                if active_workflow_ref.run_id != workflow_run_id:
+                    return MCPWorkflowSessionChange([], [])
+            elif active_workflow_ref.workflow_name != workflow_name:
+                return MCPWorkflowSessionChange([], [])
         self._active_workflow = None
+        self._active_workflow_ref = None
         stopped_sources: list[str] = []
         for name in self._list_workflow_session_names():
             await self.close_session(name)

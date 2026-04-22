@@ -543,7 +543,10 @@ class Runner:
         return self._handle_run_event_response(req, managed_resp)
 
     async def _init_executors(self) -> None:
-        await self.project.on_workflow_started(self.workflow.name)
+        await self.project.on_workflow_started(
+            self.workflow.name,
+            workflow_run_id=str(self.execution.id),
+        )
         for executor in self._executors.values():
             await executor.init()
 
@@ -553,6 +556,7 @@ class Runner:
         await self.project.on_workflow_finished(
             self.workflow.name,
             keep_mcp_sessions,
+            workflow_run_id=str(self.execution.id),
         )
 
     # Main runner loop

@@ -493,6 +493,45 @@ async def test_service_reconciles_workflow_scoped_sessions_differentially() -> N
     assert service.list_sessions() == {}
 
 
+@pytest.mark.asyncio
+async def test_service_ignores_stale_workflow_finish_for_different_run_id() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_HANDSHAKE_SERVER],
+            ),
+        }
+    )
+    service = MCPService(settings)
+    workflow = WorkflowConfig(
+        mcp=MCPWorkflowSettings(
+            tools=[MCPToolSelector(source="local", tool="*")],
+        )
+    )
+
+    await service.start_workflow("wf", workflow, workflow_run_id="run-1")
+    await service.start_workflow("wf", workflow, workflow_run_id="run-2")
+
+    stale_finish = await service.finish_workflow(
+        "wf",
+        workflow_run_id="run-1",
+    )
+
+    assert stale_finish.started_sources == []
+    assert stale_finish.stopped_sources == []
+    assert set(service.list_sessions().keys()) == {"local"}
+
+    current_finish = await service.finish_workflow(
+        "wf",
+        workflow_run_id="run-2",
+    )
+
+    assert current_finish.started_sources == []
+    assert current_finish.stopped_sources == ["local"]
+    assert service.list_sessions() == {}
+
+
 def test_service_caches_and_clears_tool_descriptors_per_source() -> None:
     service = MCPService(_make_settings())
 
