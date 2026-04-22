@@ -359,6 +359,50 @@ async def test_project_mcp_disabled_tools_override_allow_selectors(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_project_hide_listed_mcp_tools_keeps_discovery_tool(tmp_path):
+    settings = Settings(
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    hide_listed_tools=True,
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                )
+            )
+        },
+        mcp=MCPSettings(
+            sources={
+                "local": MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _PROJECT_MCP_SERVER],
+                    scope=MCPSourceScope.project,
+                ),
+            }
+        ),
+    )
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+    project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
+
+    await project.start()
+    assert project.mcp is not None
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [{"name": "search", "description": "Search docs"}],
+    )
+
+    project.refresh_tools_from_registry()
+
+    assert "mcp__local__search" not in project.tools
+    assert "mcp_discovery" in project.tools
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_project_start_initializes_project_scoped_mcp_service(tmp_path):
     settings = Settings(
         mcp=MCPSettings(

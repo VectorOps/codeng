@@ -15,6 +15,9 @@ def _write_tmp(tmp_path: Path, text: str) -> Path:
 def test_loads_mcp_settings_and_workflow_selectors(tmp_path: Path) -> None:
     cfg = """
 mcp:
+  hide_listed_tools: true
+  discovery:
+    max_results: 5
   protocol:
     request_timeout_s: 20
   sources:
@@ -28,6 +31,7 @@ mcp:
 workflows:
   demo:
     mcp:
+      hide_listed_tools: true
       tools:
         - source: local
           tool: "*"
@@ -40,6 +44,9 @@ workflows:
     settings = load_settings(str(_write_tmp(tmp_path, cfg)))
 
     assert settings.mcp is not None
+    assert settings.mcp.hide_listed_tools is True
+    assert settings.mcp.discovery is not None
+    assert settings.mcp.discovery.max_results == 5
     assert settings.mcp.protocol is not None
     assert settings.mcp.protocol.request_timeout_s == 20
     assert isinstance(settings.mcp.sources["local"], MCPStdioSourceSettings)
@@ -47,6 +54,7 @@ workflows:
 
     workflow_mcp = settings.workflows["demo"].mcp
     assert workflow_mcp is not None
+    assert workflow_mcp.hide_listed_tools is True
     assert [(item.source, item.tool) for item in workflow_mcp.tools] == [("local", "*")]
     assert [(item.source, item.tool) for item in workflow_mcp.disabled_tools] == [
         ("local", "dangerous")

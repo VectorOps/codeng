@@ -24,6 +24,7 @@ from .auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 from vocode.mcp.service import MCPService
+from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
 from vocode.tools.mcp_tool import MCPToolAdapter
 
 
@@ -133,12 +134,16 @@ class Project:
                 workflow_mcp = self.settings.workflows[self.current_workflow].mcp
             if workflow_mcp is not None and not workflow_mcp.enabled:
                 return
+            if self._should_enable_mcp_discovery_tool():
+                self.tools[MCPDiscoveryTool.name] = MCPDiscoveryTool(self)
             for source_name, descriptors in self.mcp.list_tool_cache().items():
                 for descriptor in descriptors.values():
                     if not self._is_mcp_tool_enabled_for_current_workflow(
                         source_name,
                         descriptor.tool_name,
                     ):
+                        continue
+                    if self._should_hide_listed_mcp_tools_for_current_workflow():
                         continue
                     internal_name = f"mcp__{source_name}__{descriptor.tool_name}"
                     if internal_name in disabled_tool_names:
@@ -162,6 +167,38 @@ class Project:
             source_name,
             tool_name,
         )
+
+    def _should_hide_listed_mcp_tools_for_current_workflow(self) -> bool:
+        if self.settings is None:
+            return False
+        hidden = False
+        if self.settings.mcp is not None:
+            hidden = self.settings.mcp.hide_listed_tools
+        if self.current_workflow is None:
+            return hidden
+        workflow = self.settings.workflows.get(self.current_workflow)
+        if workflow is None or workflow.mcp is None:
+            return hidden
+        return workflow.mcp.hide_listed_tools
+
+    def _should_enable_mcp_discovery_tool(self) -> bool:
+        if self.mcp is None or self.settings is None:
+            return False
+        discovery_settings = None
+        if self.settings.mcp is not None:
+            discovery_settings = self.settings.mcp.discovery
+        if discovery_settings is not None and not discovery_settings.enabled:
+            return False
+        for source_name, descriptors in self.mcp.list_tool_cache().items():
+            if not descriptors:
+                continue
+            for descriptor in descriptors.values():
+                if self._is_mcp_tool_enabled_for_current_workflow(
+                    source_name,
+                    descriptor.tool_name,
+                ):
+                    return True
+        return False
 
     # LLM usage totals
     def add_llm_usage(
