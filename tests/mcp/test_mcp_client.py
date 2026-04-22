@@ -172,6 +172,50 @@ for line in sys.stdin:
 """
 
 
+_LATE_RESPONSE_SERVER = """
+import json
+import sys
+import time
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'late-response-server', 'version': '1.0.0'},
+                'capabilities': {
+                    'tools': {'listChanged': False}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        pass
+    elif msg.get('method') == 'slow/method':
+        time.sleep(0.05)
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {'done': True}
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'tools/list':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'tools': [{'name': 'after-timeout'}]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/cancelled':
+        pass
+"""
+
+
 _LIST_CHANGED_SERVER = """
 import json
 import sys
@@ -621,6 +665,28 @@ async def test_client_session_request_with_timeout_sends_cancel_notification() -
     assert transport.stderr_lines
     assert '"requestId": 2' in transport.stderr_lines[-1]
     assert '"reason": "request timed out"' in transport.stderr_lines[-1]
+
+
+@pytest.mark.asyncio
+async def test_client_session_ignores_late_timed_out_stdio_response() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _LATE_RESPONSE_SERVER]),
+    )
+
+    await session.start()
+
+    with pytest.raises(MCPClientError, match="timed out"):
+        await session.request_with_timeout("slow/method", timeout_s=0.01)
+
+    await asyncio.sleep(0.1)
+    tools = await session.list_tools()
+
+    assert session.state.phase == "operating"
+    assert session.state.initialized is True
+    assert tools["tools"][0]["name"] == "after-timeout"
+
+    await session.close()
 
 
 @pytest.mark.asyncio

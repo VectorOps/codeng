@@ -376,6 +376,12 @@ class MCPClientSession:
                 if isinstance(message, mcp_protocol.MCPJSONRPCRequest):
                     await self._handle_request(message)
                     continue
+                if not self.protocol.has_pending(message.id):
+                    self._log.warning(
+                        "MCP session ignored late response",
+                        response_id=message.id,
+                    )
+                    continue
                 self.protocol.handle_response(message)
         except asyncio.CancelledError:
             raise

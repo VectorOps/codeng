@@ -111,6 +111,9 @@ class MCPProtocolClient:
     def pending_count(self) -> int:
         return len(self._pending)
 
+    def has_pending(self, request_id: Union[int, str]) -> bool:
+        return request_id in self._pending
+
     def build_initialized_notification(self) -> MCPJSONRPCNotification:
         if not self.state.initialize_request_sent:
             raise MCPProtocolError(

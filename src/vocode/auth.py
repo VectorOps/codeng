@@ -232,15 +232,19 @@ class ProjectCredentialManager:
     def _token_provider_name(self, name: str) -> str:
         return f"token:{name}"
 
+    def _is_store_only_token(self, name: str) -> bool:
+        return name.startswith("MCP_TOKEN_")
+
     async def get_token(
         self,
         name: str,
         *,
         context: Optional[connect_auth.AuthContext] = None,
     ) -> Optional[str]:
-        value = self._env.get(name)
-        if value:
-            return value
+        if not self._is_store_only_token(name):
+            value = self._env.get(name)
+            if value:
+                return value
         document = self._credential_store.load_document(self._credentials_path)
         payload = document.credentials.get(self._token_provider_name(name))
         if payload is None:
@@ -259,12 +263,14 @@ class ProjectCredentialManager:
     ) -> None:
         provider_name = self._token_provider_name(name)
         if value is None:
-            self._env.pop(name, None)
+            if not self._is_store_only_token(name):
+                self._env.pop(name, None)
             self._credential_store.delete(
                 self._credentials_path, provider=provider_name
             )
             return
-        self._env[name] = value
+        if not self._is_store_only_token(name):
+            self._env[name] = value
         self._credential_store.save(
             self._credentials_path,
             connect_credentials_base.OAuth2Credentials(

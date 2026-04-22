@@ -102,6 +102,25 @@ async def test_project_credential_manager_persists_raw_tokens_to_file(tmp_path) 
     assert await reloaded.get_token("MCP_TOKEN_TEST") == "token-value"
 
 
+@pytest.mark.asyncio
+async def test_project_credential_manager_does_not_cache_mcp_tokens_in_env(
+    tmp_path,
+) -> None:
+    credentials_path = tmp_path / "credentials.json"
+    env = {"MCP_SECRET": "secret"}
+    manager = ProjectCredentialManager(credentials_path=credentials_path, env=env)
+
+    await manager.set_token("MCP_TOKEN_TEST", "token-value")
+
+    assert "MCP_TOKEN_TEST" not in env
+    assert env["MCP_SECRET"] == "secret"
+    assert await manager.get_token("MCP_TOKEN_TEST") == "token-value"
+
+    await manager.set_token("MCP_TOKEN_TEST", None)
+
+    assert "MCP_TOKEN_TEST" not in env
+
+
 class _MemoryKeyring:
     def __init__(self) -> None:
         self._values: dict[tuple[str, str], str] = {}

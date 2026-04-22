@@ -46,6 +46,7 @@ class MCPStdioTransport:
         )
         self._stderr_lines: List[str] = []
         self._stderr_task: Optional[asyncio.Task[None]] = None
+        self._write_lock = asyncio.Lock()
 
     @property
     def stderr_lines(self) -> List[str]:
@@ -67,12 +68,13 @@ class MCPStdioTransport:
         self._stderr_task = asyncio.create_task(self._collect_stderr())
 
     async def send(self, message: mcp_protocol.MCPJSONRPCMessage) -> None:
-        proc = self._process_manager.process
-        if not self.is_running or proc is None or proc.stdin is None:
-            raise MCPTransportError("stdio transport is not running")
-        payload = message.model_dump_json(exclude_none=True) + "\n"
-        proc.stdin.write(payload.encode("utf-8"))
-        await proc.stdin.drain()
+        async with self._write_lock:
+            proc = self._process_manager.process
+            if not self.is_running or proc is None or proc.stdin is None:
+                raise MCPTransportError("stdio transport is not running")
+            payload = message.model_dump_json(exclude_none=True) + "\n"
+            proc.stdin.write(payload.encode("utf-8"))
+            await proc.stdin.drain()
 
     async def notify(self, message: mcp_protocol.MCPJSONRPCNotification) -> None:
         await self.send(message)

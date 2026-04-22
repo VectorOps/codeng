@@ -874,8 +874,8 @@ This delivers the core requested capability while keeping the current architectu
 [x] Introduce a stable MCP internal tool naming and reverse lookup utility
 [x] Strengthen workflow/session identity for concurrent and nested workflow cases
 [x] Standardize manager command output and `/mcp` command semantics across the TUI
-[ ] Add structured MCP lifecycle logging and diagnostics
-[ ] Revisit credential persistence boundaries for env overrides, stored tokens, and cache semantics
+[x] Add structured MCP lifecycle logging and diagnostics
+[x] Revisit credential persistence boundaries for env overrides, stored tokens, and cache semantics
 [ ] Harden stdio transport concurrency, including serialized writes and safe handling of late timed-out responses
 [ ] Harden HTTP transport concurrency and eliminate shared mutable auth retry side effects across concurrent requests
 [ ] Add targeted cleanup regression tests

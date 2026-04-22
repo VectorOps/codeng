@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
+import types
 
 import pytest
 from aiohttp import web
@@ -84,6 +86,57 @@ async def test_stdio_transport_sends_and_receives_jsonrpc_messages() -> None:
     assert notification.method == "notifications/initialized"
 
     await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_transport_serializes_concurrent_writes() -> None:
+    transport = MCPStdioTransport(sys.executable, args=["-c", _ECHO_SERVER])
+
+    class _FakeStdin:
+        def __init__(self) -> None:
+            self.max_concurrent_drains = 0
+            self.current_drains = 0
+            self.drain_gate = asyncio.Event()
+
+        def write(self, data: bytes) -> None:
+            return None
+
+        async def drain(self) -> None:
+            self.current_drains += 1
+            if self.current_drains > self.max_concurrent_drains:
+                self.max_concurrent_drains = self.current_drains
+            await self.drain_gate.wait()
+            self.current_drains -= 1
+
+    fake_stdin = _FakeStdin()
+    fake_process = types.SimpleNamespace(stdin=fake_stdin)
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        type(transport._process_manager),
+        "process",
+        property(lambda self: fake_process),
+    )
+    monkeypatch.setattr(
+        type(transport._process_manager),
+        "is_running",
+        property(lambda self: True),
+    )
+
+    try:
+        send_one = asyncio.create_task(
+            transport.send(MCPJSONRPCRequest(id=1, method="one"))
+        )
+        send_two = asyncio.create_task(
+            transport.send(MCPJSONRPCRequest(id=2, method="two"))
+        )
+
+        await asyncio.sleep(0.01)
+        fake_stdin.drain_gate.set()
+        await asyncio.gather(send_one, send_two)
+
+        assert fake_stdin.max_concurrent_drains == 1
+    finally:
+        monkeypatch.undo()
 
 
 @pytest.mark.asyncio
