@@ -6,6 +6,7 @@ import sys
 import pytest
 
 from vocode import state
+from vocode.mcp import naming as mcp_naming
 from vocode.project import Project
 from vocode.tools.base import ToolReq
 from vocode.settings import MCPExternalSourceSettings
@@ -192,10 +193,11 @@ async def test_project_refresh_tools_merges_cached_mcp_tools(tmp_path):
 
     project.refresh_tools_from_registry()
 
-    assert "mcp__local__search" in project.tools
-    adapter = project.tools["mcp__local__search"]
-    spec = await adapter.openapi_spec(ToolSpec(name="mcp__local__search"))
-    assert spec["name"] == "mcp__local__search"
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    assert tool_name in project.tools
+    adapter = project.tools[tool_name]
+    spec = await adapter.openapi_spec(ToolSpec(name=tool_name))
+    assert spec["name"] == tool_name
     assert spec["parameters"]["properties"]["q"]["type"] == "string"
 
     await project.shutdown()
@@ -250,11 +252,12 @@ async def test_project_mcp_tool_adapter_invokes_service_tool_call(tmp_path):
     )
     project.refresh_tools_from_registry()
 
-    adapter = project.tools["mcp__local__search"]
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    adapter = project.tools[tool_name]
     result = await adapter.run(
         ToolReq(
             execution=state.WorkflowExecution(workflow_name="wf"),
-            spec=ToolSpec(name="mcp__local__search"),
+            spec=ToolSpec(name=tool_name),
         ),
         {"q": "test"},
     )
@@ -320,11 +323,12 @@ async def test_project_mcp_tool_adapter_preserves_remote_execution_error_payload
     )
     project.refresh_tools_from_registry()
 
-    adapter = project.tools["mcp__local__search"]
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    adapter = project.tools[tool_name]
     result = await adapter.run(
         ToolReq(
             execution=state.WorkflowExecution(workflow_name="wf"),
-            spec=ToolSpec(name="mcp__local__search"),
+            spec=ToolSpec(name=tool_name),
         ),
         {"q": "test"},
     )
@@ -370,7 +374,8 @@ async def test_project_does_not_materialize_mcp_tools_without_workflow_selection
 
     project.refresh_tools_from_registry()
 
-    assert "mcp__local__search" not in project.tools
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    assert tool_name not in project.tools
 
     await project.shutdown()
 
@@ -418,8 +423,10 @@ async def test_project_mcp_disabled_tools_override_allow_selectors(tmp_path):
 
     project.refresh_tools_from_registry()
 
-    assert "mcp__local__search" not in project.tools
-    assert "mcp__local__fetch" in project.tools
+    search_tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    fetch_tool_name = mcp_naming.build_internal_tool_name("local", "fetch")
+    assert search_tool_name not in project.tools
+    assert fetch_tool_name in project.tools
 
     await project.shutdown()
 
@@ -462,7 +469,8 @@ async def test_project_hide_listed_mcp_tools_keeps_discovery_tool(tmp_path):
 
     project.refresh_tools_from_registry()
 
-    assert "mcp__local__search" not in project.tools
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    assert tool_name not in project.tools
     assert "mcp_discovery" in project.tools
 
     await project.shutdown()
@@ -509,7 +517,8 @@ async def test_project_hide_listed_mcp_tools_respects_disabled_discovery_tool(
 
     project.refresh_tools_from_registry()
 
-    assert "mcp__local__search" not in project.tools
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    assert tool_name not in project.tools
     assert "mcp_discovery" not in project.tools
 
     await project.shutdown()

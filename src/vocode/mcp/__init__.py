@@ -2,6 +2,7 @@ from . import auth
 from . import client
 from . import converters
 from . import models
+from . import naming
 from . import process_manager
 from . import protocol
 from . import registry
@@ -13,6 +14,7 @@ __all__ = [
     "client",
     "converters",
     "models",
+    "naming",
     "process_manager",
     "protocol",
     "registry",

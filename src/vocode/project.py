@@ -23,6 +23,7 @@ from .history.manager import HistoryManager
 from .auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
+from vocode.mcp import naming as mcp_naming
 from vocode.mcp.service import MCPService
 from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
 from vocode.tools.mcp_get_prompt_tool import MCPGetPromptTool
@@ -160,7 +161,10 @@ class Project:
                         continue
                     if self._should_hide_listed_mcp_tools_for_current_workflow():
                         continue
-                    internal_name = f"mcp__{source_name}__{descriptor.tool_name}"
+                    internal_name = mcp_naming.build_internal_tool_name(
+                        source_name,
+                        descriptor.tool_name,
+                    )
                     if internal_name in disabled_tool_names:
                         continue
                     self.tools[internal_name] = MCPToolAdapter(
