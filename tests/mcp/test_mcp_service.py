@@ -724,6 +724,33 @@ def test_service_cache_tool_descriptors_skips_malformed_and_duplicate_names() ->
     assert cached["Search"].description == "Case distinct"
 
 
+def test_service_cache_tool_descriptors_skips_normalized_internal_name_collisions() -> (
+    None
+):
+    service = MCPService(_make_settings())
+
+    cached = service.cache_tool_descriptors(
+        "local.dev",
+        [
+            {
+                "name": "search docs",
+                "description": "Spaced name",
+            },
+            {
+                "name": "search-docs",
+                "description": "Dashed name",
+            },
+            {
+                "name": "fetch",
+                "description": "Unique tool",
+            },
+        ],
+    )
+
+    assert set(cached.keys()) == {"fetch"}
+    assert cached["fetch"].description == "Unique tool"
+
+
 @pytest.mark.asyncio
 async def test_service_refresh_tools_populates_cache_from_live_session() -> None:
     service = MCPService(_make_settings())

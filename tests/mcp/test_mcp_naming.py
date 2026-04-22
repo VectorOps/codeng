@@ -19,3 +19,20 @@ def test_parse_internal_tool_name_returns_source_and_tool_names() -> None:
 def test_parse_internal_tool_name_rejects_invalid_values() -> None:
     assert mcp_naming.parse_internal_tool_name("search") is None
     assert mcp_naming.parse_internal_tool_name("mcp__local") is None
+
+
+def test_normalize_tool_ref_returns_normalized_segments() -> None:
+    normalized = mcp_naming.normalize_tool_ref("local.dev", "search docs")
+
+    assert normalized.source_name == "local_dev"
+    assert normalized.tool_name == "search_docs"
+
+
+def test_describe_internal_tool_naming_contract_mentions_normalization_and_collisions() -> (
+    None
+):
+    description = mcp_naming.describe_internal_tool_naming_contract()
+
+    assert "normalized" in description
+    assert "not recoverable" in description
+    assert "collision" in description

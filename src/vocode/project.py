@@ -173,18 +173,39 @@ class Project:
         keep_mcp_sessions: bool = False,
         workflow_run_id: Optional[str] = None,
     ) -> None:
+        should_clear_current_workflow = self._should_clear_current_workflow(
+            workflow_name,
+            workflow_run_id=workflow_run_id,
+        )
         if self.mcp is None:
+            if should_clear_current_workflow:
+                self.current_workflow = None
+                self.current_workflow_run_id = None
             return
         change = await self.mcp.finish_workflow(
             workflow_name,
             keep_mcp_sessions,
             workflow_run_id=workflow_run_id,
         )
-        if self.current_workflow_run_id == workflow_run_id:
+        if should_clear_current_workflow:
             self.current_workflow = None
             self.current_workflow_run_id = None
         if change.started_sources or change.stopped_sources:
             self.refresh_tools_from_registry()
+
+    def _should_clear_current_workflow(
+        self,
+        workflow_name: str,
+        *,
+        workflow_run_id: Optional[str] = None,
+    ) -> bool:
+        if self.current_workflow is None:
+            return False
+        if self.current_workflow != workflow_name:
+            return False
+        if self.current_workflow_run_id is not None or workflow_run_id is not None:
+            return self.current_workflow_run_id == workflow_run_id
+        return True
 
     # Lifecycle management
     async def start(self) -> None:

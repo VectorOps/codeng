@@ -82,6 +82,56 @@ async def test_project_start_initializes_subsystems_and_tools(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_project_finish_workflow_clears_current_workflow_without_mcp(tmp_path):
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=Settings(),
+    )
+    project.current_workflow = "wf"
+    project.current_workflow_run_id = "run-1"
+
+    await project.on_workflow_finished("wf", workflow_run_id="run-1")
+
+    assert project.current_workflow is None
+    assert project.current_workflow_run_id is None
+
+
+@pytest.mark.asyncio
+async def test_project_finish_workflow_does_not_clear_stale_current_workflow(tmp_path):
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=Settings(),
+    )
+    project.current_workflow = "wf"
+    project.current_workflow_run_id = "run-2"
+
+    await project.on_workflow_finished("wf", workflow_run_id="run-1")
+
+    assert project.current_workflow == "wf"
+    assert project.current_workflow_run_id == "run-2"
+
+
+@pytest.mark.asyncio
+async def test_project_finish_workflow_does_not_clear_different_workflow_without_run_id(
+    tmp_path,
+):
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=Settings(),
+    )
+    project.current_workflow = "wf-a"
+    project.current_workflow_run_id = None
+
+    await project.on_workflow_finished("wf-b")
+
+    assert project.current_workflow == "wf-a"
+    assert project.current_workflow_run_id is None
+
+
+@pytest.mark.asyncio
 async def test_project_materializes_prompt_and_resource_helper_tools(tmp_path):
     settings = Settings(
         tools=[

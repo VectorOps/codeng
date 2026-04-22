@@ -5,6 +5,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from vocode import settings as vocode_settings
+from vocode.mcp import naming as mcp_naming
 from vocode.settings import ToolSpec
 from vocode.tools import base as tools_base
 
@@ -48,7 +49,10 @@ class MCPDiscoveryTool(tools_base.BaseTool):
         source_name: str,
         descriptor,
     ) -> Dict[str, Any]:
-        internal_name = f"mcp__{source_name}__{descriptor.tool_name}"
+        internal_name = mcp_naming.build_internal_tool_name(
+            source_name,
+            descriptor.tool_name,
+        )
         return {
             "type": "function",
             "function": {
@@ -105,7 +109,10 @@ class MCPDiscoveryTool(tools_base.BaseTool):
                     descriptor.tool_name,
                 ):
                     continue
-                internal_name = f"mcp__{cached_source_name}__{descriptor.tool_name}"
+                internal_name = mcp_naming.build_internal_tool_name(
+                    cached_source_name,
+                    descriptor.tool_name,
+                )
                 hidden = internal_name not in self.prj.tools
                 score = 0.0
                 if query_terms:

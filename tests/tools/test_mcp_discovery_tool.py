@@ -1,6 +1,7 @@
 import pytest
 
 from vocode import settings as vocode_settings
+from vocode.mcp import naming as mcp_naming
 from vocode.mcp.service import MCPService
 from vocode.state import WorkflowExecution
 from vocode.tools.base import ToolReq
@@ -41,15 +42,17 @@ async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
     project.mcp.cache_tool_descriptors(
         "local",
         [
-            {"name": "search", "description": "Search docs"},
+            {"name": "search docs", "description": "Search docs"},
             {"name": "fetch", "description": "Fetch docs"},
         ],
     )
     descriptor = project.mcp.list_cached_tools("local")["fetch"]
-    project.tools["mcp__local__fetch"] = MCPToolAdapter(
+    fetch_name = mcp_naming.build_internal_tool_name("local", "fetch")
+    search_name = mcp_naming.build_internal_tool_name("local", "search docs")
+    project.tools[fetch_name] = MCPToolAdapter(
         project,
         descriptor,
-        "mcp__local__fetch",
+        fetch_name,
     )
     tool = MCPDiscoveryTool(project)
 
@@ -64,7 +67,7 @@ async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
     assert result.data == {
         "tools": [
             {
-                "name": "mcp__local__fetch",
+                "name": fetch_name,
                 "source": "local",
                 "tool": "fetch",
                 "title": None,
@@ -74,7 +77,7 @@ async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
                 "tool_spec": {
                     "type": "function",
                     "function": {
-                        "name": "mcp__local__fetch",
+                        "name": fetch_name,
                         "description": "Fetch docs",
                         "parameters": {
                             "type": "object",
@@ -84,9 +87,9 @@ async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
                 },
             },
             {
-                "name": "mcp__local__search",
+                "name": search_name,
                 "source": "local",
-                "tool": "search",
+                "tool": "search docs",
                 "title": None,
                 "description": "Search docs",
                 "hidden": True,
@@ -94,7 +97,7 @@ async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
                 "tool_spec": {
                     "type": "function",
                     "function": {
-                        "name": "mcp__local__search",
+                        "name": search_name,
                         "description": "Search docs",
                         "parameters": {
                             "type": "object",
@@ -114,7 +117,10 @@ async def test_mcp_discovery_tool_filters_by_source_and_workflow_selection() -> 
             "wf": vocode_settings.WorkflowConfig(
                 mcp=vocode_settings.MCPWorkflowSettings(
                     tools=[
-                        vocode_settings.MCPToolSelector(source="local", tool="search")
+                        vocode_settings.MCPToolSelector(
+                            source="local",
+                            tool="search docs",
+                        )
                     ],
                 )
             )
@@ -138,7 +144,7 @@ async def test_mcp_discovery_tool_filters_by_source_and_workflow_selection() -> 
     project.mcp.cache_tool_descriptors(
         "local",
         [
-            {"name": "search", "description": "Search docs"},
+            {"name": "search docs", "description": "Search docs"},
             {"name": "fetch", "description": "Fetch docs"},
         ],
     )
@@ -159,9 +165,9 @@ async def test_mcp_discovery_tool_filters_by_source_and_workflow_selection() -> 
     assert result.data == {
         "tools": [
             {
-                "name": "mcp__local__search",
+                "name": mcp_naming.build_internal_tool_name("local", "search docs"),
                 "source": "local",
-                "tool": "search",
+                "tool": "search docs",
                 "title": None,
                 "description": "Search docs",
                 "hidden": True,
@@ -169,7 +175,9 @@ async def test_mcp_discovery_tool_filters_by_source_and_workflow_selection() -> 
                 "tool_spec": {
                     "type": "function",
                     "function": {
-                        "name": "mcp__local__search",
+                        "name": mcp_naming.build_internal_tool_name(
+                            "local", "search docs"
+                        ),
                         "description": "Search docs",
                         "parameters": {
                             "type": "object",

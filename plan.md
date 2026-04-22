@@ -879,3 +879,11 @@ This delivers the core requested capability while keeping the current architectu
 [x] Harden stdio transport concurrency, including serialized writes and safe handling of late timed-out responses
 [x] Harden HTTP transport concurrency and eliminate shared mutable auth retry side effects across concurrent requests
 [x] Add targeted cleanup regression tests
+[x] Unify MCP internal tool naming across service, discovery tools, tests, and any future helper surfaces so all naming flows go through `src/vocode/mcp/naming.py`.
+[x] Define and document the reverse lookup contract for MCP internal tool names, including normalization limits and collision behavior when remote names contain unsupported characters.
+[x] Remove remaining ad hoc MCP internal-name formatting and parsing from helper tools and command output paths.
+[x] Tighten `Project` workflow lifecycle cleanup so MCP-independent state clearing remains correct even when MCP is disabled or unavailable.
+[ ] Revisit global-versus-workflow `hide_listed_tools` semantics and make the merge behavior explicit and test-covered.
+[ ] Add a project-facing refresh hook or callback path so notification-driven MCP tool cache updates can refresh materialized `project.tools` without relying on unrelated later refreshes.
+[ ] Split `MCPService` responsibilities where practical by extracting tool materialization or session refresh helpers into smaller MCP-focused units.
+[ ] Add targeted regression coverage for normalized-name discovery output, reverse lookup edge cases, and any collisions introduced by unsafe-character normalization.

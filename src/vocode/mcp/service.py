@@ -131,6 +131,8 @@ class MCPService:
     ) -> Dict[str, mcp_models.MCPToolDescriptor]:
         normalized: Dict[str, mcp_models.MCPToolDescriptor] = {}
         duplicate_names: set[str] = set()
+        normalized_internal_names: Dict[str, str] = {}
+        duplicate_internal_names: set[str] = set()
         for payload in payloads:
             try:
                 descriptor = mcp_converters.normalize_tool_descriptor(
@@ -145,7 +147,20 @@ class MCPService:
                 normalized.pop(descriptor.tool_name, None)
                 duplicate_names.add(descriptor.tool_name)
                 continue
+            internal_name = mcp_naming.build_internal_tool_name(
+                source_name,
+                descriptor.tool_name,
+            )
+            if internal_name in duplicate_internal_names:
+                continue
+            existing_tool_name = normalized_internal_names.get(internal_name)
+            if existing_tool_name is not None:
+                normalized.pop(existing_tool_name, None)
+                normalized_internal_names.pop(internal_name, None)
+                duplicate_internal_names.add(internal_name)
+                continue
             normalized[descriptor.tool_name] = descriptor
+            normalized_internal_names[internal_name] = descriptor.tool_name
         self._tool_cache[source_name] = normalized
         return dict(normalized)
 
