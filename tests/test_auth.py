@@ -12,6 +12,7 @@ from connect.credentials import base as connect_credentials_base
 
 from vocode import auth
 from vocode.auth import EncryptedCredentialStore, ProjectCredentialManager
+from vocode.config import default_config_dir, default_credentials_path
 
 
 def _jwt(account_id: str = "acct_123") -> str:
@@ -118,6 +119,15 @@ def _plaintext_path(path: Path) -> Path:
 
 def _encrypted_path(path: Path) -> Path:
     return path.with_name(f"{path.stem}.encrypted{path.suffix}")
+
+
+def test_default_credentials_path_uses_default_config_dir() -> None:
+    assert default_credentials_path() == default_config_dir() / "credentials.json"
+
+
+def test_auth_default_credential_helpers_delegate_to_shared_helper() -> None:
+    assert auth.default_config_dir() == default_config_dir()
+    assert auth.default_credentials_path() == default_credentials_path()
 
 
 def test_encrypted_credential_store_saves_to_encrypted_sidecar_when_keyring_available(

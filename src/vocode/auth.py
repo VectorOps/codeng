@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import secrets
-import sys
 from pathlib import Path
 from typing import MutableMapping, Optional
 
@@ -16,6 +15,7 @@ from pydantic import BaseModel, Field
 from connect import auth as connect_auth
 from connect import auth_router as connect_auth_router
 from connect.credentials import base as connect_credentials_base
+from vocode.config import default_credentials_path
 
 try:
     import keyring
@@ -442,15 +442,14 @@ class ServerAuthenticationSession:
 
 
 def default_config_dir() -> Path:
-    home = Path.home()
-    if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA", home / "AppData/Roaming"))
-    elif sys.platform == "darwin":
-        base = home / "Library/Application Support"
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
-    return base / "vocode"
+    from vocode.config import default_config_dir as resolve_default_config_dir
+
+    return resolve_default_config_dir()
 
 
 def default_credentials_path() -> Path:
-    return default_config_dir() / "credentials.json"
+    from vocode.config import (
+        default_credentials_path as resolve_default_credentials_path,
+    )
+
+    return resolve_default_credentials_path()
