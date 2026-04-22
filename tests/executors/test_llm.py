@@ -915,7 +915,7 @@ async def test_llm_executor_build_tools_respects_global_enabled_override() -> No
     assert tools is None
 
 
-def test_build_effective_tool_specs_preserves_skip_listing_field() -> None:
+def test_build_effective_tool_specs_global_skip_listing_overrides_node() -> None:
     project = StubProject()
     project.settings.tools = [
         vocode_settings.ToolSpec(
@@ -940,7 +940,28 @@ def test_build_effective_tool_specs_preserves_skip_listing_field() -> None:
 
     effective_specs = llm_helpers.build_effective_tool_specs(project, node)
 
-    assert effective_specs["echo"].skip_listing is False
+    assert effective_specs["echo"].skip_listing is True
+
+
+def test_build_effective_tool_specs_keeps_node_skip_listing_without_global() -> None:
+    project = StubProject()
+
+    node = LLMNode(
+        name="node-tools-skip-listing-local",
+        type="llm",
+        model="gpt-3.5-turbo",
+        tools=[
+            vocode_settings.ToolSpec(
+                name="echo",
+                enabled=True,
+                skip_listing=True,
+            )
+        ],
+    )
+
+    effective_specs = llm_helpers.build_effective_tool_specs(project, node)
+
+    assert effective_specs["echo"].skip_listing is True
 
 
 @pytest.mark.asyncio
