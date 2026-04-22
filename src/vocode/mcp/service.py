@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from vocode import settings as vocode_settings
 from vocode.auth import TokenCredentialManager
@@ -14,6 +14,7 @@ from vocode.mcp import converters as mcp_converters
 from vocode.mcp import models as mcp_models
 from vocode.mcp import naming as mcp_naming
 from vocode.mcp import registry as mcp_registry
+from vocode.mcp import tool_materialization as mcp_tool_materialization
 from vocode.mcp import transports as mcp_transports
 
 
@@ -49,6 +50,7 @@ class MCPService:
         project_root_uri: Optional[str] = None,
         has_workflow_roots: bool = False,
         has_workflow_roots_list_changed: bool = False,
+        tool_cache_update_callback: Optional[Callable[[], None]] = None,
     ) -> None:
         self._settings = settings
         self._registry = mcp_registry.MCPRegistry(settings)
@@ -57,6 +59,7 @@ class MCPService:
         self._project_root_uri = project_root_uri
         self._has_workflow_roots = has_workflow_roots
         self._has_workflow_roots_list_changed = has_workflow_roots_list_changed
+        self._tool_cache_update_callback = tool_cache_update_callback
         self._active_workflow: Optional[vocode_settings.WorkflowConfig] = None
         self._active_workflow_ref: Optional[MCPActiveWorkflowRef] = None
         self._sessions: Dict[str, mcp_client.MCPClientSession] = {}
@@ -129,6 +132,7 @@ class MCPService:
         source_name: str,
         payloads: list[Dict[str, object]],
     ) -> Dict[str, mcp_models.MCPToolDescriptor]:
+        previous = self._tool_cache.get(source_name)
         normalized: Dict[str, mcp_models.MCPToolDescriptor] = {}
         duplicate_names: set[str] = set()
         normalized_internal_names: Dict[str, str] = {}
@@ -162,10 +166,14 @@ class MCPService:
             normalized[descriptor.tool_name] = descriptor
             normalized_internal_names[internal_name] = descriptor.tool_name
         self._tool_cache[source_name] = normalized
+        if previous != normalized:
+            self._notify_tool_cache_updated()
         return dict(normalized)
 
     def clear_tool_cache(self, source_name: str) -> None:
-        self._tool_cache.pop(source_name, None)
+        removed = self._tool_cache.pop(source_name, None)
+        if removed is not None:
+            self._notify_tool_cache_updated()
 
     async def refresh_tools(
         self,
@@ -275,57 +283,12 @@ class MCPService:
         disabled_tool_names: set[str],
         workflow: Optional[vocode_settings.WorkflowConfig] = None,
     ) -> Dict[str, Any]:
-        from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
-        from vocode.tools.mcp_get_prompt_tool import MCPGetPromptTool
-        from vocode.tools.mcp_read_resource_tool import MCPReadResourceTool
-        from vocode.tools.mcp_tool import MCPToolAdapter
-
-        effective_workflow = workflow
-        if effective_workflow is None:
-            effective_workflow = self._active_workflow
-        workflow_mcp = (
-            effective_workflow.mcp if effective_workflow is not None else None
+        return mcp_tool_materialization.build_project_tools(
+            self,
+            prj,
+            disabled_tool_names,
+            workflow=workflow,
         )
-        if workflow_mcp is not None and not workflow_mcp.enabled:
-            return {}
-        out: Dict[str, Any] = {}
-        if (
-            self._should_enable_discovery_tool(effective_workflow)
-            and MCPDiscoveryTool.name not in disabled_tool_names
-        ):
-            out[MCPDiscoveryTool.name] = MCPDiscoveryTool(prj)
-        if (
-            self._should_enable_get_prompt_tool(effective_workflow)
-            and MCPGetPromptTool.name not in disabled_tool_names
-        ):
-            out[MCPGetPromptTool.name] = MCPGetPromptTool(prj)
-        if (
-            self._should_enable_read_resource_tool(effective_workflow)
-            and MCPReadResourceTool.name not in disabled_tool_names
-        ):
-            out[MCPReadResourceTool.name] = MCPReadResourceTool(prj)
-        for source_name, descriptors in self.list_tool_cache().items():
-            for descriptor in descriptors.values():
-                if not self.registry.is_workflow_tool_enabled(
-                    effective_workflow,
-                    source_name,
-                    descriptor.tool_name,
-                ):
-                    continue
-                if self._should_hide_listed_tools(effective_workflow):
-                    continue
-                internal_name = mcp_naming.build_internal_tool_name(
-                    source_name,
-                    descriptor.tool_name,
-                )
-                if internal_name in disabled_tool_names:
-                    continue
-                out[internal_name] = MCPToolAdapter(
-                    prj,
-                    descriptor,
-                    internal_name,
-                )
-        return out
 
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
         existing = self.get_session(source_name)
@@ -617,7 +580,7 @@ class MCPService:
             hidden = self._settings.hide_listed_tools
         if workflow is None or workflow.mcp is None:
             return hidden
-        return workflow.mcp.hide_listed_tools
+        return hidden or workflow.mcp.hide_listed_tools
 
     def _should_enable_discovery_tool(
         self,
@@ -788,3 +751,8 @@ class MCPService:
             if capability_name == "resources" and capabilities.resources:
                 names.append(source_name)
         return names
+
+    def _notify_tool_cache_updated(self) -> None:
+        if self._tool_cache_update_callback is None:
+            return
+        self._tool_cache_update_callback()

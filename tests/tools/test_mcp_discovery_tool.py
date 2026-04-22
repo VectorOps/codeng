@@ -257,3 +257,52 @@ async def test_mcp_discovery_tool_openapi_spec() -> None:
     assert "source" in spec["parameters"]["properties"]
     assert "query" in spec["parameters"]["properties"]
     assert "max_results" in spec["parameters"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_discovery_tool_returns_normalized_internal_names() -> None:
+    settings = vocode_settings.Settings(
+        workflows={
+            "wf": vocode_settings.WorkflowConfig(
+                mcp=vocode_settings.MCPWorkflowSettings(
+                    tools=[
+                        vocode_settings.MCPToolSelector(source="local.dev", tool="*")
+                    ],
+                )
+            )
+        },
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "local.dev": vocode_settings.MCPStdioSourceSettings(
+                    command="uvx",
+                    scope=vocode_settings.MCPSourceScope.project,
+                )
+            }
+        ),
+    )
+    project = _ProjectStub(settings=settings)
+    project.current_workflow = "wf"
+    project.mcp = MCPService(settings.mcp)
+    project.mcp.cache_tool_descriptors(
+        "local.dev",
+        [{"name": "search docs", "description": "Search docs"}],
+    )
+    tool = MCPDiscoveryTool(project)
+
+    result = await tool.run(
+        ToolReq(
+            execution=WorkflowExecution(workflow_name="wf"),
+            spec=vocode_settings.ToolSpec(name="mcp_discovery"),
+        ),
+        {},
+    )
+
+    assert result.data is not None
+    tools = result.data["tools"]
+    assert len(tools) == 1
+    assert tools[0]["name"] == mcp_naming.build_internal_tool_name(
+        "local.dev",
+        "search docs",
+    )
+    assert tools[0]["source"] == "local.dev"
+    assert tools[0]["tool"] == "search docs"

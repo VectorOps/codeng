@@ -82,6 +82,50 @@ async def test_project_start_initializes_subsystems_and_tools(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_project_refreshes_materialized_mcp_tools_when_cache_updates(tmp_path):
+    settings = Settings(
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                )
+            )
+        },
+        mcp=MCPSettings(
+            sources={
+                "local": MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _PROJECT_MCP_SERVER],
+                    scope=MCPSourceScope.project,
+                ),
+            }
+        ),
+    )
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+    project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
+
+    await project.start()
+    assert project.mcp is not None
+
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    assert tool_name not in project.tools
+
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [{"name": "search", "description": "Search docs"}],
+    )
+
+    assert tool_name in project.tools
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_project_finish_workflow_clears_current_workflow_without_mcp(tmp_path):
     project = Project(
         base_path=tmp_path,
@@ -570,6 +614,101 @@ async def test_project_hide_listed_mcp_tools_respects_disabled_discovery_tool(
     tool_name = mcp_naming.build_internal_tool_name("local", "search")
     assert tool_name not in project.tools
     assert "mcp_discovery" not in project.tools
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_project_global_hide_listed_mcp_tools_applies_without_workflow_override(
+    tmp_path,
+):
+    settings = Settings(
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                )
+            )
+        },
+        mcp=MCPSettings(
+            hide_listed_tools=True,
+            sources={
+                "local": MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _PROJECT_MCP_SERVER],
+                    scope=MCPSourceScope.project,
+                ),
+            },
+        ),
+    )
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+    project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
+
+    await project.start()
+    assert project.mcp is not None
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [{"name": "search", "description": "Search docs"}],
+    )
+
+    project.refresh_tools_from_registry()
+
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    assert tool_name not in project.tools
+    assert "mcp_discovery" in project.tools
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_project_global_hide_listed_mcp_tools_cannot_be_disabled_by_workflow(
+    tmp_path,
+):
+    settings = Settings(
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    hide_listed_tools=False,
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                )
+            )
+        },
+        mcp=MCPSettings(
+            hide_listed_tools=True,
+            sources={
+                "local": MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _PROJECT_MCP_SERVER],
+                    scope=MCPSourceScope.project,
+                ),
+            },
+        ),
+    )
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+    project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
+
+    await project.start()
+    assert project.mcp is not None
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [{"name": "search", "description": "Search docs"}],
+    )
+
+    project.refresh_tools_from_registry()
+
+    tool_name = mcp_naming.build_internal_tool_name("local", "search")
+    assert tool_name not in project.tools
+    assert "mcp_discovery" in project.tools
 
     await project.shutdown()
 

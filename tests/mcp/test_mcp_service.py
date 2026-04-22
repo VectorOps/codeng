@@ -10,6 +10,7 @@ from vocode.auth import ProjectCredentialManager
 from vocode.mcp import client as mcp_client
 from vocode.mcp.registry import MCPRegistry
 from vocode.mcp import service as mcp_service
+from vocode.mcp import tool_materialization as mcp_tool_materialization
 from vocode.mcp.service import MCPService
 from vocode.mcp.service import MCPServiceError
 from vocode.mcp import transports as mcp_transports
@@ -658,6 +659,68 @@ def test_service_build_project_tools_materializes_helpers_and_filtered_adapters(
     assert "mcp__local__fetch" in tools
 
 
+def test_tool_materialization_helper_matches_service_build_project_tools() -> None:
+    settings = MCPSettings(
+        discovery={"enabled": True},
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_HANDSHAKE_SERVER],
+            )
+        },
+    )
+    service = MCPService(settings)
+    workflow = WorkflowConfig(
+        mcp=MCPWorkflowSettings(
+            tools=[MCPToolSelector(source="local", tool="*")],
+        )
+    )
+    service._active_workflow = workflow
+    service.cache_tool_descriptors(
+        "local",
+        [{"name": "fetch", "description": "Fetch docs"}],
+    )
+
+    class _PromptResourceSession:
+        def __init__(self) -> None:
+            self.state = type(
+                "_State",
+                (),
+                {
+                    "initialized": True,
+                    "phase": "operating",
+                    "negotiation": type(
+                        "_Negotiation",
+                        (),
+                        {
+                            "server_capabilities": type(
+                                "_Capabilities",
+                                (),
+                                {"prompts": False, "resources": False},
+                            )()
+                        },
+                    )(),
+                },
+            )()
+            self.source = type("_Source", (), {"scope": "workflow"})()
+
+    class _Project:
+        def __init__(self) -> None:
+            self.mcp = service
+
+    service._sessions["local"] = _PromptResourceSession()  # type: ignore[assignment]
+    project = _Project()
+
+    tools_from_service = service.build_project_tools(project, set())
+    tools_from_helper = mcp_tool_materialization.build_project_tools(
+        service,
+        project,
+        set(),
+    )
+
+    assert set(tools_from_service.keys()) == set(tools_from_helper.keys())
+
+
 def test_service_caches_and_clears_tool_descriptors_per_source() -> None:
     service = MCPService(_make_settings())
 
@@ -1020,6 +1083,44 @@ async def test_service_refreshes_tools_after_list_changed_notification() -> None
     cached = await asyncio.wait_for(_wait_for_cache(), timeout=1.0)
 
     assert cached["refreshed"].description == "Refreshed docs"
+
+    await service.close_all()
+
+
+@pytest.mark.asyncio
+async def test_service_notification_refresh_invokes_tool_cache_update_callback() -> (
+    None
+):
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_LIST_CHANGED_SERVER],
+            )
+        }
+    )
+    callback_calls = {"count": 0}
+
+    def _on_tool_cache_update() -> None:
+        callback_calls["count"] += 1
+
+    service = MCPService(
+        settings,
+        tool_cache_update_callback=_on_tool_cache_update,
+    )
+
+    await service.start_session("local")
+
+    async def _wait_for_cache() -> dict[str, object]:
+        while True:
+            cached = service.list_cached_tools("local")
+            if "refreshed" in cached:
+                return cached
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_wait_for_cache(), timeout=1.0)
+
+    assert callback_calls["count"] >= 1
 
     await service.close_all()
 

@@ -276,6 +276,7 @@ class Project:
                 project_root_uri=self.base_path.resolve().as_uri(),
                 has_workflow_roots=has_workflow_roots,
                 has_workflow_roots_list_changed=has_workflow_roots_list_changed,
+                tool_cache_update_callback=self.refresh_tools_from_registry,
             )
         if self.settings and self.settings.mcp and self.settings.mcp.enabled:
             for name, source in self.settings.mcp.sources.items():
