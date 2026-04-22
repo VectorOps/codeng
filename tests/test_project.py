@@ -81,6 +81,72 @@ async def test_project_start_initializes_subsystems_and_tools(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_project_materializes_prompt_and_resource_helper_tools(tmp_path):
+    settings = Settings(
+        tools=[
+            ToolSpec(name="mcp_get_prompt"),
+            ToolSpec(name="mcp_read_resource"),
+        ],
+        workflows={
+            "wf": WorkflowConfig(
+                mcp=MCPWorkflowSettings(
+                    tools=[MCPToolSelector(source="local", tool="*")],
+                )
+            )
+        },
+        mcp=MCPSettings(
+            sources={
+                "local": MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _PROJECT_MCP_SERVER],
+                    scope=MCPSourceScope.project,
+                ),
+            }
+        ),
+    )
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+    project.know = _DummyKnowProject()
+    project.current_workflow = "wf"
+
+    await project.start()
+    assert project.mcp is not None
+
+    class _PromptResourceSession:
+        def __init__(self) -> None:
+            self.state = type(
+                "_State",
+                (),
+                {
+                    "initialized": True,
+                    "phase": "operating",
+                    "negotiation": type(
+                        "_Negotiation",
+                        (),
+                        {
+                            "server_capabilities": type(
+                                "_Capabilities",
+                                (),
+                                {"prompts": True, "resources": True},
+                            )()
+                        },
+                    )(),
+                },
+            )()
+
+    project.mcp._sessions["local"] = _PromptResourceSession()  # type: ignore[assignment]
+    project.refresh_tools_from_registry()
+
+    assert "mcp_get_prompt" in project.tools
+    assert "mcp_read_resource" in project.tools
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_project_refresh_tools_merges_cached_mcp_tools(tmp_path):
     settings = Settings(
         workflows={

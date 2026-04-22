@@ -221,6 +221,102 @@ for line in sys.stdin:
 """
 
 
+_SERVICE_PROMPTS_RESOURCES_SERVER = """
+import json
+import sys
+
+initialized = False
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'service-prompts-resources', 'version': '1.0.0'},
+                'capabilities': {
+                    'prompts': {},
+                    'resources': {}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        initialized = True
+    elif msg.get('method') == 'prompts/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'prompts': [
+                    {
+                        'name': 'summarize',
+                        'description': 'Summarize text',
+                        'arguments': [
+                            {'name': 'topic', 'required': True}
+                        ]
+                    },
+                    {
+                        'description': 'invalid prompt'
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'prompts/get' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': 'Prompt body'}
+                        ]
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'resources/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'resources': [
+                    {
+                        'uri': 'file:///docs/readme.md',
+                        'name': 'readme',
+                        'mimeType': 'text/markdown'
+                    },
+                    {
+                        'name': 'broken-resource'
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'resources/read' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'contents': [
+                    {
+                        'uri': msg.get('params', {}).get('uri'),
+                        'mimeType': 'text/plain',
+                        'text': 'Resource body'
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+"""
+
+
 def _make_settings() -> MCPSettings:
     return MCPSettings(
         sources={
@@ -590,6 +686,37 @@ async def test_service_starts_external_http_session_with_auth(
 
     await service.close_all()
     await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_service_lists_and_fetches_prompts_and_resources() -> None:
+    settings = MCPSettings(
+        sources={
+            "local": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _SERVICE_PROMPTS_RESOURCES_SERVER],
+            )
+        }
+    )
+    service = MCPService(settings)
+
+    await service.start_session("local")
+    prompts = await service.list_prompts("local")
+    resources = await service.list_resources("local")
+    prompt = await service.get_prompt("local", "summarize", {"topic": "build"})
+    resource = await service.read_resource("local", "file:///docs/readme.md")
+
+    assert service.list_prompt_sources() == ["local"]
+    assert service.list_resource_sources() == ["local"]
+    assert len(prompts) == 1
+    assert prompts[0].prompt_name == "summarize"
+    assert prompts[0].arguments[0].name == "topic"
+    assert len(resources) == 1
+    assert resources[0].uri == "file:///docs/readme.md"
+    assert prompt["messages"][0]["content"][0]["text"] == "Prompt body"
+    assert resource["contents"][0]["text"] == "Resource body"
+
+    await service.close_all()
 
 
 @pytest.mark.asyncio

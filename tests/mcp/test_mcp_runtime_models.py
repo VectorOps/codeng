@@ -1,6 +1,8 @@
 import pytest
 
 from vocode.mcp.models import MCPClientCapabilities
+from vocode.mcp.models import MCPPromptDescriptor
+from vocode.mcp.models import MCPResourceDescriptor
 from vocode.mcp.models import MCPServerCapabilities
 from vocode.mcp.models import MCPSessionNegotiation
 from vocode.mcp.models import MCPSessionPhase
@@ -101,4 +103,20 @@ def test_rejects_initialized_session_in_initializing_phase() -> None:
             source=source,
             phase=MCPSessionPhase.initializing,
             initialized=True,
+        )
+
+
+def test_prompt_descriptor_requires_non_empty_name() -> None:
+    with pytest.raises(ValueError, match="prompt_name"):
+        MCPPromptDescriptor(
+            source_name="local",
+            prompt_name="",
+        )
+
+
+def test_resource_descriptor_requires_non_empty_uri() -> None:
+    with pytest.raises(ValueError, match="uri"):
+        MCPResourceDescriptor(
+            source_name="local",
+            uri="",
         )

@@ -206,6 +206,69 @@ class MCPClientSession:
             },
         )
 
+    async def list_resources(self, cursor: Optional[str] = None) -> Dict[str, Any]:
+        if not self.state.negotiation.server_capabilities.resources:
+            raise MCPClientError("server does not advertise resources capability")
+        params: Dict[str, Any] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self.request("resources/list", params)
+
+    async def list_all_resources(self) -> list[Dict[str, Any]]:
+        resources: list[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        while True:
+            result = await self.list_resources(cursor=cursor)
+            resources.extend(result.get("resources") or [])
+            next_cursor = result.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                return resources
+            cursor = next_cursor
+
+    async def read_resource(self, uri: str) -> Dict[str, Any]:
+        if not self.state.negotiation.server_capabilities.resources:
+            raise MCPClientError("server does not advertise resources capability")
+        return await self.request(
+            "resources/read",
+            {
+                "uri": uri,
+            },
+        )
+
+    async def list_prompts(self, cursor: Optional[str] = None) -> Dict[str, Any]:
+        if not self.state.negotiation.server_capabilities.prompts:
+            raise MCPClientError("server does not advertise prompts capability")
+        params: Dict[str, Any] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self.request("prompts/list", params)
+
+    async def list_all_prompts(self) -> list[Dict[str, Any]]:
+        prompts: list[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        while True:
+            result = await self.list_prompts(cursor=cursor)
+            prompts.extend(result.get("prompts") or [])
+            next_cursor = result.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                return prompts
+            cursor = next_cursor
+
+    async def get_prompt(
+        self,
+        name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not self.state.negotiation.server_capabilities.prompts:
+            raise MCPClientError("server does not advertise prompts capability")
+        return await self.request(
+            "prompts/get",
+            {
+                "name": name,
+                "arguments": arguments or {},
+            },
+        )
+
     async def update_roots(
         self,
         roots: list[mcp_models.MCPRootDescriptor],

@@ -860,11 +860,11 @@ This delivers the core requested capability while keeping the current architectu
 
 ### Phase 8 status
 
-[ ] Extend capability discovery to include prompts and resources
-[ ] Add `mcp_read_resource` helper tool
-[ ] Add `mcp_get_prompt` helper tool
-[ ] Optionally add list helpers if needed
-[ ] Add V3 tests
+[x] Extend capability discovery to include prompts and resources
+[x] Add `mcp_read_resource` helper tool
+[x] Add `mcp_get_prompt` helper tool
+[x] Optionally add list helpers if needed
+[x] Add V3 tests
 
 ### Phase 9 status
 

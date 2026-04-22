@@ -268,6 +268,96 @@ for line in sys.stdin:
 """
 
 
+_PROMPTS_RESOURCES_SERVER = """
+import json
+import sys
+
+initialized = False
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'prompt-resource-server', 'version': '1.0.0'},
+                'capabilities': {
+                    'prompts': {},
+                    'resources': {}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        initialized = True
+    elif msg.get('method') == 'prompts/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'prompts': [
+                    {
+                        'name': 'summarize',
+                        'description': 'Summarize text',
+                        'arguments': [
+                            {'name': 'topic', 'required': True}
+                        ]
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'prompts/get' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'messages': [
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': 'Prompt body'}
+                        ]
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'resources/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'resources': [
+                    {
+                        'uri': 'file:///docs/readme.md',
+                        'name': 'readme',
+                        'mimeType': 'text/markdown'
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'resources/read' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'contents': [
+                    {
+                        'uri': msg.get('params', {}).get('uri'),
+                        'mimeType': 'text/plain',
+                        'text': 'Resource body'
+                    }
+                ]
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+"""
+
+
 def _make_source() -> MCPSourceDescriptor:
     return MCPSourceDescriptor(
         source_name="local",
@@ -643,3 +733,25 @@ async def test_client_session_close_is_idempotent_when_transport_close_fails() -
 
     assert close_calls["count"] == 1
     assert session.state.phase == "closed"
+
+
+@pytest.mark.asyncio
+async def test_client_session_lists_and_fetches_prompts_and_resources() -> None:
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", _PROMPTS_RESOURCES_SERVER]),
+    )
+
+    await session.start()
+
+    prompts = await session.list_all_prompts()
+    prompt = await session.get_prompt("summarize", {"topic": "status"})
+    resources = await session.list_all_resources()
+    resource = await session.read_resource("file:///docs/readme.md")
+
+    assert prompts[0]["name"] == "summarize"
+    assert prompt["messages"][0]["content"][0]["text"] == "Prompt body"
+    assert resources[0]["uri"] == "file:///docs/readme.md"
+    assert resource["contents"][0]["text"] == "Resource body"
+
+    await session.close()

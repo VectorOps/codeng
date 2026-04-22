@@ -149,6 +149,81 @@ class MCPService:
             raise MCPServiceError(f"no active session for mcp source: {source_name}")
         return await session.call_tool(tool_name, arguments or {})
 
+    async def list_resources(
+        self,
+        source_name: str,
+    ) -> list[mcp_models.MCPResourceDescriptor]:
+        session = self.get_session(source_name)
+        if session is None:
+            raise MCPServiceError(f"no active session for mcp source: {source_name}")
+        payloads = await session.list_all_resources()
+        resources: list[mcp_models.MCPResourceDescriptor] = []
+        seen: set[str] = set()
+        for payload in payloads:
+            try:
+                descriptor = mcp_converters.normalize_resource_descriptor(
+                    source_name,
+                    payload,
+                )
+            except mcp_converters.MCPConversionError:
+                continue
+            if descriptor.uri in seen:
+                continue
+            seen.add(descriptor.uri)
+            resources.append(descriptor)
+        return resources
+
+    async def read_resource(
+        self,
+        source_name: str,
+        uri: str,
+    ) -> Dict[str, object]:
+        session = self.get_session(source_name)
+        if session is None:
+            raise MCPServiceError(f"no active session for mcp source: {source_name}")
+        return await session.read_resource(uri)
+
+    async def list_prompts(
+        self,
+        source_name: str,
+    ) -> list[mcp_models.MCPPromptDescriptor]:
+        session = self.get_session(source_name)
+        if session is None:
+            raise MCPServiceError(f"no active session for mcp source: {source_name}")
+        payloads = await session.list_all_prompts()
+        prompts: list[mcp_models.MCPPromptDescriptor] = []
+        seen: set[str] = set()
+        for payload in payloads:
+            try:
+                descriptor = mcp_converters.normalize_prompt_descriptor(
+                    source_name,
+                    payload,
+                )
+            except mcp_converters.MCPConversionError:
+                continue
+            if descriptor.prompt_name in seen:
+                continue
+            seen.add(descriptor.prompt_name)
+            prompts.append(descriptor)
+        return prompts
+
+    async def get_prompt(
+        self,
+        source_name: str,
+        prompt_name: str,
+        arguments: Optional[Dict[str, object]] = None,
+    ) -> Dict[str, object]:
+        session = self.get_session(source_name)
+        if session is None:
+            raise MCPServiceError(f"no active session for mcp source: {source_name}")
+        return await session.get_prompt(prompt_name, arguments or {})
+
+    def list_prompt_sources(self) -> list[str]:
+        return self._list_sources_with_capability("prompts")
+
+    def list_resource_sources(self) -> list[str]:
+        return self._list_sources_with_capability("resources")
+
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
         existing = self.get_session(source_name)
         if existing is not None:
@@ -457,3 +532,13 @@ class MCPService:
             session.state.initialized
             and session.state.phase == mcp_models.MCPSessionPhase.operating
         )
+
+    def _list_sources_with_capability(self, capability_name: str) -> list[str]:
+        names: list[str] = []
+        for source_name, session in self.list_sessions().items():
+            capabilities = session.state.negotiation.server_capabilities
+            if capability_name == "prompts" and capabilities.prompts:
+                names.append(source_name)
+            if capability_name == "resources" and capabilities.resources:
+                names.append(source_name)
+        return names

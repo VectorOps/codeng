@@ -133,3 +133,49 @@ class MCPToolDescriptor(BaseModel):
         if not self.tool_name.strip():
             raise ValueError("tool_name must be non-empty")
         return self
+
+
+class MCPPromptArgumentDescriptor(BaseModel):
+    name: str
+    description: Optional[str] = Field(default=None)
+    required: bool = Field(default=False)
+
+    @model_validator(mode="after")
+    def _validate_name(self) -> "MCPPromptArgumentDescriptor":
+        if not self.name.strip():
+            raise ValueError("prompt argument name must be non-empty")
+        return self
+
+
+class MCPPromptDescriptor(BaseModel):
+    source_name: str
+    prompt_name: str
+    title: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None)
+    arguments: List[MCPPromptArgumentDescriptor] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_identity(self) -> "MCPPromptDescriptor":
+        if not self.source_name.strip():
+            raise ValueError("source_name must be non-empty")
+        if not self.prompt_name.strip():
+            raise ValueError("prompt_name must be non-empty")
+        return self
+
+
+class MCPResourceDescriptor(BaseModel):
+    source_name: str
+    uri: str
+    name: Optional[str] = Field(default=None)
+    title: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None)
+    mime_type: Optional[str] = Field(default=None)
+    annotations: Dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_identity(self) -> "MCPResourceDescriptor":
+        if not self.source_name.strip():
+            raise ValueError("source_name must be non-empty")
+        if not self.uri.strip():
+            raise ValueError("uri must be non-empty")
+        return self

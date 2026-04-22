@@ -1,6 +1,8 @@
 import pytest
 
 from vocode.mcp.converters import MCPConversionError
+from vocode.mcp.converters import normalize_prompt_descriptor
+from vocode.mcp.converters import normalize_resource_descriptor
 from vocode.mcp.converters import normalize_tool_descriptor
 
 
@@ -68,3 +70,58 @@ def test_normalize_tool_descriptor_rejects_non_object_annotations() -> None:
                 "annotations": "invalid",
             },
         )
+
+
+def test_normalize_prompt_descriptor_preserves_argument_metadata() -> None:
+    descriptor = normalize_prompt_descriptor(
+        "local",
+        {
+            "name": "summarize",
+            "description": "Summarize input",
+            "arguments": [
+                {
+                    "name": "topic",
+                    "description": "Topic to summarize",
+                    "required": True,
+                }
+            ],
+        },
+    )
+
+    assert descriptor.source_name == "local"
+    assert descriptor.prompt_name == "summarize"
+    assert descriptor.arguments[0].name == "topic"
+    assert descriptor.arguments[0].required is True
+
+
+def test_normalize_prompt_descriptor_rejects_invalid_arguments() -> None:
+    with pytest.raises(MCPConversionError, match="arguments"):
+        normalize_prompt_descriptor(
+            "local",
+            {
+                "name": "summarize",
+                "arguments": ["bad"],
+            },
+        )
+
+
+def test_normalize_resource_descriptor_preserves_metadata() -> None:
+    descriptor = normalize_resource_descriptor(
+        "local",
+        {
+            "uri": "file:///docs/readme.md",
+            "name": "readme",
+            "mimeType": "text/markdown",
+            "annotations": {"audience": "internal"},
+        },
+    )
+
+    assert descriptor.source_name == "local"
+    assert descriptor.uri == "file:///docs/readme.md"
+    assert descriptor.mime_type == "text/markdown"
+    assert descriptor.annotations == {"audience": "internal"}
+
+
+def test_normalize_resource_descriptor_rejects_missing_uri() -> None:
+    with pytest.raises(MCPConversionError, match="non-empty uri"):
+        normalize_resource_descriptor("local", {"name": "readme"})

@@ -25,6 +25,8 @@ from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 from vocode.mcp.service import MCPService
 from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
+from vocode.tools.mcp_get_prompt_tool import MCPGetPromptTool
+from vocode.tools.mcp_read_resource_tool import MCPReadResourceTool
 from vocode.tools.mcp_tool import MCPToolAdapter
 
 
@@ -134,8 +136,21 @@ class Project:
                 workflow_mcp = self.settings.workflows[self.current_workflow].mcp
             if workflow_mcp is not None and not workflow_mcp.enabled:
                 return
-            if self._should_enable_mcp_discovery_tool():
+            if (
+                self._should_enable_mcp_discovery_tool()
+                and MCPDiscoveryTool.name not in disabled_tool_names
+            ):
                 self.tools[MCPDiscoveryTool.name] = MCPDiscoveryTool(self)
+            if (
+                self._should_enable_mcp_get_prompt_tool()
+                and MCPGetPromptTool.name not in disabled_tool_names
+            ):
+                self.tools[MCPGetPromptTool.name] = MCPGetPromptTool(self)
+            if (
+                self._should_enable_mcp_read_resource_tool()
+                and MCPReadResourceTool.name not in disabled_tool_names
+            ):
+                self.tools[MCPReadResourceTool.name] = MCPReadResourceTool(self)
             for source_name, descriptors in self.mcp.list_tool_cache().items():
                 for descriptor in descriptors.values():
                     if not self._is_mcp_tool_enabled_for_current_workflow(
@@ -199,6 +214,24 @@ class Project:
                 ):
                     return True
         return False
+
+    def _should_enable_mcp_get_prompt_tool(self) -> bool:
+        if not self._has_current_mcp_workflow():
+            return False
+        return bool(self.mcp is not None and self.mcp.list_prompt_sources())
+
+    def _should_enable_mcp_read_resource_tool(self) -> bool:
+        if not self._has_current_mcp_workflow():
+            return False
+        return bool(self.mcp is not None and self.mcp.list_resource_sources())
+
+    def _has_current_mcp_workflow(self) -> bool:
+        if self.mcp is None or self.settings is None or self.current_workflow is None:
+            return False
+        workflow = self.settings.workflows.get(self.current_workflow)
+        return (
+            workflow is not None and workflow.mcp is not None and workflow.mcp.enabled
+        )
 
     # LLM usage totals
     def add_llm_usage(
