@@ -12,6 +12,7 @@ from vocode.mcp.models import MCPClientCapabilities
 from vocode.mcp.models import MCPRootDescriptor
 from vocode.mcp.models import MCPSourceDescriptor
 from vocode.mcp.models import MCPTransportKind
+from vocode.mcp.protocol import MCPJSONRPCRequest
 from vocode.mcp.transports import MCPHTTPTransport
 from vocode.mcp.transports import MCPStdioTransport
 from vocode.mcp.transports import MCPTransportError
@@ -648,6 +649,100 @@ async def test_client_session_initialize_and_request_over_http_transport(
 
 
 @pytest.mark.asyncio
+async def test_http_transport_handles_parallel_auth_retries_without_header_leakage(
+    unused_tcp_port,
+) -> None:
+    seen_first_attempt = asyncio.Event()
+    first_attempt_count = {"value": 0}
+    observed_headers: dict[int, list[str | None]] = {1: [], 2: [], 3: []}
+
+    async def handler(request: web.Request) -> web.Response:
+        payload = await request.json()
+        request_id = payload["id"]
+        auth_header = request.headers.get("Authorization")
+        observed_headers.setdefault(request_id, []).append(auth_header)
+        if request_id in {1, 2} and len(observed_headers[request_id]) == 1:
+            first_attempt_count["value"] += 1
+            if first_attempt_count["value"] == 2:
+                seen_first_attempt.set()
+            await asyncio.wait_for(seen_first_attempt.wait(), timeout=1.0)
+            return web.Response(
+                status=403,
+                headers={
+                    "WWW-Authenticate": 'Bearer error="insufficient_scope", scope="tools.write"'
+                },
+                text="insufficient scope",
+            )
+        return web.json_response(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {"authorization": auth_header},
+            }
+        )
+
+    attempt_headers = [
+        {"Authorization": "Bearer retry-1"},
+        {"Authorization": "Bearer retry-2"},
+    ]
+
+    async def auth_challenge_handler(
+        status_code: int,
+        www_authenticate: str | None,
+        auth_attempt: int,
+    ) -> dict[str, str] | None:
+        assert status_code == 403
+        assert www_authenticate is not None
+        return attempt_headers.pop(0)
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", unused_tcp_port)
+    await site.start()
+
+    transport = MCPHTTPTransport(
+        f"http://127.0.0.1:{unused_tcp_port}/mcp",
+        headers={"Authorization": "Bearer base-token"},
+        auth_challenge_handler=auth_challenge_handler,
+    )
+    await transport.start()
+
+    try:
+        response_one, response_two = await asyncio.gather(
+            transport.request(
+                MCPJSONRPCRequest(jsonrpc="2.0", id=1, method="tools/list")
+            ),
+            transport.request(
+                MCPJSONRPCRequest(jsonrpc="2.0", id=2, method="tools/list")
+            ),
+        )
+
+        follow_up = await transport.request(
+            MCPJSONRPCRequest(jsonrpc="2.0", id=3, method="tools/list")
+        )
+
+        assert {
+            response_one.result["authorization"],
+            response_two.result["authorization"],
+        } == {"Bearer retry-1", "Bearer retry-2"}
+        assert observed_headers[1][0] == "Bearer base-token"
+        assert observed_headers[2][0] == "Bearer base-token"
+        assert {observed_headers[1][1], observed_headers[2][1]} == {
+            "Bearer retry-1",
+            "Bearer retry-2",
+        }
+        assert follow_up.result["authorization"] in {
+            "Bearer retry-1",
+            "Bearer retry-2",
+        }
+    finally:
+        await transport.close()
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_client_session_request_with_timeout_sends_cancel_notification() -> None:
     transport = MCPStdioTransport(sys.executable, args=["-c", _TIMEOUT_SERVER])
     session = MCPClientSession(
@@ -685,6 +780,65 @@ async def test_client_session_ignores_late_timed_out_stdio_response() -> None:
     assert session.state.phase == "operating"
     assert session.state.initialized is True
     assert tools["tools"][0]["name"] == "after-timeout"
+
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_client_session_matches_parallel_stdio_responses_by_request_id() -> None:
+    server = """
+import json
+import sys
+import threading
+import time
+
+initialized = False
+
+def respond(request_id, value, delay):
+    time.sleep(delay)
+    sys.stdout.write(json.dumps({
+        'jsonrpc': '2.0',
+        'id': request_id,
+        'result': {'value': value}
+    }) + '\\n')
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'parallel-server', 'version': '1.0.0'},
+                'capabilities': {
+                    'tools': {'listChanged': False}
+                }
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        initialized = True
+    elif msg.get('method') == 'parallel/first' and initialized:
+        threading.Thread(target=respond, args=(msg['id'], 'first', 0.05), daemon=True).start()
+    elif msg.get('method') == 'parallel/second' and initialized:
+        threading.Thread(target=respond, args=(msg['id'], 'second', 0.01), daemon=True).start()
+"""
+    session = MCPClientSession(
+        _make_source(),
+        MCPStdioTransport(sys.executable, args=["-c", server]),
+    )
+
+    await session.start()
+
+    first, second = await asyncio.gather(
+        session.request("parallel/first"),
+        session.request("parallel/second"),
+    )
+
+    assert first["value"] == "first"
+    assert second["value"] == "second"
 
     await session.close()
 

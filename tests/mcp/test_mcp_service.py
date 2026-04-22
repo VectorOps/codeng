@@ -854,6 +854,72 @@ async def test_service_starts_external_http_session_with_auth(
 
 
 @pytest.mark.asyncio
+async def test_service_logout_clears_only_target_source_token(
+    tmp_path,
+) -> None:
+    credentials = ProjectCredentialManager(
+        env={},
+        credentials_path=tmp_path / "credentials.json",
+    )
+    settings = MCPSettings(
+        sources={
+            "remote_a": MCPExternalSourceSettings(
+                url="https://example.com/mcp",
+                auth=MCPAuthSettings(client_id="client-a", client_secret_env="A"),
+            ),
+            "remote_b": MCPExternalSourceSettings(
+                url="https://example.com/mcp",
+                auth=MCPAuthSettings(client_id="client-b", client_secret_env="B"),
+            ),
+        }
+    )
+    service = MCPService(settings, credentials=credentials)
+
+    token_a = mcp_service.mcp_auth.MCPAuthToken(
+        access_token="token-a",
+        resource="https://example.com/mcp",
+    )
+    token_b = mcp_service.mcp_auth.MCPAuthToken(
+        access_token="token-b",
+        resource="https://example.com/mcp",
+    )
+    await service._auth._store_token("remote_a", token_a)
+    await service._auth._store_token("remote_b", token_b)
+
+    assert await service.authorization_status(
+        "remote_a"
+    ) == mcp_service.MCPAuthorizationStatus(
+        source_name="remote_a",
+        has_token=True,
+        session_active=False,
+    )
+    assert await service.authorization_status(
+        "remote_b"
+    ) == mcp_service.MCPAuthorizationStatus(
+        source_name="remote_b",
+        has_token=True,
+        session_active=False,
+    )
+
+    await service.logout("remote_a")
+
+    assert await service.authorization_status(
+        "remote_a"
+    ) == mcp_service.MCPAuthorizationStatus(
+        source_name="remote_a",
+        has_token=False,
+        session_active=False,
+    )
+    assert await service.authorization_status(
+        "remote_b"
+    ) == mcp_service.MCPAuthorizationStatus(
+        source_name="remote_b",
+        has_token=True,
+        session_active=False,
+    )
+
+
+@pytest.mark.asyncio
 async def test_service_lists_and_fetches_prompts_and_resources() -> None:
     settings = MCPSettings(
         sources={
