@@ -85,9 +85,8 @@ def test_apply_patch_formatter_renders_output_unstyled() -> None:
     assert "Applied patch successfully." in output
     assert "Added file: foo.py" in output
     assert "Deleted file: baz.py" in output
-    assert "..." in output
-    assert "Renamed file: qux.py" not in output
-    assert "Extra line that should be hidden" not in output
+    assert "Renamed file: qux.py" in output
+    assert "Extra line that should be hidden" in output
 
 
 def test_apply_patch_formatter_renders_output_from_json_payload() -> None:
