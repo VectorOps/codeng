@@ -17,6 +17,8 @@ from vocode.tui.tcf import render_utils as tcf_render_utils
 
 @tui_tcf.ToolCallFormatterManager.register("apply_patch")
 class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
+    show_execution_stats_default = False
+
     def _try_parse_json(self, value: str) -> typing.Any:
         stripped = value.strip()
         if not stripped:

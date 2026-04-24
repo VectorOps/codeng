@@ -5,8 +5,7 @@ from typing import Any, Optional
 
 from vocode import settings as vocode_settings
 from vocode import vars as vars_mod
-from vocode.manager import proto as manager_proto
-
+from . import output as command_output
 from .base import CommandError, command, option
 
 
@@ -98,19 +97,16 @@ async def _var(server, args: list[str]) -> None:
             await server.send_text_message("No variables configured.")
             return
 
-        lines: list[str] = ["Variables:"]
+        lines: list[str] = [command_output.heading("Variables:")]
         for name in sorted(vars_defs.keys()):
             val = settings.get_variable_value(name)
             value_text = _stringify_value(val)
             rendered = _trim_value(value_text, max_chars=MAX_VAR_VALUE_CHARS)
             if rendered != value_text:
-                rendered = f"{rendered} [dim](trimmed)[/]"
+                rendered = f"{rendered} {command_output.meta_text('(trimmed)')}"
             lines.append(f"  [bold cyan]{name}[/] = [green]{rendered}[/]")
 
-        await server.send_text_message(
-            "\n".join(lines),
-            text_format=manager_proto.TextMessageFormat.RICH_TEXT,
-        )
+        await command_output.send_rich(server, "\n".join(lines))
         return
 
     if op == "set":
@@ -126,9 +122,9 @@ async def _var(server, args: list[str]) -> None:
             _stringify_value(value),
             max_chars=MAX_VAR_VALUE_CHARS,
         )
-        await server.send_text_message(
-            f"[bold cyan]{name}[/] set to [green]{rendered}[/]",
-            text_format=manager_proto.TextMessageFormat.RICH_TEXT,
+        await command_output.send_rich(
+            server,
+            f"[green]{command_output.escape(name)} set to {rendered}[/]",
         )
         return
 

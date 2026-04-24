@@ -1,10 +1,22 @@
-from typing import List, Dict, Optional, Any, Union, Set, Final, Type, Literal
+from typing import (
+    Annotated,
+    List,
+    Dict,
+    Optional,
+    Any,
+    Union,
+    Set,
+    Final,
+    Type,
+    Literal,
+)
 import re
 from enum import Enum
 from pathlib import Path
 from os import PathLike
 import os
 import json
+from urllib import parse
 from importlib import resources
 from pydantic import BaseModel, Field, PrivateAttr
 from pydantic import model_validator, field_validator
@@ -52,6 +64,7 @@ class WorkflowConfig(vars_mod.BaseVarModel):
     nodes: List[vocode_models.Node] = Field(default_factory=list)
     edges: List[vocode_models.Edge] = Field(default_factory=list)
     agents: Optional[List[str]] = None
+    mcp: Optional["MCPWorkflowSettings"] = None
 
     @field_validator("nodes", mode="before")
     @classmethod
@@ -112,6 +125,7 @@ class TUIOptions(vars_mod.BaseVarModel):
     ascii_fallback: bool = False
     expand_confirm_tools: bool = True
     submit_with_enter: bool = True
+    history_limit: int = Field(default=10000, ge=1)
     banner_text: str = "VOCODE"
     banner_font: str = "spliff"
     markdown_render_mode: MarkdownRenderMode = MarkdownRenderMode.rich_markdown
@@ -130,6 +144,7 @@ class ToolSpec(vars_mod.BaseVarModel):
 
     name: str
     enabled: bool = True
+    skip_listing: bool = False
     auto_approve: Optional[bool] = None
     auto_approve_rules: List[ToolAutoApproveRule] = Field(default_factory=list)
     config: Dict[str, Any] = Field(default_factory=dict)
@@ -147,6 +162,7 @@ class ToolSpec(vars_mod.BaseVarModel):
             out = {
                 "name": name,
                 "enabled": v.get("enabled", True),
+                "skip_listing": v.get("skip_listing", False),
                 "auto_approve": v.get("auto_approve", None),
                 "auto_approve_rules": v.get("auto_approve_rules", []) or [],
                 "config": v.get("config", {}) or {},
@@ -228,6 +244,222 @@ class InternalHTTPSettings(vars_mod.BaseVarModel):
     secret_key: Optional[str] = None
 
 
+class MCPSourceScope(str, Enum):
+    project = "project"
+    workflow = "workflow"
+
+
+class MCPRootMergeMode(str, Enum):
+    replace = "replace"
+    append = "append"
+
+
+class MCPRootEntry(vars_mod.BaseVarModel):
+    uri: Optional[str] = None
+    path: Optional[str] = None
+    name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _normalize(self) -> "MCPRootEntry":
+        has_uri = self.uri is not None and self.uri.strip() != ""
+        has_path = self.path is not None and self.path.strip() != ""
+        if has_uri == has_path:
+            raise ValueError("exactly one of uri or path must be provided")
+        if has_path:
+            raw_path = Path(os.path.expanduser(self.path or ""))
+            self.path = str(raw_path)
+            self.uri = raw_path.resolve().as_uri()
+        if self.uri is None or not self.uri.startswith("file://"):
+            raise ValueError("root uri must use the file:// scheme")
+        return self
+
+
+class MCPRootSettings(vars_mod.BaseVarModel):
+    entries: List[MCPRootEntry] = Field(default_factory=list)
+    list_changed: bool = True
+    merge_mode: MCPRootMergeMode = MCPRootMergeMode.replace
+
+    @field_validator("entries", mode="after")
+    @classmethod
+    def _dedupe_entries(cls, value: List[MCPRootEntry]) -> List[MCPRootEntry]:
+        seen: Set[str] = set()
+        out: List[MCPRootEntry] = []
+        for item in value:
+            if item.uri is None or item.uri in seen:
+                continue
+            seen.add(item.uri)
+            out.append(item)
+        return out
+
+    @model_validator(mode="after")
+    def _validate_merge_mode(self) -> "MCPRootSettings":
+        if self.merge_mode == MCPRootMergeMode.append and not self.entries:
+            raise ValueError("append root merge_mode requires at least one root entry")
+        return self
+
+
+class MCPProtocolSettings(vars_mod.BaseVarModel):
+    request_timeout_s: float = 30.0
+    max_request_timeout_s: Optional[float] = 120.0
+    startup_timeout_s: float = 15.0
+    shutdown_timeout_s: float = 10.0
+
+    @model_validator(mode="after")
+    def _validate_timeouts(self) -> "MCPProtocolSettings":
+        if self.request_timeout_s <= 0:
+            raise ValueError("request_timeout_s must be greater than 0")
+        if self.startup_timeout_s <= 0:
+            raise ValueError("startup_timeout_s must be greater than 0")
+        if self.shutdown_timeout_s <= 0:
+            raise ValueError("shutdown_timeout_s must be greater than 0")
+        if self.max_request_timeout_s is not None:
+            if self.max_request_timeout_s <= 0:
+                raise ValueError("max_request_timeout_s must be greater than 0")
+            if self.max_request_timeout_s < self.request_timeout_s:
+                raise ValueError(
+                    "max_request_timeout_s must be greater than or equal to request_timeout_s"
+                )
+        return self
+
+
+class MCPAuthMode(str, Enum):
+    auto = "auto"
+    preregistered = "preregistered"
+    client_metadata = "client_metadata"
+    dynamic = "dynamic"
+
+
+class MCPAuthSettings(vars_mod.BaseVarModel):
+    enabled: bool = True
+    mode: MCPAuthMode = MCPAuthMode.auto
+    client_id: Optional[str] = None
+    client_secret_env: Optional[str] = None
+    client_metadata_url: Optional[str] = None
+    scopes: List[str] = Field(default_factory=list)
+    redirect_host: str = "127.0.0.1"
+    redirect_port: Optional[int] = None
+    allow_dynamic_registration: bool = False
+    retry_step_up: bool = True
+    max_step_up_attempts: int = 2
+
+    @model_validator(mode="after")
+    def _validate_auth(self) -> "MCPAuthSettings":
+        redirect_host = self.redirect_host.strip().lower()
+        if not redirect_host:
+            raise ValueError("redirect_host must be non-empty")
+        if self.redirect_port is not None and self.redirect_port <= 0:
+            raise ValueError("redirect_port must be greater than 0")
+        if self.max_step_up_attempts < 0:
+            raise ValueError("max_step_up_attempts must be greater than or equal to 0")
+        if redirect_host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("redirect_host must use localhost, 127.0.0.1, or ::1")
+        if self.mode == MCPAuthMode.preregistered and not self.client_id:
+            raise ValueError("client_id is required for preregistered auth mode")
+        if self.client_metadata_url is not None:
+            parsed = parse.urlsplit(self.client_metadata_url)
+            if parsed.scheme != "https":
+                raise ValueError("client_metadata_url must use https")
+            if parsed.hostname is None:
+                raise ValueError("client_metadata_url must include a hostname")
+        if self.mode == MCPAuthMode.client_metadata and not self.client_metadata_url:
+            raise ValueError(
+                "client_metadata_url is required for client_metadata auth mode"
+            )
+        if self.mode == MCPAuthMode.dynamic and not self.allow_dynamic_registration:
+            raise ValueError(
+                "allow_dynamic_registration must be enabled for dynamic auth mode"
+            )
+        return self
+
+
+class MCPStdioSourceSettings(vars_mod.BaseVarModel):
+    kind: Literal["stdio"] = "stdio"
+    command: str
+    args: List[str] = Field(default_factory=list)
+    env: Dict[str, str] = Field(default_factory=dict)
+    cwd: Optional[str] = None
+    scope: MCPSourceScope = MCPSourceScope.workflow
+    roots: Optional[MCPRootSettings] = None
+
+
+class MCPExternalSourceSettings(vars_mod.BaseVarModel):
+    kind: Literal["external"] = "external"
+    url: str
+    headers: Dict[str, str] = Field(default_factory=dict)
+    scope: MCPSourceScope = MCPSourceScope.project
+    roots: Optional[MCPRootSettings] = None
+    auth: Optional[MCPAuthSettings] = None
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        if not value:
+            raise ValueError("url must be non-empty")
+        if not (value.startswith("http://") or value.startswith("https://")):
+            raise ValueError("url must start with http:// or https://")
+        return value
+
+
+MCPSourceSettings = Annotated[
+    Union[MCPStdioSourceSettings, MCPExternalSourceSettings],
+    Field(discriminator="kind"),
+]
+
+
+class MCPToolSelector(vars_mod.BaseVarModel):
+    source: str
+    tool: str
+
+    @model_validator(mode="after")
+    def _validate_fields(self) -> "MCPToolSelector":
+        if not self.source.strip():
+            raise ValueError("source must be non-empty")
+        if not self.tool.strip():
+            raise ValueError("tool must be non-empty")
+        return self
+
+
+class MCPDiscoverySettings(vars_mod.BaseVarModel):
+    enabled: bool = True
+    max_results: int = Field(default=8, ge=1)
+    name_weight: float = Field(default=4.0, ge=0.0)
+    title_weight: float = Field(default=2.0, ge=0.0)
+    description_weight: float = Field(default=1.0, ge=0.0)
+    schema_weight: float = Field(default=0.5, ge=0.0)
+    min_score: float = Field(default=0.1, ge=0.0)
+
+
+class MCPWorkflowSettings(vars_mod.BaseVarModel):
+    enabled: bool = True
+    tools: List[MCPToolSelector] = Field(default_factory=list)
+    disabled_tools: List[MCPToolSelector] = Field(default_factory=list)
+    hide_listed_tools: bool = False
+    roots: Optional[MCPRootSettings] = None
+
+
+class MCPSettings(vars_mod.BaseVarModel):
+    enabled: bool = True
+    sources: Dict[str, MCPSourceSettings] = Field(default_factory=dict)
+    roots: Optional[MCPRootSettings] = None
+    protocol: Optional[MCPProtocolSettings] = None
+    discovery: Optional[MCPDiscoverySettings] = None
+    hide_listed_tools: bool = False
+
+    @field_validator("sources", mode="after")
+    @classmethod
+    def _validate_source_names(
+        cls, value: Dict[str, MCPSourceSettings]
+    ) -> Dict[str, MCPSourceSettings]:
+        for name in value:
+            if not name.strip():
+                raise ValueError("mcp source names must be non-empty")
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+                raise ValueError(
+                    "mcp source names may contain only letters, digits, dot, underscore, and dash"
+                )
+        return value
+
+
 class Settings(vars_mod.BaseVarModel):
     _var_defs: Dict[str, vars_mod.VarDef] = PrivateAttr(default_factory=dict)
     workflows: Dict[str, WorkflowConfig] = Field(default_factory=dict)
@@ -245,6 +477,7 @@ class Settings(vars_mod.BaseVarModel):
     persistence: Optional[PersistenceSettings] = Field(default=None)
     tui: Optional[TUIOptions] = Field(default=None)
     internal_http: Optional[InternalHTTPSettings] = Field(default=None)
+    mcp: Optional[MCPSettings] = Field(default=None)
 
     @model_validator(mode="after")
     def _sync_workflow_names(self) -> "Settings":

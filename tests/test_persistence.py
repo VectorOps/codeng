@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from vocode import models
+from vocode import settings as vocode_settings
 from vocode import state
 from vocode.history.manager import HistoryManager
 from vocode.persistence import codec as persistence_codec
@@ -93,6 +94,19 @@ def test_codec_roundtrip_allows_auto_approved_bool():
     restored = persistence_codec.loads_gzip(blob)
     restored_msg = restored.node_executions[ne1.id].input_messages[0]
     assert restored_msg.tool_call_requests[0].auto_approved is True
+
+
+def test_tool_spec_roundtrip_preserves_skip_listing() -> None:
+    spec = vocode_settings.ToolSpec(
+        name="echo",
+        enabled=True,
+        skip_listing=True,
+        config={"x": 1},
+    )
+
+    restored = vocode_settings.ToolSpec.model_validate_json(spec.model_dump_json())
+
+    assert restored.skip_listing is True
 
 
 def test_codec_roundtrip_loaded_state_supports_explicit_id_updates():

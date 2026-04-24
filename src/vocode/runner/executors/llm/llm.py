@@ -289,6 +289,8 @@ class LLMExecutor(runner_base.BaseExecutor):
             eff_spec = effective_specs.get(tool_name)
             if eff_spec is None or not eff_spec.enabled:
                 continue
+            if eff_spec.skip_listing:
+                continue
             tool = project_tools.get(tool_name)
             if tool is None:
                 continue

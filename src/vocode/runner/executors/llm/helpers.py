@@ -197,6 +197,7 @@ def build_effective_tool_specs(project: Any, cfg: LLMNode) -> Dict[str, ToolSpec
 
     Precedence rules:
     - Global .enabled overrides node .enabled when provided.
+    - Global .skip_listing overrides node .skip_listing when provided.
     - Global .auto_approve overrides node .auto_approve when non-None.
     - Global .auto_approve_rules extend node .auto_approve_rules.
     - .config is merged shallowly: node.config first, then global.config.
@@ -228,6 +229,10 @@ def build_effective_tool_specs(project: Any, cfg: LLMNode) -> Dict[str, ToolSpec
             # enabled: global overrides node when provided
             if isinstance(gspec.enabled, bool):
                 base.enabled = gspec.enabled
+
+            # skip_listing: global overrides node when provided
+            if isinstance(gspec.skip_listing, bool):
+                base.skip_listing = gspec.skip_listing
 
             # auto_approve: global wins when explicitly set
             if gspec.auto_approve is not None:

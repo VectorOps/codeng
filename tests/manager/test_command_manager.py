@@ -17,6 +17,7 @@ from vocode.manager.commands import CommandManager, command, option
 from vocode.manager.server import UIServer
 from vocode.manager.commands import workflows as workflow_commands
 from vocode.manager import base as manager_base
+from vocode.mcp.service import MCPService
 from vocode.runner import base as runner_base
 from tests.stub_project import StubProject
 
@@ -358,7 +359,8 @@ async def test_uiserver_unknown_command_sends_error() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
-    assert payload.text == "Unknown command: /unknown"
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Unknown command: /unknown" in payload.text
 
 
 @pytest.mark.asyncio
@@ -382,6 +384,7 @@ async def test_help_command_lists_debug_and_workflows() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     text = payload.text
     assert "/debug" in text
     assert "/workflows" in text
@@ -416,6 +419,7 @@ async def test_queue_list_command_reports_queue_contents() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Input queue" in payload.text
     assert "Queued messages: 2" in payload.text
     assert "[ 1] user" in payload.text
@@ -445,6 +449,7 @@ async def test_queue_add_and_delete_commands_mutate_queue() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Queued input message." in payload.text
 
     snapshot = await project.input_manager.snapshot()
@@ -469,6 +474,7 @@ async def test_queue_add_and_delete_commands_mutate_queue() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Deleted input message" in payload.text
     assert "q" in payload.text
 
@@ -507,6 +513,7 @@ async def test_queue_delete_with_number_removes_selected_item() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Deleted input message" in payload.text
     assert "queued-2" in payload.text
 
@@ -541,6 +548,7 @@ async def test_queue_list_shows_only_first_ten_items() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "[ 1] user" in payload.text
     assert "[10] user" in payload.text
     assert "queued-11" not in payload.text
@@ -574,6 +582,7 @@ async def test_queue_list_truncates_multiline_messages_to_three_lines() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "line-1" in payload.text
     assert "line-2" in payload.text
     assert "line-3" in payload.text
@@ -608,6 +617,7 @@ async def test_queue_pop_removes_last_added_item() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Popped input message" in payload.text
     assert "queued-2" in payload.text
 
@@ -646,6 +656,7 @@ async def test_queue_delete_with_negative_number_removes_from_end() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Deleted input message" in payload.text
     assert "queued-3" in payload.text
 
@@ -683,7 +694,8 @@ async def test_queue_clear_command_empties_queue() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
-    assert "Cleared 2 queued input message(s)." == payload.text
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Cleared 2 queued input message(s)." in payload.text
 
     snapshot = await project.input_manager.snapshot()
     assert len(snapshot.queued_messages) == 0
@@ -709,7 +721,8 @@ async def test_auth_status_command_reports_credential_status() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
-    assert payload.text == "Authentication is configured for chatgpt."
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Authentication is configured for chatgpt." in payload.text
 
 
 @pytest.mark.asyncio
@@ -795,6 +808,7 @@ async def test_auth_login_command_runs_login_flow(
     )
     assert any(
         isinstance(packet, manager_proto.TextMessagePacket)
+        and packet.format == manager_proto.TextMessageFormat.RICH_TEXT
         and "Authentication successful for chatgpt." in packet.text
         for packet in packets
     )
@@ -860,7 +874,377 @@ async def test_auth_cancel_command_stops_active_login(
 
     assert any(
         isinstance(packet, manager_proto.TextMessagePacket)
-        and packet.text == "Authentication cancelled."
+        and packet.format == manager_proto.TextMessageFormat.RICH_TEXT
+        and "Authentication cancelled." in packet.text
+        for packet in packets
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_command_reports_source_status() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp status remote")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "MCP source: remote" in payload.text
+    assert "Has token: no" in payload.text
+    assert "Session active: no" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_without_subcommand_prints_help() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "MCP commands:" in payload.text
+    assert "/mcp list \\[source]" in payload.text
+    assert "/mcp status \\[source]" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_status_without_source_lists_all_sources() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "local": vocode_settings.MCPStdioSourceSettings(
+                    command="uvx",
+                ),
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                ),
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp status")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "MCP sources:" in payload.text
+    assert "local - stdio, auth required: no" in payload.text
+    assert "remote - external, auth required: yes, token: no" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_command_reports_tools_and_readiness() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "local": vocode_settings.MCPStdioSourceSettings(
+                    command="uvx",
+                ),
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                ),
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    project.mcp.cache_tool_descriptors(
+        "local",
+        [
+            {
+                "name": "search_docs",
+                "description": "Search documentation",
+                "inputSchema": {"type": "object", "properties": {}},
+            }
+        ],
+    )
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp list")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "MCP tools:" in payload.text
+    assert "Source: local" in payload.text
+    assert "- search_docs (cached) - Search documentation" in payload.text
+    assert "Source: remote" in payload.text
+    assert (
+        "Tools: unavailable until authentication is configured and a session is started."
+        in payload.text
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_unknown_subcommand_reports_family_guidance() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/mcp sync")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Command error:" in payload.text
+    assert "Unknown subcommand 'sync' for /mcp." in payload.text
+    assert "Try: /mcp" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_login_and_logout_commands_manage_stored_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    async def _fake_login(source_name: str) -> None:
+        assert source_name == "remote"
+        await project.credentials.set_token("MCP_TOKEN_FAKE", "stored-token")
+
+    async def _fake_logout(source_name: str) -> None:
+        assert source_name == "remote"
+
+    monkeypatch.setattr(project.mcp, "login", _fake_login)
+    monkeypatch.setattr(project.mcp, "logout", _fake_logout)
+
+    handled_login = await server.on_ui_packet(
+        manager_proto.BasePacketEnvelope(
+            msg_id=1,
+            payload=manager_proto.UserInputPacket(
+                message=state.Message(
+                    role=models.Role.USER,
+                    text="/mcp login remote",
+                )
+            ),
+        )
+    )
+    assert handled_login is True
+
+    login_packets: list[manager_proto.BasePacket] = []
+    for _ in range(4):
+        response_envelope = await client_endpoint.recv()
+        login_packets.append(response_envelope.payload)
+
+    assert any(
+        isinstance(packet, manager_proto.TextMessagePacket)
+        and packet.format == manager_proto.TextMessageFormat.RICH_TEXT
+        and "MCP authentication successful for remote." in packet.text
+        for packet in login_packets
+    )
+
+    handled_logout = await server.on_ui_packet(
+        manager_proto.BasePacketEnvelope(
+            msg_id=2,
+            payload=manager_proto.UserInputPacket(
+                message=state.Message(
+                    role=models.Role.USER,
+                    text="/mcp logout remote",
+                )
+            ),
+        )
+    )
+    assert handled_logout is True
+
+    logout_envelope = await client_endpoint.recv()
+    logout_payload = logout_envelope.payload
+    assert isinstance(logout_payload, manager_proto.TextMessagePacket)
+    assert logout_payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Removed MCP authentication for remote." in logout_payload.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_cancel_command_stops_active_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp, credentials=project.credentials)
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    started = asyncio.Event()
+
+    async def _fake_login(source_name: str) -> None:
+        assert source_name == "remote"
+        started.set()
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(project.mcp, "login", _fake_login)
+
+    login_task = asyncio.create_task(
+        server.on_ui_packet(
+            manager_proto.BasePacketEnvelope(
+                msg_id=1,
+                payload=manager_proto.UserInputPacket(
+                    message=state.Message(
+                        role=models.Role.USER,
+                        text="/mcp login remote",
+                    )
+                ),
+            )
+        )
+    )
+    await started.wait()
+
+    handled = await server.on_ui_packet(
+        manager_proto.BasePacketEnvelope(
+            msg_id=2,
+            payload=manager_proto.UserInputPacket(
+                message=state.Message(
+                    role=models.Role.USER,
+                    text="/mcp cancel",
+                )
+            ),
+        )
+    )
+    assert handled is True
+
+    await login_task
+
+    packets: list[manager_proto.BasePacket] = []
+    for _ in range(4):
+        response_envelope = await client_endpoint.recv()
+        packets.append(response_envelope.payload)
+
+    assert any(
+        isinstance(packet, manager_proto.TextMessagePacket)
+        and packet.format == manager_proto.TextMessageFormat.RICH_TEXT
+        and "MCP authentication cancelled." in packet.text
         for packet in packets
     )
 
@@ -888,6 +1272,7 @@ async def test_repo_list_command_outputs_repos() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Repos:" in payload.text
     assert "main" in payload.text
     assert "other" in payload.text
@@ -916,6 +1301,7 @@ async def test_repo_without_subcommand_prints_help() -> None:
     payload = response_envelope.payload
     assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert "Repository" in payload.text
     assert "/repo list" in payload.text
 
@@ -1104,6 +1490,7 @@ async def test_branch_list_command_outputs_branches() -> None:
     response_envelope = await client_endpoint.recv()
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     assert str(branch.id) in payload.text
     assert "main" in payload.text
 

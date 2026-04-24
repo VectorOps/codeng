@@ -7,20 +7,27 @@ from vocode import settings as vocode_settings
 from vocode import state as vocode_state
 from vocode.tools import base as tools_base
 
+from . import output as command_output
 from .base import command, option
 
 
 USAGE = (
-    "Debug commands:\n\n"
-    "  /debug help\n"
-    "    Show this help message with examples.\n\n"
-    "Knowledge base (know) commands:\n\n"
-    "  /debug know search <query>\n"
-    "    Full-text search across indexed documents.\n\n"
-    "  /debug know summary <path> [more_paths...]\n"
-    "    Summarize one or more documents by path.\n\n"
-    "  /debug know list <glob-pattern>\n"
-    "    List documents matching a glob pattern (e.g. *.md).\n"
+    "Debug commands:",
+    [
+        ("/debug help", "Show this help message with examples."),
+        (
+            "/debug know search <query>",
+            "Full-text search across indexed documents.",
+        ),
+        (
+            "/debug know summary <path> [more_paths...]",
+            "Summarize one or more documents by path.",
+        ),
+        (
+            "/debug know list <glob-pattern>",
+            "List documents matching a glob pattern (e.g. *.md).",
+        ),
+    ],
 )
 
 
@@ -29,13 +36,16 @@ async def _run_know_tool(server, tool_name: str, payload: dict[str, Any]) -> Non
     tools = project.tools or {}
     tool = tools.get(tool_name)
     if tool is None:
-        await server.send_text_message(f"Know tool '{tool_name}' is not available.")
+        await command_output.send_warning(
+            server,
+            f"Know tool '{tool_name}' is not available.",
+        )
         return
 
     try:
         spec = vocode_settings.ToolSpec(name=tool_name)
     except Exception as exc:
-        await server.send_text_message(f"Failed to construct ToolSpec: {exc}")
+        await command_output.send_error(server, f"Failed to construct ToolSpec: {exc}")
         return
 
     try:
@@ -43,11 +53,14 @@ async def _run_know_tool(server, tool_name: str, payload: dict[str, Any]) -> Non
         tool_req = tools_base.ToolReq(execution=execution, spec=spec)
         resp = await tool.run(tool_req, payload)
     except Exception as exc:
-        await server.send_text_message(f"Know tool '{tool_name}' raised: {exc}")
+        await command_output.send_error(
+            server,
+            f"Know tool '{tool_name}' raised: {exc}",
+        )
         return
 
     if not resp or resp.text is None:
-        await server.send_text_message("(no output)")
+        await command_output.send_warning(server, "(no output)")
         return
 
     text = resp.text
@@ -70,17 +83,20 @@ async def _run_know_tool(server, tool_name: str, payload: dict[str, Any]) -> Non
 @option(0, "args", type=str, splat=True)
 async def _debug(server, args: list[str]) -> None:
     if not args or args[0] == "help":
-        await server.send_text_message(USAGE)
+        await command_output.send_rich(server, command_output.format_help(*USAGE))
         return
 
     domain = args[0]
 
     if domain != "know":
-        await server.send_text_message(USAGE)
+        await command_output.send_rich(server, command_output.format_help(*USAGE))
         return
 
     if len(args) < 2:
-        await server.send_text_message("Usage: /debug know <search|summary|list> ...")
+        await command_output.send_warning(
+            server,
+            "Usage: /debug know <search|summary|list> ...",
+        )
         return
 
     action = args[1]
@@ -88,7 +104,10 @@ async def _debug(server, args: list[str]) -> None:
 
     if action == "search":
         if not sub_args:
-            await server.send_text_message("Usage: /debug know search <query>")
+            await command_output.send_warning(
+                server,
+                "Usage: /debug know search <query>",
+            )
             return
         query = " ".join(sub_args)
         await _run_know_tool(
@@ -102,8 +121,9 @@ async def _debug(server, args: list[str]) -> None:
 
     if action in {"summary", "summarize"}:
         if not sub_args:
-            await server.send_text_message(
-                "Usage: /debug know summary <path> [more_paths...]"
+            await command_output.send_warning(
+                server,
+                "Usage: /debug know summary <path> [more_paths...]",
             )
             return
         await _run_know_tool(
@@ -117,7 +137,10 @@ async def _debug(server, args: list[str]) -> None:
 
     if action in {"list", "files"}:
         if not sub_args:
-            await server.send_text_message("Usage: /debug know list <glob-pattern>")
+            await command_output.send_warning(
+                server,
+                "Usage: /debug know list <glob-pattern>",
+            )
             return
         pattern = sub_args[0]
         await _run_know_tool(
@@ -129,4 +152,4 @@ async def _debug(server, args: list[str]) -> None:
         )
         return
 
-    await server.send_text_message(USAGE)
+    await command_output.send_rich(server, command_output.format_help(*USAGE))

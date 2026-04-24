@@ -1,11 +1,15 @@
 import asyncio
-from typing import AsyncIterator, Callable, Dict
+import sys
+from typing import AsyncIterator, Callable, Dict, Optional
 
 import pytest
 
 from vocode import models, state
 from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
+from vocode.mcp import models as mcp_models
+from vocode.mcp import service as mcp_service
+from vocode.mcp.service import MCPService
 from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
@@ -13,6 +17,7 @@ from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.runner import proto as runner_proto
 from vocode.runner.runner import RunEvent, Runner, RunnerStopped
 from vocode.tools import base as tools_base
+from vocode.tools.mcp_tool import MCPToolAdapter
 from tests.stub_project import StubProject
 
 
@@ -430,6 +435,23 @@ class RecordingTool:
         return None
 
 
+class ErroringTool:
+    def __init__(self, response: tools_base.ToolTextResponse) -> None:
+        self.response = response
+
+    async def run(self, req: tools_base.ToolReq, args: dict):
+        return self.response
+
+
+class ProtocolFailingTool:
+    async def run(self, req: tools_base.ToolReq, args: dict):
+        raise tools_base.ToolExecutionError(
+            "protocol failure",
+            error_type=tools_base.ToolExecutionErrorType.protocol,
+            payload={"source": "mcp"},
+        )
+
+
 class DummyWorkflow:
     def __init__(
         self,
@@ -442,6 +464,39 @@ class DummyWorkflow:
         self.graph = graph
         self.need_input = need_input
         self.need_input_prompt = need_input_prompt
+
+
+_RUNNER_MCP_SERVER = """
+import json
+import sys
+
+initialized = False
+
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get('method') == 'initialize':
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'protocolVersion': '2025-03-26',
+                'serverInfo': {'name': 'runner-mcp', 'version': '1.0.0'},
+                'capabilities': {'tools': {'listChanged': False}}
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+    elif msg.get('method') == 'notifications/initialized':
+        initialized = True
+    elif msg.get('method') == 'tools/list' and initialized:
+        sys.stdout.write(json.dumps({
+            'jsonrpc': '2.0',
+            'id': msg['id'],
+            'result': {
+                'tools': []
+            }
+        }) + '\\n')
+        sys.stdout.flush()
+"""
 
 
 @pytest.mark.asyncio
@@ -2177,6 +2232,250 @@ async def test_runner_uses_tool_spec_from_request_for_execution():
 
 
 @pytest.mark.asyncio
+async def test_runner_marks_tool_execution_error_response_as_failed() -> None:
+    project = StubProject()
+    project.tools["test-tool"] = ErroringTool(
+        tools_base.ToolTextResponse(
+            text="remote failure",
+            data={
+                "content": [{"type": "text", "text": "remote failure"}],
+                "isError": True,
+                "structuredContent": {"reason": "denied"},
+            },
+            is_error=True,
+        )
+    )
+
+    node = models.Node(
+        name="dummy",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-tool-execution-error",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    result = await runner._execute_tool_call(
+        state.ToolCallReq(
+            id="call-test-tool",
+            name="test-tool",
+            arguments={"x": 1},
+        )
+    )
+
+    assert result.kind == runner_proto.ToolExecResultKind.RESPONSE
+    response = result.response
+    assert response.status == state.ToolCallStatus.FAILED
+    assert response.result is not None
+    assert response.result["error_type"] == "execution"
+    assert response.result["isError"] is True
+    assert response.result["structuredContent"]["reason"] == "denied"
+    assert response.result["text"] == "remote failure"
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_tool_protocol_failure_as_failed() -> None:
+    project = StubProject()
+    project.tools["test-tool"] = ProtocolFailingTool()
+
+    node = models.Node(
+        name="dummy",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-tool-protocol-error",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    result = await runner._execute_tool_call(
+        state.ToolCallReq(
+            id="call-test-tool",
+            name="test-tool",
+            arguments={"x": 1},
+        )
+    )
+
+    assert result.kind == runner_proto.ToolExecResultKind.RESPONSE
+    response = result.response
+    assert response.status == state.ToolCallStatus.FAILED
+    assert response.result is not None
+    assert response.result["error_type"] == "protocol"
+    assert response.result["error"] == "protocol failure"
+    assert response.result["source"] == "mcp"
+
+
+@pytest.mark.asyncio
+async def test_runner_mcp_adapter_participates_in_confirmation_and_audit_flow() -> None:
+    project = StubProject()
+    calls: list[tuple[str, str, dict]] = []
+
+    class FakeMCPService:
+        async def start_workflow(
+            self,
+            workflow_name: str,
+            workflow,
+            workflow_run_id: Optional[str] = None,
+        ):
+            return mcp_service.MCPWorkflowSessionChange([], [])
+
+        async def finish_workflow(
+            self,
+            workflow_name: str,
+            keep_sessions: bool = False,
+            workflow_run_id: Optional[str] = None,
+        ):
+            return mcp_service.MCPWorkflowSessionChange([], [])
+
+        async def call_tool(self, source_name: str, tool_name: str, arguments: dict):
+            calls.append((source_name, tool_name, arguments))
+            return {
+                "content": [{"type": "text", "text": "mcp ok"}],
+                "structuredContent": {"source": "remote"},
+                "isError": False,
+            }
+
+    project.mcp = FakeMCPService()  # type: ignore[assignment]
+    project.tools["test-tool"] = MCPToolAdapter(
+        project,
+        mcp_models.MCPToolDescriptor(
+            source_name="remote",
+            tool_name="search",
+            description="Search docs",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        "test-tool",
+    )
+
+    node = models.Node(
+        name="tool-node",
+        type="tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-mcp-tool-audit", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    def handler(event: RunEvent) -> RunEventResp:
+        step = event.step
+        if (
+            step is not None
+            and step.type == state.StepType.TOOL_REQUEST
+            and step.message is not None
+            and step.message.tool_call_requests
+            and step.message.tool_call_requests[0].status
+            == state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+        ):
+            return RunEventResp(
+                resp_type=RunEventResponseType.APPROVE,
+                message=None,
+            )
+        return RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    events = await drive_runner(runner.run(), handler, ignore_non_step=False)
+
+    assert calls == [("remote", "search", {"x": 1})]
+    assert any(
+        event.stats is not None
+        and event.stats.status == state.RunnerStatus.WAITING_INPUT
+        for event in events
+    )
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.TOOL_REQUEST
+        and event.step.message is not None
+        and event.step.message.tool_call_requests
+        and event.step.message.tool_call_requests[0].status
+        == state.ToolCallReqStatus.COMPLETE
+        and event.step.message.tool_call_requests[0].handled_at is not None
+        and event.step.message.tool_call_responses
+        and event.step.message.tool_call_responses[0].result is not None
+        and event.step.message.tool_call_responses[0].result["structuredContent"][
+            "source"
+        ]
+        == "remote"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_mcp_adapter_protocol_failure_is_recorded_as_failed() -> None:
+    project = StubProject()
+
+    class FailingMCPService:
+        async def call_tool(self, source_name: str, tool_name: str, arguments: dict):
+            raise mcp_service.MCPServiceError("remote unavailable")
+
+    project.mcp = FailingMCPService()  # type: ignore[assignment]
+    project.tools["test-tool"] = MCPToolAdapter(
+        project,
+        mcp_models.MCPToolDescriptor(
+            source_name="remote",
+            tool_name="search",
+            description="Search docs",
+            input_schema={"type": "object", "properties": {}},
+        ),
+        "test-tool",
+    )
+
+    node = models.Node(
+        name="dummy",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-mcp-tool-protocol-error",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=None,
+    )
+
+    result = await runner._execute_tool_call(
+        state.ToolCallReq(
+            id="call-test-tool",
+            name="test-tool",
+            arguments={"x": 1},
+        )
+    )
+
+    assert result.kind == runner_proto.ToolExecResultKind.RESPONSE
+    response = result.response
+    assert response.status == state.ToolCallStatus.FAILED
+    assert response.result is not None
+    assert response.result["error_type"] == "protocol"
+    assert response.result["error"] == "remote unavailable"
+
+
+@pytest.mark.asyncio
 async def test_input_node_prompts_and_returns_user_message_as_output():
     node = InputNode(
         name="input-node",
@@ -2979,3 +3278,182 @@ async def test_runner_stop_preserves_managed_input_queue() -> None:
     )
 
     assert accepted_after_stop is False
+
+
+@pytest.mark.asyncio
+async def test_runner_initializes_and_finishes_workflow_scoped_mcp_sessions() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "wf_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                )
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp)
+
+    node = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-runner-mcp", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(role=models.Role.USER, text="start"),
+    )
+
+    assert project.mcp.list_sessions() == {}
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert project.mcp.list_sessions() == {}
+
+
+@pytest.mark.asyncio
+async def test_runner_stop_and_resume_reuses_workflow_scoped_mcp_session() -> None:
+    settings = vocode_settings.Settings(
+        workflows={
+            "wf-runner-mcp": vocode_settings.WorkflowConfig(
+                mcp=vocode_settings.MCPWorkflowSettings(
+                    tools=[vocode_settings.MCPToolSelector(source="wf_local", tool="*")]
+                )
+            )
+        },
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "wf_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                )
+            }
+        ),
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp)
+
+    node = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-runner-mcp", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(role=models.Role.USER, text="start"),
+    )
+
+    agen = runner.run()
+    while True:
+        event = await agen.__anext__()
+        if event.step is not None:
+            break
+
+    session_before_stop = project.mcp.get_session("wf_local")
+    assert session_before_stop is not None
+
+    stop_event = await agen.athrow(RunnerStopped())
+
+    assert stop_event.stats is not None
+    assert stop_event.stats.status == state.RunnerStatus.STOPPED
+    assert project.mcp.get_session("wf_local") is session_before_stop
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert project.mcp.get_session("wf_local") is None
+
+
+@pytest.mark.asyncio
+async def test_runner_refreshes_mcp_tools_once_when_workflow_starts() -> None:
+    settings = vocode_settings.Settings(
+        workflows={
+            "wf-runner-mcp": vocode_settings.WorkflowConfig(
+                mcp=vocode_settings.MCPWorkflowSettings(
+                    tools=[vocode_settings.MCPToolSelector(source="wf_local", tool="*")]
+                )
+            )
+        },
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "wf_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                )
+            }
+        ),
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp)
+
+    refresh_calls: list[str] = []
+    original_refresh_tools = project.mcp.refresh_tools
+
+    async def _refresh_tools(source_name: str):
+        refresh_calls.append(source_name)
+        return await original_refresh_tools(source_name)
+
+    project.mcp.refresh_tools = _refresh_tools  # type: ignore[method-assign]
+
+    registry_refresh_calls = {"count": 0}
+
+    def _refresh_registry() -> None:
+        registry_refresh_calls["count"] += 1
+
+    project.refresh_tools_from_registry = _refresh_registry
+
+    node = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-runner-mcp", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(role=models.Role.USER, text="start"),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert refresh_calls == ["wf_local"]
+    assert registry_refresh_calls["count"] == 2

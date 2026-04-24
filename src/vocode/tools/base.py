@@ -15,9 +15,29 @@ class ToolResponseType(str, Enum):
     start_workflow = "start_workflow"
 
 
+class ToolExecutionErrorType(str, Enum):
+    protocol = "protocol"
+    execution = "execution"
+
+
 class ToolTextResponse(BaseModel):
     type: ToolResponseType = Field(default=ToolResponseType.text)
     text: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+    is_error: bool = False
+
+
+class ToolExecutionError(Exception):
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: ToolExecutionErrorType = ToolExecutionErrorType.execution,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_type = error_type
+        self.payload = payload
 
 
 class ToolStartWorkflowResponse(BaseModel):
@@ -38,6 +58,7 @@ ToolResponse = Annotated[
 class ToolReq(BaseModel):
     execution: WorkflowExecution
     spec: ToolSpec
+
 
 # Global registry of tool name -> tool instance
 _registry: Dict[str, Type["BaseTool"]] = {}

@@ -112,6 +112,17 @@ class Runner:
             raw_result = await tool.run(tool_req, req.arguments)
         except RunnerStopped:
             raise
+        except tools_base.ToolExecutionError as exc:
+            result = dict(exc.payload or {})
+            result.setdefault("error", str(exc))
+            result["error_type"] = exc.error_type.value
+            resp = state.ToolCallResp(
+                id=req.id,
+                status=state.ToolCallStatus.FAILED,
+                name=req.name,
+                result=result,
+            )
+            return runner_proto.ToolExecResponse(response=resp)
         except Exception as exc:
             # TODO: send exception back?
             resp = state.ToolCallResp(
@@ -145,10 +156,22 @@ class Runner:
                 initial_message=initial_message,
             )
 
-        result_data = raw_result.model_dump()
+        if raw_result.data is not None:
+            result_data = dict(raw_result.data)
+            if raw_result.text is not None:
+                result_data.setdefault("text", raw_result.text)
+            if raw_result.is_error:
+                result_data["error_type"] = (
+                    tools_base.ToolExecutionErrorType.execution.value
+                )
+        else:
+            result_data = raw_result.model_dump(exclude_none=True)
+        status = state.ToolCallStatus.COMPLETED
+        if raw_result.is_error:
+            status = state.ToolCallStatus.FAILED
         resp = state.ToolCallResp(
             id=req.id,
-            status=state.ToolCallStatus.COMPLETED,
+            status=status,
             name=req.name,
             result=result_data,
         )
@@ -520,12 +543,21 @@ class Runner:
         return self._handle_run_event_response(req, managed_resp)
 
     async def _init_executors(self) -> None:
+        await self.project.on_workflow_started(
+            self.workflow.name,
+            workflow_run_id=str(self.execution.id),
+        )
         for executor in self._executors.values():
             await executor.init()
 
-    async def _shutdown_executors(self) -> None:
+    async def _shutdown_executors(self, keep_mcp_sessions: bool = False) -> None:
         for executor in self._executors.values():
             await executor.shutdown()
+        await self.project.on_workflow_finished(
+            self.workflow.name,
+            keep_mcp_sessions,
+            workflow_run_id=str(self.execution.id),
+        )
 
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
@@ -1191,7 +1223,9 @@ class Runner:
             return
         finally:
             await self.project.input_manager.reset()
-            await self._shutdown_executors()
+            await self._shutdown_executors(
+                self.status == state.RunnerStatus.STOPPED,
+            )
 
     def set_status(
         self,

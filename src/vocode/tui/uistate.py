@@ -66,6 +66,7 @@ class TUIState:
         on_stop: typing.Callable[[], typing.Awaitable[None]] | None = None,
         on_eof: typing.Callable[[], typing.Awaitable[None]] | None = None,
         tui_options: vocode_settings.TUIOptions | None = None,
+        persist_history: bool = False,
     ) -> None:
         self._on_input = on_input
         self._on_autocomplete_request = on_autocomplete_request
@@ -111,7 +112,13 @@ class TUIState:
         )
 
         self._input_component = input_component
-        self._history_manager = tui_history.HistoryManager()
+        history_limit = 10000
+        if tui_options is not None:
+            history_limit = tui_options.history_limit
+        self._history_manager = tui_history.HistoryManager(
+            max_entries=history_limit,
+            persist_history=persist_history,
+        )
         self._input_keymap = self._create_input_keymap()
         self._step_components: dict[
             str, tui_step_output_component.StepOutputComponent
@@ -780,6 +787,7 @@ class TUIState:
         self._terminal._handle_input_event(event)
 
     async def start(self) -> None:
+        await self._history_manager.start()
         await self._terminal.start()
         if self._input_handler is not None and self._input_task is None:
             loop = asyncio.get_running_loop()
@@ -796,6 +804,7 @@ class TUIState:
                 await task
             except asyncio.CancelledError:
                 pass
+        await self._history_manager.stop()
         await self._terminal.stop()
         self._terminal.console.control(rich_control.Control.show_cursor(True))
 

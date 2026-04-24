@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from vocode import models, state
 
+from . import output as command_output
 from .base import CommandError, command, option
 
 
@@ -63,8 +64,9 @@ async def _aa(server, args: list[str]) -> None:
 
     if added:
         unique = sorted(set(added))
-        await server.send_text_message(
-            "Session auto-approve enabled for: " + ", ".join(unique)
+        await command_output.send_success(
+            server,
+            "Session auto-approve enabled for: " + ", ".join(unique),
         )
 
 
@@ -82,9 +84,9 @@ async def _autoapprove(server, subcommand: str, args: list[str]) -> None:
         if args:
             raise CommandError("Usage: /autoapprove list")
         if not st.policies_by_tool:
-            await server.send_text_message("No session auto-approve rules.")
+            await command_output.send_warning(server, "No session auto-approve rules.")
             return
-        lines: list[str] = ["Session auto-approve rules:"]
+        lines: list[str] = [command_output.heading("Session auto-approve rules")]
         for name in sorted(st.policies_by_tool.keys()):
             policy = st.policies_by_tool[name]
             if policy.approve_all:
@@ -95,7 +97,7 @@ async def _autoapprove(server, subcommand: str, args: list[str]) -> None:
                 lines.append(f"  - {name}:")
                 for rule in policy.rules:
                     lines.append(f"      - {rule.key} ~= {rule.pattern}")
-        await server.send_text_message("\n".join(lines))
+        await command_output.send_rich(server, "\n".join(lines))
         return
 
     if subcommand == "add":
@@ -106,13 +108,15 @@ async def _autoapprove(server, subcommand: str, args: list[str]) -> None:
         tool_name = args[0]
         if len(args) == 1:
             st.add_tool(tool_name, approve_all=True)
-            await server.send_text_message(
-                f"Session auto-approve enabled for tool: {tool_name}"
+            await command_output.send_success(
+                server,
+                f"Session auto-approve enabled for tool: {tool_name}",
             )
             return
         st.add_rule(tool_name, key=args[1], pattern=args[2])
-        await server.send_text_message(
-            f"Session auto-approve rule added for tool: {tool_name}"
+        await command_output.send_success(
+            server,
+            f"Session auto-approve rule added for tool: {tool_name}",
         )
         return
 
@@ -122,12 +126,14 @@ async def _autoapprove(server, subcommand: str, args: list[str]) -> None:
         tool_name = args[0]
         removed = st.remove_tool(tool_name)
         if removed:
-            await server.send_text_message(
-                f"Session auto-approve disabled for tool: {tool_name}"
+            await command_output.send_success(
+                server,
+                f"Session auto-approve disabled for tool: {tool_name}",
             )
         else:
-            await server.send_text_message(
-                f"No session auto-approve rule found for tool: {tool_name}"
+            await command_output.send_warning(
+                server,
+                f"No session auto-approve rule found for tool: {tool_name}",
             )
         return
 
@@ -135,7 +141,10 @@ async def _autoapprove(server, subcommand: str, args: list[str]) -> None:
         if args:
             raise CommandError("Usage: /autoapprove clear")
         st.clear()
-        await server.send_text_message("Session auto-approve rules cleared.")
+        await command_output.send_success(
+            server,
+            "Session auto-approve rules cleared.",
+        )
         return
 
     raise CommandError("Usage: /autoapprove <list|add|remove|clear>")

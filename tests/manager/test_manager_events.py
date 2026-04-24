@@ -19,6 +19,7 @@ from vocode.runner.proto import (
     RunEventResponseType,
 )
 from vocode.runner.runner import Runner
+from tests.stub_project import StubProject
 
 
 @ExecutorFactory.register("manager-test")
@@ -140,21 +141,11 @@ class DummyWorkflow:
         self.need_input_prompt = need_input_prompt
 
 
-class FakeProject:
+class FakeProject(StubProject):
     def __init__(self) -> None:
-        self.current_workflow: str | None = None
+        super().__init__()
         self.settings = None
-        self.tools: dict[str, object] = {}
-        self.history = HistoryManager()
-        self.input_manager = InputManager()
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
-
-    async def start(self) -> None:
-        return None
-
-    async def shutdown(self) -> None:
-        await self.input_manager.reset_all()
-        return None
 
 
 @pytest.mark.asyncio

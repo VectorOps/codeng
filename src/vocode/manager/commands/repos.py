@@ -2,23 +2,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vocode.manager import proto as manager_proto
-
+from . import output as command_output
 from .base import CommandError, command, option
 
 
 USAGE = "Usage: /repo <list|add|refresh|refresh_all> [args]"
 
 REPO_HELP = (
-    "Repository (know) commands:\n\n"
-    "  /repo list\n"
-    "    List repositories associated with the current know project.\n\n"
-    "  /repo add <name> <path>\n"
-    "    Add a repository and index it.\n\n"
-    "  /repo refresh <name>\n"
-    "    Refresh (re-index) the given repository.\n\n"
-    "  /repo refresh_all\n"
-    "    Refresh (re-index) all repositories.\n"
+    "Repository (know) commands:",
+    [
+        (
+            "/repo list",
+            "List repositories associated with the current know project.",
+        ),
+        ("/repo add <name> <path>", "Add a repository and index it."),
+        (
+            "/repo refresh <name>",
+            "Refresh (re-index) the given repository.",
+        ),
+        ("/repo refresh_all", "Refresh (re-index) all repositories."),
+    ],
 )
 
 
@@ -49,13 +52,13 @@ async def _send_repos_list(server) -> None:
         await server.send_text_message("No repos found.")
         return
 
-    lines: list[str] = ["Repos:"]
+    lines: list[str] = [command_output.heading("Repos:")]
     for repo in sorted(repos, key=lambda r: r.name):
         root = repo.root_path or ""
         suffix = f" - {root}" if root else ""
         lines.append(f"  - {repo.name}{suffix}")
 
-    await server.send_text_message("\n".join(lines))
+    await command_output.send_rich(server, "\n".join(lines))
 
 
 @command(
@@ -66,7 +69,7 @@ async def _send_repos_list(server) -> None:
 @option(0, "args", type=str, splat=True)
 async def _repo(server, args: list[str]) -> None:
     if not args:
-        await server.send_text_message(REPO_HELP)
+        await command_output.send_rich(server, command_output.format_help(*REPO_HELP))
         return
 
     sub = args[0]
@@ -87,7 +90,7 @@ async def _repo(server, args: list[str]) -> None:
         pm = server.manager.project.know.pm
         repo = await pm.add_repo_path(name, path)
         await server.refresh_know_repo_with_progress(repo)
-        await server.send_text_message(f"Repo added: {name} -> {path}")
+        await command_output.send_success(server, f"Repo added: {name} -> {path}")
         return
 
     if sub == "refresh":
@@ -100,7 +103,7 @@ async def _repo(server, args: list[str]) -> None:
         if repo is None:
             raise CommandError(f"Unknown repo '{name}'.")
         await server.refresh_know_repo_with_progress(repo)
-        await server.send_text_message(f"Repo refreshed: {name}")
+        await command_output.send_success(server, f"Repo refreshed: {name}")
         return
 
     if sub in {"refresh_all", "refresh-all"}:
@@ -108,7 +111,7 @@ async def _repo(server, args: list[str]) -> None:
             raise CommandError("Usage: /repo refresh_all")
         _ensure_know_enabled(server)
         await server.refresh_know_all_with_progress()
-        await server.send_text_message("All repos refreshed.")
+        await command_output.send_success(server, "All repos refreshed.")
         return
 
     raise CommandError(USAGE)

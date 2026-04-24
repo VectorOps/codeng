@@ -51,7 +51,16 @@ def test_apply_patch_formatter_renders_output_unstyled() -> None:
 
     formatter = apply_patch.ApplyPatchToolCallFormatter()
 
-    result = "Applied patch successfully.\nAdded file: foo.py"
+    result = "\n".join(
+        [
+            "Applied patch successfully.",
+            "Added file: foo.py",
+            "Updated file: bar.py",
+            "Deleted file: baz.py",
+            "Renamed file: qux.py",
+            "Extra line that should be hidden",
+        ]
+    )
 
     rendered = formatter.render(
         terminal=term,
@@ -75,6 +84,9 @@ def test_apply_patch_formatter_renders_output_unstyled() -> None:
     assert "Apply Patch" in output
     assert "Applied patch successfully." in output
     assert "Added file: foo.py" in output
+    assert "Deleted file: baz.py" in output
+    assert "Renamed file: qux.py" in output
+    assert "Extra line that should be hidden" in output
 
 
 def test_apply_patch_formatter_renders_output_from_json_payload() -> None:

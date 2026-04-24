@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import json
+
 from vocode.tui import history as tui_history
 
 
@@ -71,3 +74,37 @@ def test_history_preserves_edits_after_returning_to_buffer() -> None:
 
     again = manager.navigate_previous("buffer")
     assert again == "two edited"
+
+
+def test_history_loads_from_disk_and_trims_to_limit(tmp_path) -> None:
+    path = tmp_path / "history.json"
+    path.write_text(json.dumps(["one", "two", "three"]), encoding="utf-8")
+
+    manager = tui_history.HistoryManager(
+        max_entries=2,
+        history_path=path,
+        persist_history=True,
+    )
+
+    assert manager.entries == ("two", "three")
+
+
+def test_history_save_persists_entries(tmp_path) -> None:
+    path = tmp_path / "history.json"
+    manager = tui_history.HistoryManager(history_path=path, persist_history=True)
+    manager.add("one")
+    manager.add("two")
+
+    manager.save()
+
+    assert json.loads(path.read_text(encoding="utf-8")) == ["one", "two"]
+
+
+def test_history_stop_flushes_dirty_entries(tmp_path) -> None:
+    path = tmp_path / "history.json"
+    manager = tui_history.HistoryManager(history_path=path, persist_history=True)
+    manager.add("one")
+
+    asyncio.run(manager.stop())
+
+    assert json.loads(path.read_text(encoding="utf-8")) == ["one"]

@@ -6,6 +6,7 @@ import typing
 from pydantic import BaseModel, ValidationError
 
 from .. import proto as manager_proto
+from . import output as command_output
 
 
 if typing.TYPE_CHECKING:
@@ -257,10 +258,10 @@ class CommandManager:
         return name, args, raw_args
 
     async def _send_unknown_command(self, server: UIServer, name: str) -> None:
-        await server.send_text_message(f"Unknown command: /{name}")
+        await command_output.send_warning(server, f"Unknown command: /{name}")
 
     async def _send_command_error(self, server: UIServer, message: str) -> None:
-        await server.send_text_message(f"Command error: {message}")
+        await command_output.send_error(server, message)
 
 
 def option(

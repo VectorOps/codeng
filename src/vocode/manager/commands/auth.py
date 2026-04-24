@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from vocode.manager import proto as manager_proto
-from vocode.connect_auth import AuthenticationCancelledError
+from vocode.auth import AuthenticationCancelledError
 
+from . import output as command_output
 from .base import CommandError, command, option
 
 
@@ -27,7 +28,7 @@ async def _auth(server, action: str, args: list[str]) -> None:
         cancelled = await session.cancel()
         if not cancelled:
             raise CommandError("No authentication is currently in progress.")
-        await server.send_text_message("Authentication cancelled.")
+        await command_output.send_success(server, "Authentication cancelled.")
         return
 
     if action not in AUTH_SUBCOMMANDS:
@@ -45,12 +46,14 @@ async def _auth(server, action: str, args: list[str]) -> None:
     if action == "status":
         status = await credentials.authorization_status(provider)
         if status.is_authorized:
-            await server.send_text_message(
-                f"Authentication is configured for {provider}."
+            await command_output.send_success(
+                server,
+                f"Authentication is configured for {provider}.",
             )
         else:
-            await server.send_text_message(
-                f"Authentication is not configured for {provider}."
+            await command_output.send_warning(
+                server,
+                f"Authentication is not configured for {provider}.",
             )
         return
 
@@ -61,12 +64,18 @@ async def _auth(server, action: str, args: list[str]) -> None:
                 f"No active authorization for {provider}. Run /auth login {provider}."
             )
         await credentials.resolve(provider)
-        await server.send_text_message(f"Authentication verified for {provider}.")
+        await command_output.send_success(
+            server,
+            f"Authentication verified for {provider}.",
+        )
         return
 
     if action == "logout":
         await credentials.logout(provider)
-        await server.send_text_message(f"Authentication removed for {provider}.")
+        await command_output.send_success(
+            server,
+            f"Authentication removed for {provider}.",
+        )
         return
 
     if action != "login":
@@ -96,10 +105,13 @@ async def _auth(server, action: str, args: list[str]) -> None:
     try:
         await session.run()
     except AuthenticationCancelledError:
-        await server.send_text_message("Authentication cancelled.")
+        await command_output.send_success(server, "Authentication cancelled.")
         return
     finally:
         server._auth_session = None
         await server._emit_progress_end(progress_id=auth_progress_id)
 
-    await server.send_text_message(f"Authentication successful for {provider}.")
+    await command_output.send_success(
+        server,
+        f"Authentication successful for {provider}.",
+    )

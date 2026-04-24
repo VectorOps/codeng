@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from vocode import settings as vocode_settings
 from vocode.manager import (
     autocomplete_providers as _autocomplete_providers,
 )  # noqa: F401
@@ -98,3 +99,45 @@ async def test_auth_autocomplete_provider_suggests_provider_after_subcommand() -
     items = await server._autocomplete.get_completions(server, "/auth login ch", 0, 14)
 
     assert any(item.insert_text == "chatgpt" for item in items)
+
+
+@pytest.mark.asyncio
+async def test_mcp_autocomplete_provider_suggests_subcommands_and_sources() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "local": vocode_settings.MCPStdioSourceSettings(
+                    command="uvx",
+                ),
+                "remote": vocode_settings.MCPExternalSourceSettings(
+                    url="https://example.test/mcp",
+                    auth=vocode_settings.MCPAuthSettings(
+                        mode="preregistered",
+                        client_id="client-123",
+                        client_secret_env="MCP_SECRET",
+                    ),
+                ),
+            }
+        )
+    )
+    server_endpoint, _ = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=StubProject(settings=settings), endpoint=server_endpoint)
+
+    subcommands = await server._autocomplete.get_completions(server, "/mcp l", 0, 6)
+    sources = await server._autocomplete.get_completions(
+        server,
+        "/mcp login re",
+        0,
+        13,
+    )
+    status_sources = await server._autocomplete.get_completions(
+        server,
+        "/mcp status l",
+        0,
+        13,
+    )
+
+    assert any(item.insert_text == "login " for item in subcommands)
+    assert any(item.insert_text == "remote" for item in sources)
+    assert all(item.insert_text != "local" for item in sources)
+    assert any(item.insert_text == "local" for item in status_sources)
