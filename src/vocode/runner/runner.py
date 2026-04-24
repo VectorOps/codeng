@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional, Dict, AsyncIterator
 
 from vocode import models, state
@@ -11,6 +12,7 @@ from vocode.lib import message_helpers, validators
 from .base import BaseExecutor, ExecutorFactory, ExecutorInput
 from .proto import RunEventReq, RunEventResp, RunEventResponseType
 from . import proto as runner_proto
+from . import tool_orchestrator as runner_tool_orchestrator
 
 
 RunEvent = RunEventReq
@@ -43,6 +45,11 @@ class Runner:
             n.name: ExecutorFactory.create_for_node(n, project=self.project)
             for n in self.workflow.graph.nodes
         }
+        self._tool_orchestrator = runner_tool_orchestrator.ToolCallOrchestrator(
+            get_tool_spec_for_request=self._get_tool_spec_for_request,
+            is_tool_call_auto_approved=self._is_tool_call_auto_approved,
+            create_tool_prompt_step=self._create_tool_prompt_step,
+        )
         self.project.state_manager.track(self.execution)
 
     def _touch_execution(self) -> None:
@@ -242,11 +249,9 @@ class Runner:
         self,
         approved: list[state.ToolCallReq],
     ) -> list[runner_proto.ToolExecResult]:
-        results: list[runner_proto.ToolExecResult] = []
-        for req in approved:
-            result = await self._execute_tool_call(req)
-            results.append(result)
-        return results
+        return list(
+            await asyncio.gather(*(self._execute_tool_call(req) for req in approved))
+        )
 
     def _create_transition_error_event(
         self,
@@ -809,30 +814,29 @@ class Runner:
 
                 msg = last_complete_step.message
                 if msg is not None and msg.tool_call_requests:
-                    approved: list[state.ToolCallReq] = []
+                    tool_round_req = runner_tool_orchestrator.ToolRoundRequest(
+                        workflow_execution=self.execution,
+                        node_execution=current_execution,
+                        assistant_step=last_complete_step,
+                        assistant_message=msg,
+                        tool_calls=list(msg.tool_call_requests),
+                        llm_usage=(
+                            last_complete_step.llm_usage
+                            if last_complete_step is not None
+                            else None
+                        ),
+                    )
+                    plan = self._tool_orchestrator.build_plan(tool_round_req)
+                    approved: list[runner_tool_orchestrator.ToolCallPlanItem] = []
                     tool_responses: list[state.ToolCallResp] = []
 
-                    for req in msg.tool_call_requests:
-                        is_auto_approved = self._is_tool_call_auto_approved(req)
-                        if is_auto_approved:
-                            req.auto_approved = True
-                            req.status = state.ToolCallReqStatus.PENDING_EXECUTION
-                        else:
-                            req.status = state.ToolCallReqStatus.REQUIRES_CONFIRMATION
-
+                    for plan_item in plan:
+                        req = plan_item.request
                         while True:
-                            persisted_prompt = self._create_tool_prompt_step(
-                                current_execution,
-                                req,
-                                (
-                                    last_complete_step.llm_usage
-                                    if last_complete_step is not None
-                                    else None
-                                ),
-                            )
+                            persisted_prompt = plan_item.tool_step
                             tool_request_steps[req.id] = persisted_prompt
 
-                            if not is_auto_approved:
+                            if not plan_item.auto_approved:
                                 waiting_event = self.set_status(
                                     state.RunnerStatus.WAITING_INPUT,
                                     current_execution=current_execution,
@@ -846,8 +850,8 @@ class Runner:
                             )
                             resp_event = yield req_event
 
-                            if is_auto_approved:
-                                approved.append(req)
+                            if plan_item.auto_approved:
+                                approved.append(plan_item)
                                 break
 
                             response_step = await self._wait_for_managed_input_response(
@@ -859,31 +863,29 @@ class Runner:
                             if response_event is not None:
                                 _ = yield response_event
 
-                            before_len = len(approved)
-                            if not is_auto_approved:
-                                resume_status_event = self._set_running_after_input(
-                                    current_execution
-                                )
-                                if resume_status_event is not None:
-                                    _ = yield resume_status_event
-                            handled = self._process_tool_approval_response(
-                                req,
+                            resume_status_event = self._set_running_after_input(
+                                current_execution
+                            )
+                            if resume_status_event is not None:
+                                _ = yield resume_status_event
+                            handled = self._tool_orchestrator.process_approval_response(
+                                plan_item,
                                 response_step,
-                                approved,
                                 tool_responses,
                             )
                             if handled:
-                                if len(approved) > before_len:
+                                if (
+                                    req.status
+                                    == state.ToolCallReqStatus.PENDING_EXECUTION
+                                ):
+                                    approved.append(plan_item)
                                     break
-                                persisted_prompt.is_final = True
                                 break
 
                     if approved:
-                        for req in approved:
-                            tool_step = tool_request_steps.get(req.id)
-                            if tool_step is None:
-                                continue
-                            req.status = state.ToolCallReqStatus.EXECUTING
+                        for tool_step in self._tool_orchestrator.mark_executing(
+                            approved
+                        ):
                             status_event = RunEventReq(
                                 kind=runner_proto.RunEventReqKind.STEP,
                                 execution=self.execution,
@@ -891,77 +893,77 @@ class Runner:
                             )
                             _ = yield status_event
 
-                        exec_results = await self._execute_approved_tool_calls(approved)
-                        for tool_req, exec_result in zip(approved, exec_results):
+                        exec_results = await self._tool_orchestrator.execute_plan(
+                            approved,
+                            self._execute_approved_tool_calls,
+                        )
+                        for plan_item, exec_result in zip(approved, exec_results):
+                            tool_req = plan_item.request
                             if (
                                 exec_result.kind
                                 == runner_proto.ToolExecResultKind.RESPONSE
                             ):
                                 tool_responses.append(exec_result.response)  # type: ignore[attr-defined]
-                            elif (
+                                continue
+                            if (
                                 exec_result.kind
-                                == runner_proto.ToolExecResultKind.START_WORKFLOW
+                                != runner_proto.ToolExecResultKind.START_WORKFLOW
                             ):
-                                start_payload = runner_proto.RunEventStartWorkflow(
-                                    workflow_name=exec_result.workflow_name,  # type: ignore[attr-defined]
-                                    initial_message=exec_result.initial_message,  # type: ignore[attr-defined]
-                                )
-                                event = RunEventReq(
-                                    kind=runner_proto.RunEventReqKind.START_WORKFLOW,
-                                    execution=self.execution,
-                                    start_workflow=start_payload,
-                                )
-                                child_final = yield event
-                                if child_final is None or child_final.message is None:
-                                    tool_responses.append(
-                                        state.ToolCallResp(
-                                            id=tool_req.id,
-                                            status=state.ToolCallStatus.FAILED,
-                                            name=tool_req.name,
-                                            result={
-                                                "error": (
-                                                    "Subagent did not return a message."
-                                                )
-                                            },
-                                        )
-                                    )
-                                    continue
+                                continue
 
-                                child_message = child_final.message
-                                if child_message.role == models.Role.SYSTEM:
-                                    tool_responses.append(
-                                        state.ToolCallResp(
-                                            id=tool_req.id,
-                                            status=state.ToolCallStatus.FAILED,
-                                            name=tool_req.name,
-                                            result={
-                                                "agent_name": start_payload.workflow_name,
-                                                "error": child_message.text,
-                                            },
-                                        )
-                                    )
-                                    continue
-
+                            start_payload = runner_proto.RunEventStartWorkflow(
+                                workflow_name=exec_result.workflow_name,  # type: ignore[attr-defined]
+                                initial_message=exec_result.initial_message,  # type: ignore[attr-defined]
+                            )
+                            event = RunEventReq(
+                                kind=runner_proto.RunEventReqKind.START_WORKFLOW,
+                                execution=self.execution,
+                                start_workflow=start_payload,
+                            )
+                            child_final = yield event
+                            if child_final is None or child_final.message is None:
                                 tool_responses.append(
                                     state.ToolCallResp(
                                         id=tool_req.id,
-                                        status=state.ToolCallStatus.COMPLETED,
+                                        status=state.ToolCallStatus.FAILED,
                                         name=tool_req.name,
                                         result={
-                                            "agent_name": start_payload.workflow_name,
-                                            "response": child_message.text,
+                                            "error": "Subagent did not return a message."
                                         },
                                     )
                                 )
                                 continue
 
-                        for req in approved:
-                            tool_step = tool_request_steps.get(req.id)
-                            if tool_step is None:
+                            child_message = child_final.message
+                            if child_message.role == models.Role.SYSTEM:
+                                tool_responses.append(
+                                    state.ToolCallResp(
+                                        id=tool_req.id,
+                                        status=state.ToolCallStatus.FAILED,
+                                        name=tool_req.name,
+                                        result={
+                                            "agent_name": start_payload.workflow_name,
+                                            "error": child_message.text,
+                                        },
+                                    )
+                                )
                                 continue
-                            req.status = state.ToolCallReqStatus.COMPLETE
-                            req.handled_at = utcnow()
-                            tool_step.is_final = True
+
+                            tool_responses.append(
+                                state.ToolCallResp(
+                                    id=tool_req.id,
+                                    status=state.ToolCallStatus.COMPLETED,
+                                    name=tool_req.name,
+                                    result={
+                                        "agent_name": start_payload.workflow_name,
+                                        "response": child_message.text,
+                                    },
+                                )
+                            )
+
+                        for tool_step in self._tool_orchestrator.mark_complete(
+                            approved
+                        ):
                             status_event = RunEventReq(
                                 kind=runner_proto.RunEventReqKind.STEP,
                                 execution=self.execution,
@@ -970,28 +972,18 @@ class Runner:
                             _ = yield status_event
 
                     if tool_responses:
-                        msg.tool_call_responses = list(tool_responses)
+                        finalized_round = self._tool_orchestrator.finalize_round(
+                            tool_round_req,
+                            plan,
+                            tool_responses,
+                        )
 
-                        resp_by_id: dict[str, list[state.ToolCallResp]] = {}
-                        for resp in tool_responses:
-                            resp_list = resp_by_id.get(resp.id)
-                            if resp_list is None:
-                                resp_list = []
-                                resp_by_id[resp.id] = resp_list
-                            resp_list.append(resp)
-
-                        for req in msg.tool_call_requests:
-                            per_req = resp_by_id.get(req.id)
-                            if per_req is None:
-                                continue
-                            tool_step = tool_request_steps.get(req.id)
-                            if tool_step is None:
-                                continue
+                        for tool_step in finalized_round.tool_steps:
                             tool_message = tool_step.message
-                            if tool_message is None:
-                                continue
-                            tool_message.tool_call_responses = list(per_req)
-                            self._history.upsert_message(self.execution, tool_message)
+                            if tool_message is not None:
+                                self._history.upsert_message(
+                                    self.execution, tool_message
+                                )
                             persisted_tool_step = self._persist_step(tool_step)
                             tool_event = RunEventReq(
                                 kind=runner_proto.RunEventReqKind.STEP,
@@ -1000,8 +992,13 @@ class Runner:
                             )
                             _ = yield tool_event
 
-                        self._history.upsert_message(self.execution, msg)
-                        persisted_step = self._persist_step(last_complete_step)
+                        self._history.upsert_message(
+                            self.execution,
+                            finalized_round.assistant_message,
+                        )
+                        persisted_step = self._persist_step(
+                            finalized_round.assistant_step
+                        )
                         event = RunEventReq(
                             kind=runner_proto.RunEventReqKind.STEP,
                             execution=self.execution,

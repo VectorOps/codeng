@@ -245,6 +245,56 @@ class ToolPromptExecutor(BaseExecutor):
         yield step
 
 
+@ExecutorFactory.register("multi-tool-prompt")
+class MultiToolPromptExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        execution = inp.execution
+        has_tool_result = False
+        for existing_step in execution.iter_steps():
+            if (
+                existing_step.message is not None
+                and existing_step.message.tool_call_responses
+            ):
+                has_tool_result = True
+                break
+        if not has_tool_result:
+            tool_reqs = [
+                state.ToolCallReq(
+                    id="call-test-tool-a",
+                    name="test-tool-a",
+                    arguments={"x": 1},
+                ),
+                state.ToolCallReq(
+                    id="call-test-tool-b",
+                    name="test-tool-b",
+                    arguments={"x": 2},
+                ),
+            ]
+            msg = state.Message(
+                role=models.Role.ASSISTANT,
+                text="with tools",
+                tool_call_requests=tool_reqs,
+            )
+        else:
+            msg = state.Message(
+                role=models.Role.ASSISTANT,
+                text="after tools",
+            )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
 @ExecutorFactory.register("reject-once")
 class RejectOnceExecutor(BaseExecutor):
     def __init__(self, config: models.Node, project):
@@ -450,6 +500,22 @@ class ProtocolFailingTool:
             error_type=tools_base.ToolExecutionErrorType.protocol,
             payload={"source": "mcp"},
         )
+
+
+class ParallelTrackingTool:
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+        self.calls: list[str] = []
+
+    async def run(self, req: tools_base.ToolReq, args: dict) -> None:
+        _ = req
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        self.calls.append(str(args.get("x")))
+        await asyncio.sleep(0.02)
+        self.active -= 1
+        return None
 
 
 class DummyWorkflow:
@@ -2050,6 +2116,47 @@ async def test_runner_tool_request_status_updates_do_not_depend_on_object_identi
         == state.ToolCallReqStatus.COMPLETE
         for event in tool_events
     )
+
+
+@pytest.mark.asyncio
+async def test_runner_executes_autoapproved_tool_calls_in_parallel() -> None:
+    project = StubProject()
+    tracking_tool = ParallelTrackingTool()
+    project.tools["test-tool-a"] = tracking_tool
+    project.tools["test-tool-b"] = tracking_tool
+    project.project_state.autoapprove.add_tool("test-tool-a")
+    project.project_state.autoapprove.add_tool("test-tool-b")
+
+    node = models.Node(
+        name="tool-node",
+        type="multi-tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-tool-parallel", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert sorted(tracking_tool.calls) == ["1", "2"]
+    assert tracking_tool.max_active >= 2
 
 
 @pytest.mark.asyncio
