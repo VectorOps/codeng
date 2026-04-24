@@ -136,8 +136,7 @@ class WebFetchTool(tools_base.BaseTool):
         return {
             "name": self.name,
             "description": (
-                "Fetch a URL over the configured web client backend and return "
-                "normalized markdown or plain text content."
+                "Fetch a URL and return a normalized markdown or plain text content."
             ),
             "parameters": {
                 "type": "object",
