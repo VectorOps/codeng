@@ -387,6 +387,7 @@ async def test_help_command_lists_debug_and_workflows() -> None:
     assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
     text = payload.text
     assert "/debug" in text
+    assert "/exit" in text
     assert "/workflows" in text
     assert "/auth" in text
     assert "/aa" not in text
@@ -1412,6 +1413,58 @@ async def test_run_command_stops_all_and_starts_workflow(
 
     assert ("stop_all", None) in called
     assert ("start", "alpha") in called
+
+
+@pytest.mark.asyncio
+async def test_exit_command_stops_server() -> None:
+    project = StubProject()
+
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    called: list[object] = []
+
+    async def fake_stop() -> None:
+        called.append(object())
+
+    server.stop = fake_stop
+
+    message = state.Message(role=models.Role.USER, text="/exit")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+    assert called
+
+
+@pytest.mark.asyncio
+async def test_exit_command_with_args_reports_usage_error() -> None:
+    project = StubProject()
+
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    message = state.Message(role=models.Role.USER, text="/exit now")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    text = payload.text
+    assert "Command error:" in text
+    assert "Usage: /exit" in text
 
 
 @pytest.mark.asyncio

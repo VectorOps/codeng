@@ -32,6 +32,7 @@ from vocode.tui.components import toolbar as toolbar_component
 from vocode.tui import command_manager as tui_command_manager
 from vocode.tui.lib.input import base as input_base
 from vocode.tui.lib.input import handler as input_handler_mod
+from vocode.tui.screens import keybindings_view as keybindings_view_screen
 
 
 AUTOCOMPLETE_DEBOUNCE_MS: typing.Final[int] = 100
@@ -181,14 +182,14 @@ class TUIState:
             tui_rich_text_component.RichTextComponent
         ] = None
 
+        self._exit_pending: bool = False
+
         self._progressive_hotkey: tui_input_component.KeyBinding | None = None
         self._progressive_count: int = 0
 
         self._progressive_keybindings: set[tui_input_component.KeyBinding] = {
             tui_input_component.KeyBinding("e"),
             tui_input_component.KeyBinding("c"),
-            tui_input_component.KeyBinding("e", shift=True),
-            tui_input_component.KeyBinding("c", shift=True),
         }
 
         self._suppress_history_update: int = 0
@@ -568,34 +569,28 @@ class TUIState:
     def _build_command_manager_hotkeys(self) -> list[tui_command_manager.Hotkey]:
         return [
             tui_command_manager.Hotkey(
-                name="Expand last messages",
-                category="Messages",
+                name="Expand recent items",
+                category="Display",
                 mapping=tui_input_component.KeyBinding("e"),
                 handler=self._handle_expand_last_components,
             ),
             tui_command_manager.Hotkey(
-                name="Collapse last messages",
-                category="Messages",
+                name="Collapse recent items",
+                category="Display",
                 mapping=tui_input_component.KeyBinding("c"),
                 handler=self._handle_collapse_last_components,
-            ),
-            tui_command_manager.Hotkey(
-                name="Expand last tool steps",
-                category="Tools",
-                mapping=tui_input_component.KeyBinding("e", shift=True),
-                handler=self._handle_expand_last_tool_steps,
-            ),
-            tui_command_manager.Hotkey(
-                name="Collapse last tool steps",
-                category="Tools",
-                mapping=tui_input_component.KeyBinding("c", shift=True),
-                handler=self._handle_collapse_last_tool_steps,
             ),
             tui_command_manager.Hotkey(
                 name="Open logs",
                 category="Navigation",
                 mapping=tui_input_component.KeyBinding("l"),
                 handler=self._handle_open_logs,
+            ),
+            tui_command_manager.Hotkey(
+                name="Show key bindings",
+                category="Navigation",
+                mapping=tui_input_component.KeyBinding("h"),
+                handler=self._handle_open_keybindings,
             ),
         ]
 
@@ -636,7 +631,9 @@ class TUIState:
             component.text = new_text
             lines = component.lines
             if lines:
-                component.set_cursor_position(0, 0)
+                last_row = len(lines) - 1
+                last_col = len(lines[last_row])
+                component.set_cursor_position(last_row, last_col)
         finally:
             self._suppress_history_update -= 1
         return True, False
@@ -646,8 +643,15 @@ class TUIState:
         handled, _ = self._maybe_history_down()
         return handled
 
+    def _cancel_exit_pending(self) -> None:
+        if not self._exit_pending:
+            return
+        self._exit_pending = False
+        self._update_toolbar_from_ui_state()
+
     def _handle_stop(self, event: input_base.KeyEvent) -> bool:
         _ = event
+        self._cancel_exit_pending()
         if self._on_stop is None:
             return False
         asyncio.create_task(self._on_stop())
@@ -657,8 +661,6 @@ class TUIState:
         self,
         *,
         collapsed: bool,
-        include_tools: bool,
-        include_non_tools: bool,
     ) -> bool:
         terminal = self._terminal
         components = terminal.components
@@ -671,14 +673,6 @@ class TUIState:
 
         filtered: list[tui_terminal.Component] = []
         for component in message_components:
-            is_tool = isinstance(
-                component,
-                tool_call_req_component.ToolCallReqComponent,
-            )
-            if is_tool and not include_tools:
-                continue
-            if (not is_tool) and not include_non_tools:
-                continue
             if not component.supports_collapse:
                 continue
             filtered.append(component)
@@ -703,8 +697,6 @@ class TUIState:
         _ = event
         self._apply_progressive_collapse(
             collapsed=True,
-            include_tools=False,
-            include_non_tools=True,
         )
         return True
 
@@ -712,33 +704,25 @@ class TUIState:
         _ = event
         self._apply_progressive_collapse(
             collapsed=False,
-            include_tools=False,
-            include_non_tools=True,
         )
         return True
 
     def _handle_collapse_last_tool_steps(self, event: input_base.KeyEvent) -> bool:
-        _ = event
-        self._apply_progressive_collapse(
-            collapsed=True,
-            include_tools=True,
-            include_non_tools=False,
-        )
-        return True
+        return self._handle_collapse_last_components(event)
 
     def _handle_expand_last_tool_steps(self, event: input_base.KeyEvent) -> bool:
-        _ = event
-        self._apply_progressive_collapse(
-            collapsed=False,
-            include_tools=True,
-            include_non_tools=False,
-        )
-        return True
+        return self._handle_expand_last_components(event)
 
     def _handle_eof(self, event: input_base.KeyEvent) -> bool:
         _ = event
         if self._on_eof is None:
             return False
+        if not self._exit_pending:
+            self._exit_pending = True
+            self._update_toolbar_from_ui_state()
+            return True
+        self._exit_pending = False
+        self._update_toolbar_from_ui_state()
         asyncio.create_task(self._on_eof())
         return True
 
@@ -749,8 +733,22 @@ class TUIState:
         asyncio.create_task(self._on_open_logs())
         return True
 
+    def _handle_open_keybindings(self, event: input_base.KeyEvent) -> bool:
+        _ = event
+        terminal = self._terminal
+        hotkeys = self._build_command_manager_hotkeys()
+        sections = keybindings_view_screen.build_keybinding_sections(hotkeys)
+        screen = keybindings_view_screen.KeybindingsViewScreen(
+            terminal=terminal,
+            sections=sections,
+        )
+        self._pop_action(ActionKind.COMMAND_MANAGER)
+        terminal.push_screen(screen)
+        return True
+
     def _handle_input_event(self, event: input_base.InputEvent) -> None:
         if isinstance(event, input_base.PasteEvent):
+            self._cancel_exit_pending()
             text = event.text
             if text:
                 self._input_component.paste_text(text)
@@ -777,6 +775,10 @@ class TUIState:
                 else:
                     self._progressive_hotkey = None
                     self._progressive_count = 0
+
+            if event.action == "down":
+                if not (binding.key == "d" and binding.ctrl):
+                    self._cancel_exit_pending()
 
             terminal = self._terminal
             if not terminal.has_screens:
@@ -1495,3 +1497,7 @@ class TUIState:
     def _update_toolbar_from_ui_state(self) -> None:
         toolbar = self._base_toolbar_component
         toolbar.set_state(self._ui_state)
+        if self._exit_pending:
+            toolbar.set_notice("Press Ctrl-D again to exit")
+            return
+        toolbar.set_notice(None)

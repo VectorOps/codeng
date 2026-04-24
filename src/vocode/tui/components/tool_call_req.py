@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime
 import json
 import typing
-from typing import Final
 
 from rich import console as rich_console
 
@@ -19,12 +18,6 @@ from vocode.tui.lib.components import renderable as renderable_component
 
 class ToolCallReqComponent(renderable_component.RenderableComponentBase):
     _COMPACT_LINES: Final[int] = 10
-    _STATUS_ICON_NAME: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
-        vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "black_question_mark_ornament",
-        vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "hourglass_with_flowing_sand",
-        vocode_state.ToolCallReqStatus.REJECTED: "heavy_multiplication_x",
-        vocode_state.ToolCallReqStatus.COMPLETE: "heavy_check_mark",
-    }
     _STATUS_TEXT: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
         vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "Waiting for confirmation",
         vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "Pending execution",
@@ -112,23 +105,21 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         terminal = self.terminal
         if terminal is None:
             return ""
-        uni = terminal.unicode
-        if status is vocode_state.ToolCallReqStatus.EXECUTING:
-            frame = uni.spinner_frame(
-                self._frame_index,
-                tui_unicode.SpinnerVariant.BRAILLE,
-            )
+        icon = tui_tcf.render_utils.render_status_icon(
+            terminal,
+            status,
+            frame_index=self._frame_index,
+            animate_running=self._show_execution_stats,
+        )
+        if (
+            status is vocode_state.ToolCallReqStatus.EXECUTING
+            and self._show_execution_stats
+        ):
             frames = uni.spinner_frames(tui_unicode.SpinnerVariant.BRAILLE)
             self._frame_index = (self._frame_index + 1) % len(frames)
-            return frame
-        if status is None:
-            self._frame_index = 0
-            return ""
-        icon_name = self._STATUS_ICON_NAME.get(status)
+            return icon
         self._frame_index = 0
-        if icon_name is None:
-            return ""
-        return uni.glyph(icon_name)
+        return icon
 
     def _compute_duration(self) -> datetime.timedelta | None:
         message = self._step.message

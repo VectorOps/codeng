@@ -174,6 +174,7 @@ class InputComponent(tui_base.Component):
             KeyBinding("d", ctrl=True): self.delete,
             KeyBinding("k", ctrl=True): self.kill_to_line_end,
             KeyBinding("u", ctrl=True): self.kill_to_line_start,
+            KeyBinding("l", ctrl=True): self.clear,
             KeyBinding("w", ctrl=True): self.kill_word_backward,
             KeyBinding("d", alt=True): self.kill_word_forward,
             KeyBinding("u", alt=True): self.uppercase_word,
@@ -344,6 +345,10 @@ class InputComponent(tui_base.Component):
 
     def kill_word_forward(self) -> None:
         self._editor.kill_word_forward()
+        self._mark_dirty()
+
+    def clear(self) -> None:
+        self._editor.clear()
         self._mark_dirty()
 
     def uppercase_word(self) -> None:

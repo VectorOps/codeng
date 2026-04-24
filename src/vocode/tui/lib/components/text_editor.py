@@ -385,6 +385,14 @@ class TextEditor:
         self._cursor_row = old_row
         self._cursor_col = old_col
 
+    def clear(self) -> None:
+        previous_row = self._cursor_row
+        previous_col = self._cursor_col
+        self._lines = [""]
+        self._cursor_row = 0
+        self._cursor_col = 0
+        self._emit_cursor_event(previous_row, previous_col)
+
     def _transform_word(self, transform: typing.Callable[[str], str]) -> None:
         previous_row = self._cursor_row
         previous_col = self._cursor_col

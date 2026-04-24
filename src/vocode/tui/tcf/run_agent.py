@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import typing
 
+from rich import text as rich_text
+
 from vocode import state as vocode_state
 from vocode import settings as vocode_settings
 from vocode.tui import tcf as tui_tcf
@@ -48,9 +50,22 @@ class RunAgentToolCallFormatter(tui_tcf.BaseToolCallFormatter):
             prompt = tcf_render_utils.to_single_line(prompt)
             prompt, _ = tcf_render_utils.truncate_to_width(prompt, 80)
             kvs.append(("text", prompt))
-        return tcf_render_utils.build_tool_line(
-            terminal,
-            display_name,
-            pairs=kvs,
-            context=context,
+
+        line = rich_text.Text(no_wrap=True)
+        line.append(
+            terminal.unicode.glyph(":circle:"),
+            style="dim",
         )
+        line.append(" ")
+        line.append(display_name, style="bold")
+        if kvs:
+            line.append(" ")
+            for index, (key, value) in enumerate(kvs):
+                if index > 0:
+                    line.append(", ", style="dim")
+                line.append(key, style="cyan")
+                line.append("=", style="dim")
+                line.append(value)
+        if context.max_width > 0:
+            line.truncate(context.max_width, overflow="ellipsis")
+        return line

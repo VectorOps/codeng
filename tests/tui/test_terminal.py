@@ -9,8 +9,11 @@ from rich import padding as rich_padding
 from rich import segment as rich_segment
 from rich import style as rich_style
 
+from vocode import models, state
 from vocode.tui import lib as tui_terminal
 from vocode.tui import uistate as tui_uistate
+from vocode.history.manager import HistoryManager
+from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.input import base as input_base
@@ -502,6 +505,13 @@ def test_input_component_kill_and_case_keybindings() -> None:
     component.on_key_event(alt_c)
     assert component.text == "Hello world"
 
+    component.text = "hello\nworld"
+    ctrl_l = input_base.KeyEvent(action="down", key="l", ctrl=True)
+    component.on_key_event(ctrl_l)
+    assert component.text == ""
+    assert component.cursor_row == 0
+    assert component.cursor_col == 0
+
 
 def test_input_component_multiline_scroll_and_height_cap() -> None:
     buffer = io.StringIO()
@@ -571,9 +581,13 @@ async def test_tui_state_input_history_navigation() -> None:
     key_down = input_base.KeyEvent(action="down", key="down")
     handler.publish(key_down)
     assert component.text == "second"
+    assert component.cursor_row == 0
+    assert component.cursor_col == len("second")
 
     handler.publish(key_down)
     assert component.text == ""
+    assert component.cursor_row == 0
+    assert component.cursor_col == 0
 
 
 @pytest.mark.asyncio
@@ -1230,10 +1244,44 @@ async def test_tui_state_ctrl_dot_collapses_last_messages_progressively() -> Non
     for i in range(12):
         ui_state.add_rich_text(f"msg {i}")
 
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    for i in range(5):
+        req = state.ToolCallReq(
+            id=f"call_{i}",
+            name="tool",
+            arguments={"i": i},
+        )
+        message = state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        )
+        history.upsert_message(run, message)
+        step = history.upsert_step(
+            run,
+            state.Step(
+                execution_id=execution.id,
+                type=state.StepType.TOOL_REQUEST,
+                message_id=message.id,
+            ),
+        )
+        ui_state.handle_step(step)
+
     message_components = ui_state.terminal.components[1:-2]
     last_ten = message_components[-10:]
     assert last_ten
     assert all(c.supports_collapse for c in last_ten)
+    for component in message_components:
+        if component.supports_collapse:
+            component.set_collapsed(False)
     assert all(c.is_expanded for c in last_ten)
 
     open_cmd = input_base.KeyEvent(action="down", key="space", ctrl=True)
@@ -1365,7 +1413,39 @@ async def test_tui_state_ctrl_x_opens_command_manager_esc_closes_and_hotkey_exec
 
 
 @pytest.mark.asyncio
-async def test_tui_state_ctrl_d_triggers_on_eof() -> None:
+async def test_tui_state_command_manager_h_opens_keybindings_screen() -> None:
+    async def on_input(_: str) -> None:
+        return
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    open_cmd = input_base.KeyEvent(action="down", key="space", ctrl=True)
+    show_keys = input_base.KeyEvent(action="down", key="h")
+
+    ui_state._input_handler.publish(open_cmd)
+    assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.COMMAND_MANAGER
+
+    ui_state._input_handler.publish(show_keys)
+
+    assert ui_state.terminal.has_screens is True
+    top_screen = ui_state.terminal.top_screen
+    assert top_screen is not None
+    assert top_screen.__class__.__name__ == "KeybindingsViewScreen"
+
+
+@pytest.mark.asyncio
+async def test_tui_state_ctrl_d_twice_triggers_on_eof_and_other_key_cancels() -> None:
     async def on_input(_: str) -> None:
         return
 
@@ -1387,9 +1467,26 @@ async def test_tui_state_ctrl_d_triggers_on_eof() -> None:
         on_eof=on_eof,
     )
     event = input_base.KeyEvent(action="down", key="d", ctrl=True)
+    cancel = input_base.KeyEvent(action="down", key="x", text="x")
+    ui_state._input_handler.publish(event)
+    await asyncio.sleep(0)
+    assert not called
+    assert ui_state._exit_pending is True
+
+    ui_state._input_handler.publish(cancel)
+    await asyncio.sleep(0)
+    assert not called
+    assert ui_state._exit_pending is False
+
+    ui_state._input_handler.publish(event)
+    await asyncio.sleep(0)
+    assert not called
+    assert ui_state._exit_pending is True
+
     ui_state._input_handler.publish(event)
     await asyncio.sleep(0)
     assert called
+    assert ui_state._exit_pending is False
 
 
 @pytest.mark.asyncio

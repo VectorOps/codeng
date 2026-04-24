@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import json
 import typing
+from typing import Final
 
 from rich import cells as rich_cells
 from rich import text as rich_text
@@ -11,6 +12,14 @@ from vocode import state as vocode_state
 from vocode.tui import styles as tui_styles
 from vocode.tui import tcf as tui_tcf
 from vocode.tui.lib import terminal as tui_terminal
+from vocode.tui.lib import unicode as tui_unicode
+
+
+_STATUS_ICON_NAME: Final[dict[vocode_state.ToolCallReqStatus, str]] = {
+    vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION: "black_question_mark_ornament",
+    vocode_state.ToolCallReqStatus.PENDING_EXECUTION: "hourglass_with_flowing_sand",
+    vocode_state.ToolCallReqStatus.COMPLETE: "heavy_check_mark",
+}
 
 
 def to_single_line(value: str) -> str:
@@ -179,6 +188,31 @@ def format_duration(duration: datetime.timedelta) -> str:
     if minutes:
         return f"{minutes}m {seconds}s"
     return f"{seconds}s"
+
+
+def render_status_icon(
+    terminal: tui_terminal.Terminal,
+    status: typing.Optional[vocode_state.ToolCallReqStatus],
+    *,
+    frame_index: int = 0,
+    animate_running: bool = True,
+) -> str:
+    if status is None:
+        return ""
+
+    uni = terminal.unicode
+    if status is vocode_state.ToolCallReqStatus.EXECUTING:
+        if not animate_running:
+            return uni.glyph("hourglass_with_flowing_sand")
+        return uni.spinner_frame(
+            frame_index,
+            tui_unicode.SpinnerVariant.BRAILLE,
+        )
+
+    icon_name = _STATUS_ICON_NAME.get(status)
+    if icon_name is None:
+        return ""
+    return uni.glyph(icon_name)
 
 
 def format_status_text(

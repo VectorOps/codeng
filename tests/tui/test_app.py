@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -175,3 +176,58 @@ async def test_tui_app_sends_stop_request_packet(
 
     assert payload.kind == manager_proto.BasePacketKind.STOP_REQ
     assert isinstance(payload, manager_proto.StopReqPacket)
+
+
+@pytest.mark.asyncio
+async def test_tui_app_eof_request_cancels_recv_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTUIState:
+        def __init__(
+            self,
+            on_input,
+            on_autocomplete_request=None,
+            on_stop=None,
+            on_eof=None,
+            persist_history=False,
+        ) -> None:
+            self._on_input = on_input
+            self._on_eof = on_eof
+            self._persist_history = persist_history
+
+        def add_markdown(self, markdown: str) -> None:
+            return None
+
+        def set_input_panel_title(
+            self,
+            title: str | None,
+            subtitle: str | None = None,
+        ) -> None:
+            return None
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(tui_uistate, "TUIState", FakeTUIState)
+
+    monkeypatch.setattr(
+        vocode_project.Project,
+        "from_base_path",
+        classmethod(lambda cls, path: StubProject()),
+    )
+
+    app = App(project_path=tmp_path)
+
+    async def _wait_forever() -> None:
+        await asyncio.sleep(3600)
+
+    app._recv_task = asyncio.create_task(_wait_forever())
+
+    await app.on_eof_request()
+    await asyncio.sleep(0)
+
+    assert app._recv_task.cancelled() or app._recv_task.done()

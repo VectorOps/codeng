@@ -44,6 +44,7 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._project_llm_usage: vocode_state.LLMUsageStats | None = None
         self._active_node_started_at: datetime.datetime | None = None
         self._last_user_input_at: datetime.datetime | None = None
+        self._notice_text = ""
 
     @property
     def text(self) -> str:
@@ -55,6 +56,13 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
     ) -> None:
         self._ui_state = ui_state
         self._update_from_state()
+        self._mark_dirty()
+
+    def set_notice(self, text: str | None) -> None:
+        value = "" if text is None else text
+        if self._notice_text == value:
+            return
+        self._notice_text = value
         self._mark_dirty()
 
     def _update_from_state(self) -> None:
@@ -148,6 +156,10 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
     ) -> tui_base.Renderable:
         status = self._status
         label = self._workflow_label
+        notice = self._notice_text
+
+        if notice:
+            return rich_text.Text(notice)
 
         frame_text = ""
         if status is vocode_state.RunnerStatus.RUNNING:

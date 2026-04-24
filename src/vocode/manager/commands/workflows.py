@@ -90,6 +90,17 @@ async def register_workflow_commands(manager: CommandManager) -> None:
         description="Reset and restart the current workflow",
     )
 
+    async def exit_command(server, args: list[str]) -> None:
+        if args:
+            raise CommandError("Usage: /exit")
+        await server.stop()
+
+    await manager.register(
+        "exit",
+        exit_command,
+        description="Exit the TUI session",
+    )
+
     async def branch_command(server, args: list[str]) -> None:
         if not args:
             raise CommandError("Usage: /branch <list|switch> [args]")

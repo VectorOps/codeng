@@ -475,7 +475,7 @@ async def test_tui_state_history_down_places_cursor_on_first_row() -> None:
     assert input_component.cursor_row == len(input_component.lines) - 1
     event_down = input_base.KeyEvent(action="down", key="down")
     ui_state._input_handler.publish(event_down)
-    assert input_component.cursor_row == 0
+    assert input_component.cursor_row == len(input_component.lines) - 1
 
 
 @pytest.mark.asyncio
@@ -740,6 +740,69 @@ async def test_tool_request_run_agent_renders_prompt_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_request_run_agent_has_static_indicator_without_status_text() -> (
+    None
+):
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    created_at = datetime.datetime.now(datetime.UTC)
+    handled_at = created_at + datetime.timedelta(seconds=5)
+    req = state.ToolCallReq(
+        id="call_1",
+        name="run_agent",
+        arguments={"name": "agent1", "text": "hello world"},
+        status=state.ToolCallReqStatus.EXECUTING,
+        created_at=created_at,
+        handled_at=handled_at,
+    )
+    resp = state.ToolCallResp(
+        id="call_1",
+        name="run_agent",
+        status=state.ToolCallStatus.COMPLETED,
+        result={"ok": True},
+    )
+    step = _make_step(
+        execution,
+        step_id=uuid4(),
+        step_type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+            tool_call_responses=[resp],
+        ),
+    )
+
+    ui_state.handle_step(step)
+    await ui_state.terminal.render()
+
+    output = buffer.getvalue()
+    assert "name=agent1" in output
+    assert "text=hello world" in output
+    assert "running" not in output
+    assert "done" not in output
+    assert "5s" not in output
+
+
+@pytest.mark.asyncio
 async def test_tool_request_components_do_not_insert_blank_line_between_tools() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
@@ -907,3 +970,108 @@ async def test_tool_request_confirmation_renders_autoapprove_hint() -> None:
     await ui_state.terminal.render()
     output = buffer.getvalue()
     assert "/aa" not in output
+
+
+@pytest.mark.asyncio
+async def test_tool_request_pending_renders_clock_icon() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    req = state.ToolCallReq(
+        id="call_1",
+        name="list_files",
+        arguments={"pattern": "*"},
+        status=state.ToolCallReqStatus.PENDING_EXECUTION,
+    )
+    step = _make_step(
+        execution,
+        step_id=uuid4(),
+        step_type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+
+    ui_state.handle_step(step)
+    await ui_state.terminal.render()
+
+    output = buffer.getvalue()
+    assert "⏳" in output
+    assert "[pending]" in output
+
+
+@pytest.mark.asyncio
+async def test_tool_request_completed_renders_checkmark_icon_for_autoapproved_tool() -> (
+    None
+):
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    req = state.ToolCallReq(
+        id="call_1",
+        name="list_files",
+        arguments={"pattern": "*"},
+        status=state.ToolCallReqStatus.PENDING_EXECUTION,
+        auto_approved=True,
+    )
+    resp = state.ToolCallResp(
+        id="call_1",
+        name="list_files",
+        status=state.ToolCallStatus.COMPLETED,
+        result={"items": []},
+    )
+    step = _make_step(
+        execution,
+        step_id=uuid4(),
+        step_type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+            tool_call_responses=[resp],
+        ),
+    )
+
+    ui_state.handle_step(step)
+    await ui_state.terminal.render()
+
+    output = buffer.getvalue()
+    assert "✔︎" in output or "✔" in output
+    assert "done" in output
+    assert "✖" not in output
