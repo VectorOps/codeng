@@ -962,6 +962,10 @@ class TUIState:
         if message is None:
             return
 
+        if message.role is vocode_models.Role.USER:
+            self._handle_user_message_step(step)
+            return
+
         self._upsert_step_output_component(
             step,
             message.text,
@@ -969,8 +973,12 @@ class TUIState:
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )
 
-    def _handle_input_message_step(self, step: vocode_state.Step) -> None:
-        raw = self._format_message_markdown(step)
+    def _handle_user_message_step(self, step: vocode_state.Step) -> None:
+        message = step.message
+        if message is None:
+            return
+
+        raw = message.text
         if raw is None:
             return
 
@@ -1001,10 +1009,14 @@ class TUIState:
             component = tui_rich_text_component.RichTextComponent(
                 prefixed,
                 id=step_id,
+                markup=False,
                 component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
             )
             self._step_component_ids.add(step_id)
             self._terminal.insert_component(-2, component)
+
+    def _handle_input_message_step(self, step: vocode_state.Step) -> None:
+        self._handle_user_message_step(step)
 
     def _handle_prompt_step(
         self,
@@ -1023,6 +1035,10 @@ class TUIState:
 
     def _handle_rejection_step(self, step: vocode_state.Step) -> None:
         message = step.message
+        if message is not None and message.role is vocode_models.Role.USER:
+            self._handle_user_message_step(step)
+            return
+
         text = "User declined."
         if message is not None:
             raw = message.text.strip()

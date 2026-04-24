@@ -11,10 +11,12 @@ from rich import console as rich_console
 from vocode import models, state
 from vocode.history.manager import HistoryManager
 from vocode import settings as vocode_settings
+from vocode.tui import styles as tui_styles
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib.components import markdown_component as tui_markdown_component
 from vocode.tui.lib.components import renderable as tui_renderable_component
+from vocode.tui.lib.components import rich_text_component as tui_rich_text_component
 from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.input import base as input_base
 
@@ -84,7 +86,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
         execution,
         step_id=step_id,
         step_type=state.StepType.OUTPUT_MESSAGE,
-        message=state.Message(role=models.Role.USER, text="first"),
+        message=state.Message(role=models.Role.ASSISTANT, text="first"),
     )
 
     ui_state.handle_step(step1)
@@ -105,7 +107,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
         execution,
         step_id=step_id,
         step_type=state.StepType.OUTPUT_MESSAGE,
-        message=state.Message(role=models.Role.USER, text="second\n\n"),
+        message=state.Message(role=models.Role.ASSISTANT, text="second\n\n"),
     )
 
     ui_state.handle_step(step2)
@@ -127,7 +129,7 @@ async def test_tui_state_inserts_and_updates_step_markdown() -> None:
         execution,
         step_id=step_id,
         step_type=state.StepType.OUTPUT_MESSAGE,
-        message=state.Message(role=models.Role.USER, text="\n\n"),
+        message=state.Message(role=models.Role.ASSISTANT, text="\n\n"),
     )
 
     ui_state.handle_step(step_empty_text)
@@ -302,7 +304,7 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
         execution,
         step_id=step_id,
         step_type=state.StepType.OUTPUT_MESSAGE,
-        message=state.Message(role=models.Role.USER, text="interim"),
+        message=state.Message(role=models.Role.ASSISTANT, text="interim"),
         output_mode=models.OutputMode.HIDE_FINAL,
     )
 
@@ -318,7 +320,7 @@ async def test_tui_state_hides_final_output_mode_hide_final() -> None:
         execution,
         step_id=step_id,
         step_type=state.StepType.OUTPUT_MESSAGE,
-        message=state.Message(role=models.Role.USER, text="final"),
+        message=state.Message(role=models.Role.ASSISTANT, text="final"),
         output_mode=models.OutputMode.HIDE_FINAL,
         is_final=True,
     )
@@ -371,6 +373,70 @@ async def test_tui_state_renders_rejection_steps() -> None:
     await ui_state.terminal.render()
     output = buffer.getvalue()
     assert "Rejected because of reasons." in output
+
+
+@pytest.mark.asyncio
+async def test_tui_state_renders_user_output_messages_with_input_style() -> None:
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    step = _make_step(
+        execution,
+        step_type=state.StepType.OUTPUT_MESSAGE,
+        message=state.Message(role=models.Role.USER, text="from-http"),
+    )
+    ui_state.handle_step(step)
+
+    component = ui_state.terminal.components[1]
+    assert isinstance(component, tui_rich_text_component.RichTextComponent)
+    assert component.text == "> from-http"
+    assert component.component_style == tui_styles.INPUT_MESSAGE_COMPONENT_STYLE
+
+
+@pytest.mark.asyncio
+async def test_tui_state_renders_user_rejection_steps_with_input_style() -> None:
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=None,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    step = _make_step(
+        execution,
+        step_type=state.StepType.REJECTION,
+        message=state.Message(role=models.Role.USER, text="no thanks"),
+    )
+    ui_state.handle_step(step)
+
+    component = ui_state.terminal.components[1]
+    assert isinstance(component, tui_rich_text_component.RichTextComponent)
+    assert component.text == "> no thanks"
+    assert component.component_style == tui_styles.INPUT_MESSAGE_COMPONENT_STYLE
 
 
 @pytest.mark.asyncio

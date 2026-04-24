@@ -390,6 +390,8 @@ class PosixInputHandler(input_base.InputHandler):
         self._select_idle_timeout = select_idle_timeout
         self._sigint_installed = False
         self._prev_sigint_handler: typing.Any | None = None
+        self._wake_reader_r: int | None = None
+        self._wake_reader_w: int | None = None
 
     async def run(self) -> None:
         self.start()
@@ -409,6 +411,7 @@ class PosixInputHandler(input_base.InputHandler):
         loop = asyncio.get_running_loop()
         self._loop = loop
         self._stop_event = asyncio.Event()
+        self._create_wakeup_pipe()
         self._setup_terminal()
         self._install_winch_handler()
         self._install_sigint_handler()
@@ -429,8 +432,41 @@ class PosixInputHandler(input_base.InputHandler):
         self._remove_winch_handler()
         self._remove_sigint_handler()
         self._teardown_terminal()
+        self._close_wakeup_pipe()
         self._loop = None
         self._stop_event = None
+
+    def _create_wakeup_pipe(self) -> None:
+        if self._wake_reader_r is not None or self._wake_reader_w is not None:
+            return
+        wake_reader_r, wake_reader_w = os.pipe()
+        self._wake_reader_r = wake_reader_r
+        self._wake_reader_w = wake_reader_w
+
+    def _close_wakeup_pipe(self) -> None:
+        wake_reader_r = self._wake_reader_r
+        wake_reader_w = self._wake_reader_w
+        self._wake_reader_r = None
+        self._wake_reader_w = None
+        if wake_reader_r is not None:
+            try:
+                os.close(wake_reader_r)
+            except OSError:
+                pass
+        if wake_reader_w is not None:
+            try:
+                os.close(wake_reader_w)
+            except OSError:
+                pass
+
+    def _wake_reader(self) -> None:
+        wake_reader_w = self._wake_reader_w
+        if wake_reader_w is None:
+            return
+        try:
+            os.write(wake_reader_w, b"\x00")
+        except OSError:
+            pass
 
     def _setup_terminal(self) -> None:
         import termios
@@ -549,8 +585,21 @@ class PosixInputHandler(input_base.InputHandler):
                     if remaining < timeout:
                         timeout = max(0.0, remaining)
 
-                rlist, _, _ = select.select([self._fd], [], [], timeout)
+                read_fds = [self._fd]
+                wake_reader_r = self._wake_reader_r
+                if wake_reader_r is not None:
+                    read_fds.append(wake_reader_r)
+                rlist, _, _ = select.select(read_fds, [], [], timeout)
                 if not rlist:
+                    continue
+
+                if wake_reader_r is not None and wake_reader_r in rlist:
+                    try:
+                        os.read(wake_reader_r, 1024)
+                    except OSError:
+                        pass
+                    if not self._running:
+                        break
                     continue
 
                 try:
@@ -590,6 +639,7 @@ class PosixInputHandler(input_base.InputHandler):
     def _signal_stop(self) -> None:
         loop = self._loop
         stop_event = self._stop_event
+        self._wake_reader()
         if loop is None or stop_event is None:
             return
         if loop.is_running():

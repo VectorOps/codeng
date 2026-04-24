@@ -1,7 +1,11 @@
 #+title: Todo
 
 * [ ] General
-** [ ] Parallel tool calling
+** [ ] Support streaming MCP transports
+*** [ ] Introduce intermediate tool response support
+*** [ ] Figure out how to handle bi-directional communication with MCP
+*** [ ] Update runner, tool call manager, etc
+** [X] Parallel tool calling
 ** [X] Analyze why usage for current session is not being captured correctly with Connect, as if input messages from previous round are not sent over
 ** [ ] Come up with a plugin architecture for LLM authentication logic (OAuth2, etc)
 ** [X] knowlt: reject virtual path writes

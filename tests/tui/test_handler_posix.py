@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import pytest
 
 from vocode.tui.lib.input import base
 from vocode.tui.lib.input import posix
@@ -223,3 +224,30 @@ def test_reader_loop_uses_long_timeout_idle_and_short_with_esc(monkeypatch) -> N
     esc_timeout = timeouts[-1]
     assert esc_timeout <= posix.ESC_SEQUENCE_TIMEOUT
     assert esc_timeout < idle_timeout
+
+
+@pytest.mark.asyncio
+async def test_handler_stop_wakes_reader_loop(monkeypatch) -> None:
+    read_fd, write_fd = os.pipe()
+
+    def _noop_setup(self) -> None:
+        return
+
+    def _noop_teardown(self) -> None:
+        return
+
+    monkeypatch.setattr(posix.PosixInputHandler, "_setup_terminal", _noop_setup)
+    monkeypatch.setattr(posix.PosixInputHandler, "_teardown_terminal", _noop_teardown)
+
+    handler = posix.PosixInputHandler(fd=read_fd, select_idle_timeout=30.0)
+    task = asyncio.create_task(handler.run())
+
+    try:
+        await asyncio.sleep(0.1)
+        start = asyncio.get_running_loop().time()
+        handler.stop()
+        await asyncio.wait_for(task, timeout=0.5)
+        assert asyncio.get_running_loop().time() - start < 0.5
+    finally:
+        os.close(write_fd)
+        os.close(read_fd)
