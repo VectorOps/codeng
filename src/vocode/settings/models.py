@@ -27,6 +27,7 @@ from vocode.lib.validators import get_value_by_dotted_key, regex_matches_value
 from vocode import vars as vars_mod
 from vocode import vars_values as vars_values_mod
 from vocode.vars import VAR_PATTERN
+from vocode.webclient import models as webclient_models
 
 
 from knowlt.settings import ProjectSettings as KnowProjectSettings
@@ -231,6 +232,8 @@ class ExecToolSettings(vars_mod.BaseVarModel):
 
 class ToolSettings(vars_mod.BaseVarModel):
     exec_tool: Optional[ExecToolSettings] = None
+    web_client: Optional[webclient_models.WebClientSettings] = None
+    web_client_policy: Optional[webclient_models.HarnessWebClientPolicy] = None
 
 
 class PersistenceSettings(vars_mod.BaseVarModel):

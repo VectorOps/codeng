@@ -115,7 +115,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
             status is vocode_state.ToolCallReqStatus.EXECUTING
             and self._show_execution_stats
         ):
-            frames = uni.spinner_frames(tui_unicode.SpinnerVariant.BRAILLE)
+            frames = terminal.unicode.spinner_frames(tui_unicode.SpinnerVariant.BRAILLE)
             self._frame_index = (self._frame_index + 1) % len(frames)
             return icon
         self._frame_index = 0
