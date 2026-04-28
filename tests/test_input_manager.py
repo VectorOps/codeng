@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from vocode import models, state
-from vocode.input_manager import InputManager
+from vocode.input_manager import INPUT_TYPE_HTTP, INPUT_TYPE_INTERACTIVE, InputManager
 
 
 @pytest.mark.asyncio
@@ -81,6 +81,71 @@ async def test_input_manager_only_new_wait_ignores_queued_messages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_input_manager_routes_messages_by_input_type() -> None:
+    manager = InputManager()
+    interactive_message = state.Message(role=models.Role.USER, text="interactive")
+    http_message = state.Message(role=models.Role.USER, text="http")
+
+    accepted_interactive = await manager.publish(
+        interactive_message,
+        queue=True,
+        input_type=INPUT_TYPE_INTERACTIVE,
+    )
+    accepted_http = await manager.publish(
+        http_message,
+        queue=True,
+        input_type=INPUT_TYPE_HTTP,
+    )
+
+    assert accepted_interactive is True
+    assert accepted_http is True
+
+    received_http = await manager.wait_for_input(input_type=INPUT_TYPE_HTTP)
+    received_interactive = await manager.wait_for_input(
+        input_type=INPUT_TYPE_INTERACTIVE
+    )
+
+    assert received_http == http_message
+    assert received_interactive == interactive_message
+
+
+@pytest.mark.asyncio
+async def test_input_manager_only_new_wait_is_isolated_by_input_type() -> None:
+    manager = InputManager()
+    queued_interactive = state.Message(role=models.Role.USER, text="interactive")
+    fresh_http = state.Message(role=models.Role.USER, text="http-fresh")
+
+    accepted = await manager.publish(
+        queued_interactive,
+        queue=True,
+        input_type=INPUT_TYPE_INTERACTIVE,
+    )
+    assert accepted is True
+
+    task = asyncio.create_task(
+        manager.wait_for_input(only_new=True, input_type=INPUT_TYPE_HTTP)
+    )
+    await asyncio.sleep(0)
+
+    accepted = await manager.publish(
+        fresh_http,
+        queue=False,
+        input_type=INPUT_TYPE_HTTP,
+    )
+    received = await task
+
+    assert accepted is True
+    assert received == fresh_http
+
+    snapshot = await manager.snapshot()
+    assert [message.text for message in snapshot.queued_messages] == ["interactive"]
+    assert [
+        message.text
+        for message in snapshot.queued_messages_by_type[INPUT_TYPE_INTERACTIVE]
+    ] == ["interactive"]
+
+
+@pytest.mark.asyncio
 async def test_input_manager_snapshot_and_dequeue_reflect_queued_messages() -> None:
     manager = InputManager()
     first = state.Message(role=models.Role.USER, text="one")
@@ -101,6 +166,36 @@ async def test_input_manager_snapshot_and_dequeue_reflect_queued_messages() -> N
 
     snapshot = await manager.snapshot()
     assert [message.text for message in snapshot.queued_messages] == ["two"]
+
+
+@pytest.mark.asyncio
+async def test_input_manager_snapshot_exposes_type_buckets() -> None:
+    manager = InputManager()
+
+    await manager.publish(
+        state.Message(role=models.Role.USER, text="interactive-1"),
+        queue=True,
+        input_type=INPUT_TYPE_INTERACTIVE,
+    )
+    await manager.publish(
+        state.Message(role=models.Role.USER, text="http-1"),
+        queue=True,
+        input_type=INPUT_TYPE_HTTP,
+    )
+
+    snapshot = await manager.snapshot()
+
+    assert [message.text for message in snapshot.queued_messages] == [
+        "interactive-1",
+        "http-1",
+    ]
+    assert [
+        message.text
+        for message in snapshot.queued_messages_by_type[INPUT_TYPE_INTERACTIVE]
+    ] == ["interactive-1"]
+    assert [
+        message.text for message in snapshot.queued_messages_by_type[INPUT_TYPE_HTTP]
+    ] == ["http-1"]
 
 
 @pytest.mark.asyncio

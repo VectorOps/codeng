@@ -5,6 +5,7 @@ from typing import AsyncIterator, Callable, Dict, Optional
 import pytest
 
 from vocode import models, state
+from vocode.input_manager import INPUT_TYPE_HTTP, INPUT_TYPE_INTERACTIVE
 from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
 from vocode.mcp import models as mcp_models
@@ -3097,6 +3098,7 @@ async def test_runner_prompt_uses_input_manager_when_event_response_is_noop() ->
         accepted = await project.input_manager.publish(
             state.Message(role=models.Role.USER, text="managed-input"),
             queue=False,
+            input_type=INPUT_TYPE_INTERACTIVE,
         )
         assert accepted is True
 
@@ -3156,6 +3158,7 @@ async def test_runner_initial_input_uses_queued_input_manager_message() -> None:
     accepted = await project.input_manager.publish(
         state.Message(role=models.Role.USER, text="queued-input"),
         queue=True,
+        input_type=INPUT_TYPE_INTERACTIVE,
     )
     assert accepted is True
 
@@ -3206,9 +3209,12 @@ async def test_runner_confirmation_wait_uses_only_new_input() -> None:
     original_wait_for_input = project.input_manager.wait_for_input
     wait_flags: list[bool] = []
 
-    async def wait_for_input(only_new: bool = False) -> state.Message:
+    async def wait_for_input(
+        only_new: bool = False,
+        input_type: str | None = None,
+    ) -> state.Message:
         wait_flags.append(only_new)
-        return await original_wait_for_input(only_new=only_new)
+        return await original_wait_for_input(only_new=only_new, input_type=input_type)
 
     project.input_manager.wait_for_input = wait_for_input
 
@@ -3221,6 +3227,7 @@ async def test_runner_confirmation_wait_uses_only_new_input() -> None:
         accepted_local = await project.input_manager.publish(
             state.Message(role=models.Role.USER, text=""),
             queue=False,
+            input_type=INPUT_TYPE_INTERACTIVE,
         )
         assert accepted_local is True
 
@@ -3284,15 +3291,19 @@ async def test_runner_tool_confirmation_wait_uses_only_new_input() -> None:
     accepted = await project.input_manager.publish(
         state.Message(role=models.Role.USER, text="queued-rejection"),
         queue=True,
+        input_type=INPUT_TYPE_INTERACTIVE,
     )
     assert accepted is True
 
     original_wait_for_input = project.input_manager.wait_for_input
     wait_flags: list[bool] = []
 
-    async def wait_for_input(only_new: bool = False) -> state.Message:
+    async def wait_for_input(
+        only_new: bool = False,
+        input_type: str | None = None,
+    ) -> state.Message:
         wait_flags.append(only_new)
-        return await original_wait_for_input(only_new=only_new)
+        return await original_wait_for_input(only_new=only_new, input_type=input_type)
 
     project.input_manager.wait_for_input = wait_for_input
 
@@ -3305,6 +3316,7 @@ async def test_runner_tool_confirmation_wait_uses_only_new_input() -> None:
         accepted_local = await project.input_manager.publish(
             state.Message(role=models.Role.USER, text=""),
             queue=False,
+            input_type=INPUT_TYPE_INTERACTIVE,
         )
         assert accepted_local is True
 
@@ -3363,6 +3375,7 @@ async def test_runner_stop_preserves_managed_input_queue() -> None:
     accepted = await project.input_manager.publish(
         state.Message(role=models.Role.USER, text="stale-input"),
         queue=True,
+        input_type=INPUT_TYPE_INTERACTIVE,
     )
     assert accepted is True
 
@@ -3377,14 +3390,101 @@ async def test_runner_stop_preserves_managed_input_queue() -> None:
     assert stop_event.stats.status == state.RunnerStatus.STOPPED
 
     snapshot = await project.input_manager.snapshot()
-    assert [message.text for message in snapshot.queued_messages] == ["stale-input"]
+    assert [
+        message.text
+        for message in snapshot.queued_messages_by_type[INPUT_TYPE_INTERACTIVE]
+    ] == ["stale-input"]
 
     accepted_after_stop = await project.input_manager.publish(
         state.Message(role=models.Role.USER, text="fresh-input"),
         queue=False,
+        input_type=INPUT_TYPE_INTERACTIVE,
     )
 
     assert accepted_after_stop is False
+
+
+@pytest.mark.asyncio
+async def test_runner_prompt_waits_for_interactive_input_type() -> None:
+    node = InputNode(
+        name="input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        message="Say something",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    project = StubProject()
+    runner = Runner(
+        workflow=DummyWorkflow(name="wf-input-type-routing", graph=graph),
+        project=project,
+        initial_message=None,
+    )
+
+    accepted = await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="queued-http-input"),
+        queue=True,
+        input_type=INPUT_TYPE_HTTP,
+    )
+    assert accepted is True
+
+    agen = runner.run()
+    prompt_seen = False
+
+    async def publish_input() -> None:
+        accepted_local = await project.input_manager.publish(
+            state.Message(role=models.Role.USER, text="interactive-input"),
+            queue=False,
+            input_type=INPUT_TYPE_INTERACTIVE,
+        )
+        assert accepted_local is True
+
+    events: list[RunEvent] = []
+    send: RunEventResp | None = None
+    publish_task: asyncio.Task[None] | None = None
+    while True:
+        try:
+            if send is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(send)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        if (
+            event.step is not None
+            and event.step.type == state.StepType.PROMPT
+            and not prompt_seen
+        ):
+            prompt_seen = True
+            publish_task = asyncio.create_task(publish_input())
+        send = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    if publish_task is not None:
+        await publish_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "interactive-input"
+        for event in events
+    )
+    assert not any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "queued-http-input"
+        for event in events
+    )
+
+    snapshot = await project.input_manager.snapshot()
+    assert [
+        message.text for message in snapshot.queued_messages_by_type[INPUT_TYPE_HTTP]
+    ] == ["queued-http-input"]
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from tests.stub_project import StubProject
 from vocode import models, state
 from vocode.history.manager import HistoryManager
 from vocode.history.models import HistoryMutationResult
+from vocode.input_manager import INPUT_TYPE_INTERACTIVE
 from vocode import settings as vocode_settings
 from vocode.manager import autocomplete_providers as autocomplete_providers
 from vocode.manager import proto as manager_proto
@@ -381,7 +382,9 @@ async def test_uiserver_on_runner_event_user_input_message() -> None:
     initial_prompt_payload = initial_prompt_envelope.payload
     assert initial_prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
     assert isinstance(initial_prompt_payload, manager_proto.InputPromptPacket)
-    waiter_task = asyncio.create_task(project.input_manager.wait_for_input())
+    waiter_task = asyncio.create_task(
+        project.input_manager.wait_for_input(input_type=INPUT_TYPE_INTERACTIVE)
+    )
     await asyncio.sleep(0)
     user_message = state.Message(role=models.Role.USER, text="user input message")
     user_input_packet = manager_proto.UserInputPacket(message=user_message)
@@ -464,7 +467,9 @@ async def test_uiserver_on_runner_event_user_input_prompt_confirm_title() -> Non
     assert prompt_payload.kind == manager_proto.BasePacketKind.INPUT_PROMPT
     assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
     assert prompt_payload.title == "Press enter to confirm or provide a reply"
-    waiter_task = asyncio.create_task(project.input_manager.wait_for_input())
+    waiter_task = asyncio.create_task(
+        project.input_manager.wait_for_input(input_type=INPUT_TYPE_INTERACTIVE)
+    )
     await asyncio.sleep(0)
 
     user_message = state.Message(role=models.Role.USER, text="")
@@ -1040,7 +1045,9 @@ async def test_uiserver_aa_command_autoapproves_and_confirms_tool_call() -> None
     assert isinstance(prompt_payload, manager_proto.InputPromptPacket)
     assert prompt_payload.subtitle is not None
     assert "/aa" in prompt_payload.subtitle
-    waiter_task = asyncio.create_task(project.input_manager.wait_for_input())
+    waiter_task = asyncio.create_task(
+        project.input_manager.wait_for_input(input_type=INPUT_TYPE_INTERACTIVE)
+    )
     await asyncio.sleep(0)
 
     user_message = state.Message(role=models.Role.USER, text="/aa")
