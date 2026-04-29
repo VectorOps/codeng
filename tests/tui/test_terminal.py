@@ -720,8 +720,7 @@ async def test_incremental_render_updates_bottom_line_only_for_multiline_compone
     assert "line2" not in output
     assert "bottom1" not in output
     assert tui_controls.ERASE_SCROLLBACK not in output
-    assert cursor_up_once in output
-    assert output.count(cursor_up_once) == 1
+    assert cursor_up_once not in output
 
 
 @pytest.mark.asyncio

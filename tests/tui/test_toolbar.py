@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from vocode import state
 from vocode.manager import proto as manager_proto
 from vocode.tui import app as tui_app
 from vocode.tui import uistate as tui_uistate
+from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.input import base as input_base
 from tests.stub_project import StubProject
 
@@ -34,6 +36,10 @@ def _make_tui_state_with_console() -> tui_uistate.TUIState:
         on_stop=None,
         on_eof=None,
     )
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
 
 
 def test_tui_state_updates_toolbar_from_ui_state() -> None:
@@ -515,3 +521,40 @@ def test_history_search_escape_keeps_original_buffer() -> None:
     ui_state._handle_input_event(event_esc)
     assert ui_state._action_stack[-1].kind is tui_uistate.ActionKind.DEFAULT
     assert input_component.text == "draft"
+
+
+@pytest.mark.asyncio
+async def test_tui_initial_render_does_not_add_blank_line_after_toolbar() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=40,
+        height=10,
+    )
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    await ui_state.start()
+    try:
+        output = buffer.getvalue()
+    finally:
+        await ui_state.stop()
+
+    assert "0/0 (0%) | ts: 0 tr: 0 $0" in _strip_ansi(output)
+    assert f"0/0 (0%) | ts: 0 tr: 0 $0\n{tui_controls.SYNC_UPDATE_END}" not in output
