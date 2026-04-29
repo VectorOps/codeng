@@ -1578,3 +1578,30 @@ async def test_terminal_animation_worker_lifecycle() -> None:
 
     await terminal.stop()
     assert terminal._animation_task is None
+
+
+@pytest.mark.asyncio
+async def test_auto_render_worker_recovers_from_render_exception() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=True, min_render_interval_ms=0)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    class FailingComponent(DummyComponent):
+        def render(
+            self,
+            options: rich_console.ConsoleOptions,
+        ) -> tui_terminal.Lines:
+            raise RuntimeError("boom")
+
+    component = FailingComponent("hello")
+    terminal.append_component(component)
+    terminal._started = True
+
+    await terminal._auto_render_worker(force=True)
+
+    assert terminal._auto_render_task is None
+
+    component.text = "world"
+    terminal.notify_component(component)
+    assert terminal._dirty_components

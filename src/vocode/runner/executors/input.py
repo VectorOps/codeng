@@ -13,6 +13,12 @@ class InputNode(models.Node):
         default=None,
         description="Optional prompt message shown to the user when requesting input.",
     )
+    accepted_input_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional input type accepted by this node. Defaults to interactive input."
+        ),
+    )
     confirmation: models.Confirmation = Field(
         default=models.Confirmation.AUTO,
         description="Input nodes default to automatic confirmation after receiving user input.",

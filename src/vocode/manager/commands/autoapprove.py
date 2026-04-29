@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from vocode import models, state
+from vocode import input_manager, models, state
 
 from . import output as command_output
 from .base import CommandError, command, option
@@ -56,6 +56,7 @@ async def _aa(server, args: list[str]) -> None:
     accepted = await server.manager.project.input_manager.publish(
         state.Message(role=models.Role.USER, text=""),
         queue=False,
+        input_type=input_manager.INPUT_TYPE_INTERACTIVE,
     )
     if not accepted:
         raise CommandError("No tool confirmation is currently pending.")

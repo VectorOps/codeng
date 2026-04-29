@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from connect.credentials import chatgpt as connect_chatgpt_credentials
 
-from vocode import models, state
+from vocode import input_manager, models, state
 from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
 from vocode.history.models import HistoryMutationResult
@@ -421,12 +421,49 @@ async def test_queue_list_command_reports_queue_contents() -> None:
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
     assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
-    assert "Input queue" in payload.text
+    assert "Input queues" in payload.text
     assert "Queued messages: 2" in payload.text
+    assert "Type: interactive" in payload.text
     assert "[ 1] user" in payload.text
     assert "[ 2] user" in payload.text
     assert "queued-1" in payload.text
     assert "queued-2" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_queue_list_command_reports_typed_queue_contents() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="interactive-1"),
+        queue=True,
+        input_type=input_manager.INPUT_TYPE_INTERACTIVE,
+    )
+    await project.input_manager.publish(
+        state.Message(role=models.Role.USER, text="http-1"),
+        queue=True,
+        input_type=input_manager.INPUT_TYPE_HTTP,
+    )
+
+    message = state.Message(role=models.Role.USER, text="/queue list")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Type: interactive" in payload.text
+    assert "Type: http" in payload.text
+    assert "interactive-1" in payload.text
+    assert "http-1" in payload.text
 
 
 @pytest.mark.asyncio
@@ -451,7 +488,8 @@ async def test_queue_add_and_delete_commands_mutate_queue() -> None:
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
     assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
-    assert "Queued input message." in payload.text
+    assert "Queued input message in interactive." in payload.text
+    assert "interactive" in payload.text
 
     snapshot = await project.input_manager.snapshot()
     assert len(snapshot.queued_messages) == 1
@@ -696,7 +734,8 @@ async def test_queue_clear_command_empties_queue() -> None:
     payload = response_envelope.payload
     assert isinstance(payload, manager_proto.TextMessagePacket)
     assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
-    assert "Cleared 2 queued input message(s)." in payload.text
+    assert "Cleared 2 queued input message(s) across all queues." in payload.text
+    assert "across all queues" in payload.text
 
     snapshot = await project.input_manager.snapshot()
     assert len(snapshot.queued_messages) == 0

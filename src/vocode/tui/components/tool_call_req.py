@@ -105,6 +105,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         terminal = self.terminal
         if terminal is None:
             return ""
+        unicode_manager = terminal.unicode
         icon = tui_tcf.render_utils.render_status_icon(
             terminal,
             status,
@@ -115,7 +116,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
             status is vocode_state.ToolCallReqStatus.EXECUTING
             and self._show_execution_stats
         ):
-            frames = terminal.unicode.spinner_frames(tui_unicode.SpinnerVariant.BRAILLE)
+            frames = unicode_manager.spinner_frames(tui_unicode.SpinnerVariant.BRAILLE)
             self._frame_index = (self._frame_index + 1) % len(frames)
             return icon
         self._frame_index = 0
