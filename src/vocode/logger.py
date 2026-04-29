@@ -7,8 +7,6 @@ from typing import Optional
 
 import structlog
 
-LOG_FILE_NAME = "log.txt"
-
 
 @dataclass
 class LogRecordEntry:
@@ -126,14 +124,7 @@ def get_log_manager() -> Optional[LogManager]:
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
-    handlers=[
-        logging.FileHandler(
-            LOG_FILE_NAME,
-            mode="w",
-            encoding="utf-8",
-            delay=False,
-        )
-    ],
+    handlers=[],
 )
 
 structlog.configure(
