@@ -10,6 +10,7 @@ from rich import console as rich_console
 
 from vocode import models, state
 from vocode.history.manager import HistoryManager
+from vocode.manager import proto as manager_proto
 from vocode import settings as vocode_settings
 from vocode.tui import styles as tui_styles
 from vocode.tui import uistate as tui_uistate
@@ -405,6 +406,52 @@ async def test_tui_state_renders_user_output_messages_with_input_style() -> None
     assert isinstance(component, tui_rich_text_component.RichTextComponent)
     assert component.text == "> from-http"
     assert component.component_style == tui_styles.INPUT_MESSAGE_COMPONENT_STYLE
+
+
+@pytest.mark.asyncio
+async def test_tui_state_applies_display_collapse_to_user_output_messages() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    step = _make_step(
+        execution,
+        step_type=state.StepType.OUTPUT_MESSAGE,
+        message=state.Message(
+            role=models.Role.USER,
+            text="\n".join([f"line {index}" for index in range(10)]),
+        ),
+    )
+    display = manager_proto.RunnerReqDisplayOpts(collapse=True, collapse_lines=5)
+
+    ui_state.handle_step(step, display=display)
+
+    component = ui_state.terminal.components[1]
+    assert isinstance(component, tui_rich_text_component.RichTextComponent)
+    assert component.is_collapsed
+    assert component.compact_lines == 5
+
+    await ui_state.terminal.render()
+    output = buffer.getvalue()
+    assert "line 0" in output
+    assert "line 9" not in output
+    assert "... (" in output
 
 
 @pytest.mark.asyncio
