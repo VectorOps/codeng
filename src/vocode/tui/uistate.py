@@ -125,6 +125,7 @@ class TUIState:
             str, tui_step_output_component.StepOutputComponent
         ] = {}
         self._step_component_ids: set[str] = set()
+        self._alerted_execution_ids: set[str] = set()
         self._step_handlers: dict[
             vocode_state.StepType, typing.Callable[[vocode_state.Step], None]
         ] = {
@@ -1142,6 +1143,11 @@ class TUIState:
         step: vocode_state.Step,
         display: manager_proto.RunnerReqDisplayOpts | None = None,
     ) -> None:
+        if display is not None and display.alert:
+            execution_id = str(step.execution_id)
+            if execution_id not in self._alerted_execution_ids:
+                self._alerted_execution_ids.add(execution_id)
+                self._terminal.bell()
         if display is not None and display.visible is False:
             return
         if step.type is vocode_state.StepType.APPROVAL:

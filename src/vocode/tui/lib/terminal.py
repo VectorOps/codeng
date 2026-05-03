@@ -224,6 +224,10 @@ class Terminal:
             self._dirty_components.add(component)
             self._request_auto_render()
 
+    def bell(self) -> None:
+        self._console.file.write("\a")
+        self._console.file.flush()
+
     def get_component(self, component_id: str) -> tui_base.Component:
         if component_id not in self._id_index:
             raise KeyError(component_id)
