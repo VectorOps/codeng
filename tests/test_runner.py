@@ -246,6 +246,112 @@ class ToolPromptExecutor(BaseExecutor):
         yield step
 
 
+@ExecutorFactory.register("forward-last-input")
+class ForwardLastInputExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        text = ""
+        if inp.execution.input_messages:
+            text = inp.execution.input_messages[-1].text
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text=text,
+        )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
+@ExecutorFactory.register("static-output")
+class StaticOutputExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text=inp.execution.node,
+        )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
+@ExecutorFactory.register("validate-reset-check")
+class ValidateResetCheckExecutor(BaseExecutor):
+    captured_inputs: list[list[str]] = []
+    run_count: int = 0
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        visible_inputs = [
+            msg.text
+            for msg, _step in runner_base.iter_execution_messages(inp.execution)
+            if msg.text
+        ]
+        ValidateResetCheckExecutor.captured_inputs.append(visible_inputs)
+        ValidateResetCheckExecutor.run_count += 1
+
+        if ValidateResetCheckExecutor.run_count == 1:
+            outcome_name = "fail"
+            text = "validate-1"
+        elif ValidateResetCheckExecutor.run_count == 2:
+            outcome_name = "success"
+            text = "validate-2"
+        else:
+            msg = state.Message(
+                role=models.Role.SYSTEM,
+                text="stop",
+            )
+            history.upsert_message(inp.run, msg)
+            step = history.upsert_step(
+                inp.run,
+                state.Step(
+                    workflow_execution=inp.run,
+                    execution_id=inp.execution.id,
+                    type=state.StepType.REJECTION,
+                    message_id=msg.id,
+                    is_complete=True,
+                ),
+            )
+            yield step
+            return
+
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text=text,
+        )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=inp.execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                outcome_name=outcome_name,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
 @ExecutorFactory.register("multi-tool-prompt")
 class MultiToolPromptExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
@@ -950,6 +1056,100 @@ async def test_runner_execution_flow():
     assert isinstance(fake_executor, FakeExecutor)
     assert fake_executor.inited is True
     assert fake_executor.shutdown_called is True
+
+
+@pytest.mark.asyncio
+async def test_runner_reset_policy_defaults_to_reset_with_keep_edge_override() -> None:
+    ValidateResetCheckExecutor.captured_inputs = []
+    ValidateResetCheckExecutor.run_count = 0
+
+    input_node = models.Node(
+        name="input",
+        type="forward-last-input",
+        outcomes=[models.OutcomeSlot(name="done")],
+        confirmation=models.Confirmation.AUTO,
+    )
+    validate_node = models.Node(
+        name="validate",
+        type="validate-reset-check",
+        outcomes=[
+            models.OutcomeSlot(name="success"),
+            models.OutcomeSlot(name="fail"),
+        ],
+        confirmation=models.Confirmation.AUTO,
+    )
+    mark_node = models.Node(
+        name="mark",
+        type="static-output",
+        outcomes=[models.OutcomeSlot(name="done")],
+        confirmation=models.Confirmation.AUTO,
+    )
+    feedback_node = models.Node(
+        name="feedback",
+        type="static-output",
+        outcomes=[models.OutcomeSlot(name="done")],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(
+        nodes=[input_node, validate_node, mark_node, feedback_node],
+        edges=[
+            models.Edge(
+                source_node="input",
+                source_outcome="done",
+                target_node="validate",
+            ),
+            models.Edge(
+                source_node="validate",
+                source_outcome="success",
+                target_node="mark",
+            ),
+            models.Edge(
+                source_node="validate",
+                source_outcome="fail",
+                target_node="feedback",
+            ),
+            models.Edge(
+                source_node="mark",
+                source_outcome="done",
+                target_node="input",
+            ),
+            models.Edge(
+                source_node="feedback",
+                source_outcome="done",
+                target_node="validate",
+                reset_policy=models.StateResetPolicy.KEEP,
+            ),
+        ],
+    )
+    workflow = DummyWorkflow(name="wf-reset-policy-loop", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="initial payload",
+        ),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    assert runner.status == state.RunnerStatus.STOPPED
+    assert len(ValidateResetCheckExecutor.captured_inputs) == 3
+    assert ValidateResetCheckExecutor.captured_inputs[0] == ["initial payload"]
+    assert ValidateResetCheckExecutor.captured_inputs[1] == [
+        "initial payload",
+        "validate-1",
+        "feedback",
+    ]
+    assert ValidateResetCheckExecutor.captured_inputs[2] == ["mark"]
 
 
 @pytest.mark.asyncio
