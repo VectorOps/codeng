@@ -56,13 +56,17 @@ def build_effective_settings(
 def build_request(
     *,
     url: str,
+    method: models.WebClientMethod = models.WebClientMethod.get,
     headers: Optional[Dict[str, str]] = None,
     timeout_s: Optional[float] = None,
+    body: Optional[models.WebClientRequestBody] = None,
 ) -> models.WebClientRequest:
     return models.WebClientRequest(
         url=url,
+        method=method,
         headers=headers or {},
         timeout_s=timeout_s,
+        body=body,
     )
 
 

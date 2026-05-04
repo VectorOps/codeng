@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from enum import Enum
+from typing import Annotated
 from typing import Any, Dict, List
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 from urllib import parse
 
 from pydantic import BaseModel, Field
@@ -18,11 +21,68 @@ class WebContentKind(str, Enum):
     unsupported = "unsupported"
 
 
+class WebClientMethod(str, Enum):
+    get = "GET"
+    head = "HEAD"
+    post = "POST"
+    put = "PUT"
+    patch = "PATCH"
+    delete = "DELETE"
+
+
+class WebClientRequestBodyText(BaseModel):
+    kind: Literal["text"] = "text"
+    content_type: str
+    text: str
+    encoding: str = "utf-8"
+
+    @field_validator("content_type", "encoding")
+    @classmethod
+    def _validate_non_empty_string(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be empty")
+        return normalized
+
+
+class WebClientRequestBodyBinary(BaseModel):
+    kind: Literal["binary"] = "binary"
+    content_type: str
+    data_base64: str
+
+    @field_validator("content_type", "data_base64")
+    @classmethod
+    def _validate_non_empty_string(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be empty")
+        return normalized
+
+    @field_validator("data_base64")
+    @classmethod
+    def _validate_base64_payload(cls, value: str) -> str:
+        try:
+            base64.b64decode(value, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("data_base64 must be valid base64") from exc
+        return value
+
+    def decoded_bytes(self) -> bytes:
+        return base64.b64decode(self.data_base64, validate=True)
+
+
+WebClientRequestBody = Annotated[
+    Union[WebClientRequestBodyText, WebClientRequestBodyBinary],
+    Field(discriminator="kind"),
+]
+
+
 class WebClientRequest(BaseModel):
     url: str
-    method: Literal["GET"] = "GET"
+    method: WebClientMethod = WebClientMethod.get
     headers: Dict[str, str] = Field(default_factory=dict)
     timeout_s: Optional[float] = Field(default=None, gt=0)
+    body: Optional[WebClientRequestBody] = None
 
     @field_validator("url")
     @classmethod
@@ -54,6 +114,13 @@ class WebClientRequest(BaseModel):
                 raise ValueError("header names must not be empty")
             normalized[name] = item.strip()
         return normalized
+
+    @model_validator(mode="after")
+    def _validate_method_and_body(self) -> "WebClientRequest":
+        if self.method in (WebClientMethod.get, WebClientMethod.head):
+            if self.body is not None:
+                raise ValueError("request body is not allowed for GET or HEAD requests")
+        return self
 
 
 class WebClientRawContent(BaseModel):
@@ -122,6 +189,13 @@ class WebClientSettings(vars_mod.BaseVarModel):
     allowed_schemes: List[str] = Field(default_factory=lambda: ["http", "https"])
     url_blocklist: List[str] = Field(default_factory=list)
     allowed_content_types: List[str] = Field(default_factory=list)
+    allowed_methods: List[str] = Field(
+        default_factory=lambda: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
+    )
+    max_request_body_bytes: int = Field(default=1_000_000, gt=0)
+    allowed_request_content_types: List[str] = Field(default_factory=list)
+    allow_binary_request_bodies: bool = True
+    require_explicit_content_type_for_body: bool = True
     return_headers: bool = False
 
     @field_validator("backend")
@@ -161,7 +235,13 @@ class WebClientSettings(vars_mod.BaseVarModel):
             raise ValueError("allowed_schemes must not be empty")
         return normalized
 
-    @field_validator("url_blocklist", "allowed_content_types", mode="before")
+    @field_validator(
+        "url_blocklist",
+        "allowed_content_types",
+        "allowed_methods",
+        "allowed_request_content_types",
+        mode="before",
+    )
     @classmethod
     def _coerce_string_list(cls, value: Any) -> Any:
         if value is None:
@@ -183,6 +263,32 @@ class WebClientSettings(vars_mod.BaseVarModel):
     @field_validator("allowed_content_types")
     @classmethod
     def _normalize_allowed_content_types(cls, value: List[str]) -> List[str]:
+        normalized: List[str] = []
+        for item in value:
+            content_type = item.strip().lower()
+            if not content_type:
+                continue
+            if content_type not in normalized:
+                normalized.append(content_type)
+        return normalized
+
+    @field_validator("allowed_methods")
+    @classmethod
+    def _normalize_allowed_methods(cls, value: List[str]) -> List[str]:
+        normalized: List[str] = []
+        for item in value:
+            method = item.strip().upper()
+            if not method:
+                continue
+            if method not in normalized:
+                normalized.append(method)
+        if not normalized:
+            raise ValueError("allowed_methods must not be empty")
+        return normalized
+
+    @field_validator("allowed_request_content_types")
+    @classmethod
+    def _normalize_allowed_request_content_types(cls, value: List[str]) -> List[str]:
         normalized: List[str] = []
         for item in value:
             content_type = item.strip().lower()
