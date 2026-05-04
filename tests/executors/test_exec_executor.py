@@ -69,3 +69,96 @@ def test_exec_executor_streaming(tmp_path: Path) -> None:
         await pm.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_exec_executor_stdin_literal(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        history = HistoryManager()
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        proj = StubProject(process_manager=pm)
+
+        node = ExecNode(
+            name="exec1",
+            type="exec",
+            command="python -c 'import sys; sys.stdout.write(sys.stdin.read())'",
+            stdin="hello from stdin\n",
+            outcomes=[models.OutcomeSlot(name="done")],
+        )
+
+        run = state.WorkflowExecution(
+            workflow_name="test",
+        )
+        execution = history.upsert_node_execution(
+            run,
+            state.NodeExecution(
+                node=node.name,
+                status=state.RunStatus.RUNNING,
+            ),
+        )
+
+        executor = ExecExecutor(config=node, project=proj)  # type: ignore[arg-type]
+        inp = ExecutorInput(execution=execution, run=run)
+
+        steps: list[state.Step] = []
+        async for step in executor.run(inp):
+            steps.append(step)
+
+        final = steps[-1]
+        final_text = final.message.text if final.message else ""
+        assert final_text.endswith("hello from stdin")
+        assert final.is_complete is True
+        assert final.is_final is True
+        assert final.outcome_name == "done"
+
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_exec_executor_stdin_from_input_message(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        history = HistoryManager()
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        proj = StubProject(process_manager=pm)
+
+        node = ExecNode(
+            name="exec1",
+            type="exec",
+            command="python -c 'import sys; sys.stdout.write(sys.stdin.read())'",
+            stdin_source="input_message",
+            outcomes=[models.OutcomeSlot(name="done")],
+        )
+
+        run = state.WorkflowExecution(
+            workflow_name="test",
+        )
+        input_message = history.upsert_message(
+            run,
+            state.Message(role=models.Role.USER, text="message stdin\n"),
+        )
+        execution = history.upsert_node_execution(
+            run,
+            state.NodeExecution(
+                node=node.name,
+                input_message_ids=[input_message.id],
+                status=state.RunStatus.RUNNING,
+            ),
+        )
+
+        executor = ExecExecutor(config=node, project=proj)  # type: ignore[arg-type]
+        inp = ExecutorInput(execution=execution, run=run)
+
+        steps: list[state.Step] = []
+        async for step in executor.run(inp):
+            steps.append(step)
+
+        final = steps[-1]
+        final_text = final.message.text if final.message else ""
+        assert final_text.endswith("message stdin")
+        assert final.is_complete is True
+        assert final.is_final is True
+        assert final.outcome_name == "done"
+
+        await pm.shutdown()
+
+    asyncio.run(scenario())
