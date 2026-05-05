@@ -1,15 +1,17 @@
 # MCP integration refactor plan
 
-This plan updates MCP integration so tool enablement is owned by LLM nodes, while workflow lifecycle management is owned by the workflow manager through an explicit runtime contract.
+This plan updates MCP integration so `LLMExecutor` owns `LLMNode` and all node-local MCP configuration, while workflow lifecycle management remains owned by the workflow manager through an explicit runtime contract.
 
-The key startup change is that workflow start must not trigger any MCP source discovery or session startup on its own. The runner reports workflow start first, and only after that do LLM nodes report their MCP dependencies. MCP startup begins only from those node reports.
+The key ownership rule is that no code outside the LLM executor may scan or depend on the private shape of `LLMNode` to infer MCP requirements. If `LLMNode` changes, only the LLM executor should need to change.
+
+The key startup behavior is that all MCP servers are initialized at workflow start, as they are today, but the initialization path moves behind `LLMExecutor.init()`. The executor reads its own `LLMNode` MCP config, calls MCP service APIs directly to initialize the required servers for the workflow run, and handles MCP tool injection and resolution there.
 
 ## Goals
 
 - Move MCP tool enablement from workflow level to LLM node level.
-- Let LLM executors report MCP requirements to the workflow manager at startup.
-- Ensure workflow start is inert with respect to MCP until node-level reports arrive.
-- Keep MCP session startup and shutdown managed centrally by workflow lifecycle.
+- Make `LLMExecutor` the sole owner of `LLMNode` MCP config and initialization behavior.
+- Keep all MCP servers initialized at workflow start, matching current behavior.
+- Have `LLMExecutor.init()` call MCP service APIs and perform tool injection and resolution directly.
 - Support nested workflows and multiple workflows running in parallel.
 - Preserve wildcard matching for MCP tool selectors.
 - Auto-inject matched MCP tools for a node without requiring users to manually list each internal tool name.
@@ -25,20 +27,19 @@ The key startup change is that workflow start must not trigger any MCP source di
 
 There are three distinct responsibilities.
 
-The LLM node owns MCP intent:
+The LLM executor owns `LLMNode` and node-local MCP configuration:
 
-- which MCP sources it wants
-- which tools it wants from those sources
-- whether tools should be injected directly or exposed through discovery only
-- whether listed MCP tools should be hidden from direct injection
+- read `LLMNode` and its related MCP config directly
+- translate node-local MCP intent into MCP service calls
+- initialize required MCP servers from `LLMExecutor.init()` at workflow start
+- resolve and inject the node-visible MCP tools there
+- shield the rest of the system from `LLMNode` shape changes
 
-The MCP manager owns MCP lifecycle and tool resolution:
+The workflow manager owns workflow lifecycle only:
 
-- collect MCP requirements for each running workflow instance
-- reconcile required MCP sources for that workflow instance
-- start required sessions before execution proceeds
-- shut them down automatically when the workflow instance ends
-- resolve node-visible MCP tools from the node's declared MCP intent
+- start and stop workflow execution
+- keep workflow execution state scoped to a workflow instance
+- avoid scanning `LLMNode` or reconstructing node-local MCP behavior from outside the executor
 
 The MCP service owns source/session execution:
 
@@ -49,15 +50,13 @@ The MCP service owns source/session execution:
 
 ## Core contract
 
-The key change is a new runtime contract between nodes and the workflow manager.
+The key change is a new ownership contract between the executor, workflow manager, and MCP service.
 
-LLM executors must report MCP requirements for the workflow instance they belong to after the workflow has started.
+`LLMExecutor.init()` is the MCP initialization entry point for `LLMNode`-backed execution. It reads the node-local MCP config, calls MCP service APIs, and performs tool injection and resolution for that node.
 
-The manager must not inspect the workflow graph or workflow config to infer MCP requirements.
+The manager must not inspect the workflow graph, inspect workflow config, or scan `LLMNode` to infer MCP requirements.
 
-The workflow-start notification from the runner is required workflow lifecycle state, but it is not an MCP startup trigger by itself. MCP reconciliation starts only after explicit node reports arrive.
-
-The manager must aggregate these reports per workflow execution instance, not globally.
+Workflow start remains the MCP startup trigger, but the trigger flows through executor-owned initialization instead of external config scanning. That preserves current startup timing while removing dependencies on private `LLMNode` structure.
 
 This contract must work for:
 
@@ -65,93 +64,15 @@ This contract must work for:
 - nested workflows
 - parallel running workflows
 
-The contract must be instance-scoped, keyed by workflow execution id.
+The contract must still be instance-scoped, keyed by workflow execution id.
 
-## Proposed runtime protocol
+## Runtime contract
 
-Add new runner event types so nodes can report MCP requirements through the existing manager-runner event channel.
+There is no new runner event or manager-side MCP requirements protocol.
 
-This protocol replaces any workflow-level MCP scanning or precomputation.
+`LLMExecutor.init()` reads `LLMNode.mcp`, initializes the required MCP sources directly through the MCP service, refreshes tool cache as needed, and wires the node-visible MCP tools there.
 
-Recommended new events:
-
-1. `MCP_REQUIREMENTS`
-   emitted by an executor to report the full MCP requirement set for the current node and workflow execution
-
-2. `MCP_REQUIREMENTS_CLEAR`
-   emitted when a node no longer needs its previously reported requirements, if explicit cleanup becomes necessary
-
-For the first implementation, `MCP_REQUIREMENTS_CLEAR` is optional if the manager treats requirements as workflow-instance lifetime state and clears them automatically when the workflow finishes.
-
-## Proposed protocol payloads
-
-Add new models in `src/vocode/runner/proto.py`.
-
-Suggested payload shape:
-
-```python
-class MCPToolResolutionMode(str, Enum):
-    inject = "inject"
-    discovery = "discovery"
-
-
-class MCPToolSelectorPacket(BaseModel):
-    source: str
-    tool: str
-
-
-class MCPNodeRequirement(BaseModel):
-    node_name: str
-    resolution_mode: MCPToolResolutionMode
-    hide_listed_tools: bool = False
-    tools: list[MCPToolSelectorPacket] = Field(default_factory=list)
-    disabled_tools: list[MCPToolSelectorPacket] = Field(default_factory=list)
-
-
-class RunEventMCPRequirements(BaseModel):
-    workflow_name: str
-    workflow_execution_id: str
-    node_name: str
-    requirement: MCPNodeRequirement
-```
-
-Add a new `RunEventReqKind.MCP_REQUIREMENTS` variant.
-
-The event must always include:
-
-- workflow name
-- workflow execution id
-- node name
-- full node MCP requirement payload
-
-The event should be treated as an upsert for that node within that workflow execution.
-
-## Manager-side aggregation model
-
-The manager should store MCP requirements per workflow execution id.
-
-Recommended internal structure:
-
-```python
-workflow_execution_id -> {
-    node_name -> MCPNodeRequirement
-}
-```
-
-The manager then derives:
-
-- required MCP source set for that workflow instance
-- per-node MCP tool visibility used later by LLM execution
-
-Important rule:
-
-The aggregation key must be workflow execution id, not workflow name.
-
-This is required so the contract supports:
-
-- two runs of the same workflow at the same time
-- nested workflows using the same workflow definition
-- future parallel execution without collisions
+The manager and runner do not scan node config and do not receive a separate MCP requirement event.
 
 ## Lifecycle behavior
 
@@ -159,13 +80,11 @@ This is required so the contract supports:
 
 1. Manager starts workflow runner.
 2. Manager records workflow lifecycle state only.
-3. No MCP startup happens yet.
+3. No workflow-level MCP scanning happens.
 4. LLM executor initializes.
-5. The LLM executor reports its MCP requirements through `MCP_REQUIREMENTS`.
-6. Manager records the node's requirement for that workflow execution id.
-7. Manager reconciles MCP sessions for that workflow execution instance.
-8. Required MCP sessions are started before the node can proceed with tool-enabled execution.
-9. Tool caches are refreshed for newly started sources.
+5. `LLMExecutor.init()` starts the MCP sources needed by that node for the current workflow run.
+6. Tool caches are refreshed for newly started sources.
+7. The executor resolves and injects the node-visible MCP tools before execution continues.
 
 Important startup invariant:
 
@@ -175,9 +94,8 @@ Important startup invariant:
 ### Workflow shutdown
 
 1. Runner finishes or stops.
-2. Manager clears all stored MCP requirements for that workflow execution id.
-3. Manager tells the MCP service to release workflow-instance references.
-4. MCP service closes workflow-scoped sessions no longer referenced by any active workflow instance.
+2. Workflow-scoped MCP sessions started for that workflow run are released.
+3. MCP service closes workflow-scoped sessions that are no longer needed.
 
 ### Nested workflows
 
@@ -243,17 +161,18 @@ Important rule:
 
 ## Startup ownership
 
-The user requested that the runner report workflow start first, and then LLM nodes report required MCP servers instead of a global manager scanning arbitrary workflow config.
+The desired startup path keeps current behavior where all MCP servers are initialized at workflow start, but it moves that responsibility behind the LLM executor boundary.
 
 That means:
 
 - no graph-wide static inspection for MCP tool selection
-- no MCP source discovery during workflow-start handling
+- no external scanning of private `LLMNode` fields
 - no workflow-level MCP selector ownership
-- runner workflow-start events establish workflow lifetime only
-- LLM nodes are the source of truth for node MCP requirements
+- workflow start still causes MCP initialization, like today
+- `LLMExecutor.init()` calls MCP service APIs for the current node and workflow instance
+- tool injection and tool resolution happen inside the LLM executor
 
-The MCP manager consumes the explicit reports and owns lifecycle and tool resolution.
+This removes the dependency web around `LLMNode` and keeps ownership aligned with the code that already owns the model.
 
 ## Required code changes
 
@@ -277,24 +196,7 @@ Important note:
 - project settings still define available MCP sources
 - node runtime behavior determines which of those sources are actually started
 
-### 2. Runner protocol
-
-Files:
-
-- `src/vocode/runner/proto.py`
-
-Changes:
-
-- add `RunEventReqKind.MCP_REQUIREMENTS`
-- add MCP requirement payload models
-- add response type if manager acknowledgment is needed
-
-Recommended first version:
-
-- manager can respond with `NOOP`
-- runner just needs the manager to process the event before execution continues
-
-### 3. LLM executor reporting
+### 3. LLM executor initialization
 
 Files:
 
@@ -303,37 +205,18 @@ Files:
 
 Changes:
 
-- after workflow start has been reported, emit MCP requirements for the current node before MCP-backed tools are used
-- report the complete node-local MCP configuration as an upsert event
-- do not start sessions directly from executor code
-- wait for manager-mediated initialization before building connect tool specs
+- make `LLMExecutor.init()` the place that reads `LLMNode.mcp`
+- call MCP service APIs from `LLMExecutor.init()` during workflow start
+- initialize all required MCP servers there, matching current startup timing
+- resolve and inject MCP-backed tools there before execution continues
+- do not require any external component to understand `LLMNode` internals
+- completion indicator: a workflow with node-level MCP config starts its required MCP session during executor init, without any new runner event
 
 Recommended implementation detail:
 
-- the runner owns the manager event channel and should transport the report after workflow start and before the executor builds MCP-backed tools
-- the executor provides MCP intent only; it does not own lifecycle or tool resolution
-
-### 4. Manager aggregation and reconciliation
-
-Files:
-
-- `src/vocode/manager/base.py`
-- `src/vocode/manager/server.py`
-- possibly `src/vocode/project.py`
-
-Changes:
-
-- extend manager-side runner event handling for `MCP_REQUIREMENTS`
-- store per-workflow-execution and per-node MCP requirements
-- derive required source sets per workflow execution instance
-- resolve node-local MCP tool visibility and materialization from those requirements
-- notify project or MCP service to reconcile sessions for that workflow execution instance
-- clear requirements automatically on workflow finish/stop
-
-Must not do:
-
-- do not start MCP sessions from workflow-start callbacks
-- do not inspect workflow config to compute MCP sources ahead of node reports
+- keep the runner workflow-start flow intact
+- hand executor-owned MCP initialization enough workflow-instance context to initialize the right servers
+- keep the executor as the only layer that translates `LLMNode` config into MCP service operations
 
 ### 5. MCP service lifecycle refactor
 
@@ -358,7 +241,7 @@ workflow_execution_id -> set[source_name]
 - reconcile session start and shutdown based on active workflow-instance references
 - keep project-scoped sessions independent
 
-### 6. Node-local tool materialization
+### 5. Node-local tool materialization
 
 Files:
 
@@ -374,7 +257,7 @@ Changes:
 - keep wildcard matching intact
 - preserve disabled selector precedence
 
-### 7. Global project tool registry cleanup
+### 6. Global project tool registry cleanup
 
 Files:
 
@@ -388,7 +271,7 @@ Changes:
 
 This is important because different LLM nodes may expose different MCP tool subsets.
 
-### 8. TUI failure surfacing
+### 7. TUI failure surfacing
 
 Files:
 
@@ -428,51 +311,22 @@ Verification:
 - settings tests pass with node-level MCP config only
 - no workflow-level MCP references remain in config models
 
-### Step 2: add runner protocol for MCP requirements
+### Step 2: wire MCP startup directly into `LLMExecutor.init()`
 
 Developer instructions:
 
-1. Add MCP requirement event models to `src/vocode/runner/proto.py`.
-2. Add a new run event kind for MCP requirements.
-3. Ensure manager event dispatch can receive the new event.
+1. Read `LLMNode.mcp` directly inside `LLMExecutor.init()`.
+2. Start the required MCP sources there through the MCP service.
+3. Refresh tool cache for sources newly started for that workflow run.
+4. Build the node-local MCP tool set there without adding any new runner event.
 
-Verification:
+Completion indicator:
 
-- protocol models serialize and validate
-- manager can receive and ignore a no-op MCP requirement event without breaking existing flows
+- a workflow with one LLM node starts its required MCP sources during executor init
+- workflow start alone does not start workflow-scoped MCP sessions when no node needs them
+- repeated runs do not leak MCP session state across workflow run ids
 
-### Step 3: make LLM nodes report MCP requirements
-
-Developer instructions:
-
-1. Add a helper that converts `LLMNode.mcp` into a protocol payload.
-2. Emit that event after workflow start has been reported and before MCP-backed tools are built.
-3. Treat the report as authoritative for that node instance.
-
-Verification:
-
-- a workflow with one LLM node emits one requirement report
-- workflow start alone does not start MCP sessions before the report
-- repeated runs do not leak requirement state across workflow execution ids
-
-### Step 4: implement manager-side aggregation
-
-Developer instructions:
-
-1. Add manager storage keyed by workflow execution id and node name.
-2. On MCP requirement events, upsert stored requirements.
-3. Derive required source names for that workflow instance.
-4. Reconcile MCP sessions through the project/MCP service.
-5. On workflow finish or stop, clear requirement state for that workflow execution id.
-
-Verification:
-
-- nested workflows keep independent requirement sets
-- stopping a child workflow does not clear parent requirements
-- two workflow instances can coexist without collisions
-- workflow-start notifications without subsequent node reports produce no MCP session changes
-
-### Step 5: refactor MCP service to track workflow-instance references
+### Step 3: refactor MCP service lifecycle tracking
 
 Developer instructions:
 
@@ -486,7 +340,7 @@ Verification:
 - if two workflow instances require the same source, closing one instance keeps the session alive
 - closing the last referencing workflow instance shuts the session down
 
-### Step 6: move MCP tool injection to node-local LLM execution
+### Step 4: move MCP tool injection to node-local LLM execution
 
 Developer instructions:
 
@@ -496,13 +350,13 @@ Developer instructions:
 4. Inject only `mcp_discovery` in discovery mode.
 5. Keep prompt/resource helper behavior aligned with node-local MCP selection.
 
-Verification:
+Completion indicator:
 
 - one node can see a source/tool subset that another node cannot
 - discovery mode injects only the discovery tool
 - wildcard selectors still work
 
-### Step 7: stop leaking node-scoped MCP tools into `project.tools`
+### Step 5: stop leaking node-scoped MCP tools into `project.tools`
 
 Developer instructions:
 
@@ -510,12 +364,12 @@ Developer instructions:
 2. Stop materializing node-specific MCP adapters into the global registry.
 3. Let the LLM executor compose node-local MCP tools when building connect tool specs.
 
-Verification:
+Completion indicator:
 
 - MCP tool availability differs correctly across nodes in the same workflow
 - non-MCP tools still behave exactly as before
 
-### Step 8: surface MCP failures to the TUI
+### Step 6: surface MCP failures to the TUI
 
 Developer instructions:
 
@@ -524,27 +378,27 @@ Developer instructions:
 3. Send visible user-facing messages to the TUI when MCP startup or connection fails.
 4. Add tests proving the message is emitted.
 
-Verification:
+Completion indicator:
 
 - failing stdio startup produces a visible UI message
 - failing external connection produces a visible UI message
 - messages identify the source name and failure reason
 
-### Step 9: add and update tests
+### Step 7: add and update tests
 
 Developer instructions:
 
 1. Replace workflow-level MCP config tests with node-level config tests.
-2. Add protocol tests for MCP requirement events.
+2. Add tests for executor-owned node-level MCP startup and wiring.
 3. Add manager aggregation tests for nested workflows and parallel workflow instances.
 4. Add node-local tool injection tests.
 5. Add TUI notification tests for MCP failures.
 
-Verification:
+Completion indicator:
 
 - targeted test suite passes
 
-### Step 10: format and validate
+### Step 8: format and validate
 
 Developer instructions:
 
@@ -562,9 +416,11 @@ uv run pytest tests/mcp tests/tools/test_mcp_discovery_tool.py tests/manager tes
 
 - No workflow-level MCP tool selection config remains.
 - No workflow-level MCP definitions remain.
-- LLM nodes are the source of truth for MCP requirements.
-- Workflow start itself does not trigger MCP session startup.
-- MCP manager owns lifecycle and tool resolution based on node reports.
+- `LLMExecutor` owns `LLMNode` and all related MCP config.
+- Workflow start still initializes MCP servers, matching current behavior.
+- `LLMExecutor.init()` is the initialization entry point and calls MCP service APIs directly.
+- Tool injection and tool resolution happen inside the LLM executor.
+- No external component scans private `LLMNode` shape.
 - Workflow execution id is the isolation key.
 - Nested and parallel workflows must both work.
 - Wildcard selectors remain supported.
