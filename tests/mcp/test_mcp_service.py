@@ -485,21 +485,6 @@ async def test_service_rejects_when_mcp_disabled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_start_and_finish_workflow_manage_workflow_scoped_sessions() -> (
-    None
-):
-    service = MCPService(_make_settings())
-
-    await service.start_workflow("wf")
-
-    assert set(service.list_sessions().keys()) == {"local"}
-
-    await service.finish_workflow("wf")
-
-    assert service.list_sessions() == {}
-
-
-@pytest.mark.asyncio
 async def test_service_reconciles_workflow_scoped_sessions_differentially() -> None:
     settings = MCPSettings(
         sources={
@@ -606,126 +591,6 @@ async def test_service_tracks_workflow_source_references_by_run_id() -> None:
 
     assert cleared_second.stopped_sources == ["local"]
     assert service.list_sessions() == {}
-
-
-def test_service_build_project_tools_materializes_helpers_and_filtered_adapters() -> (
-    None
-):
-    settings = MCPSettings(
-        discovery={"enabled": True},
-        sources={
-            "local": MCPStdioSourceSettings(
-                command=sys.executable,
-                args=["-c", _SERVICE_HANDSHAKE_SERVER],
-            )
-        },
-    )
-    service = MCPService(settings)
-    service.cache_tool_descriptors(
-        "local",
-        [
-            {"name": "search", "description": "Search docs"},
-            {"name": "fetch", "description": "Fetch docs"},
-        ],
-    )
-
-    class _PromptResourceSession:
-        def __init__(self) -> None:
-            self.state = type(
-                "_State",
-                (),
-                {
-                    "initialized": True,
-                    "phase": "operating",
-                    "negotiation": type(
-                        "_Negotiation",
-                        (),
-                        {
-                            "server_capabilities": type(
-                                "_Capabilities",
-                                (),
-                                {"prompts": True, "resources": True},
-                            )()
-                        },
-                    )(),
-                },
-            )()
-            self.source = type("_Source", (), {"scope": "workflow"})()
-
-    class _Project:
-        def __init__(self) -> None:
-            self.mcp = service
-
-    service._sessions["local"] = _PromptResourceSession()  # type: ignore[assignment]
-
-    tools = service.build_project_tools(_Project(), {"mcp__local__blocked"})
-
-    assert tools == {}
-
-
-def test_tool_materialization_helper_matches_service_build_project_tools() -> None:
-    settings = MCPSettings(
-        discovery={"enabled": True},
-        sources={
-            "local": MCPStdioSourceSettings(
-                command=sys.executable,
-                args=["-c", _SERVICE_HANDSHAKE_SERVER],
-            )
-        },
-    )
-    service = MCPService(settings)
-    service.cache_tool_descriptors(
-        "local",
-        [{"name": "fetch", "description": "Fetch docs"}],
-    )
-
-    class _PromptResourceSession:
-        def __init__(self) -> None:
-            self.state = type(
-                "_State",
-                (),
-                {
-                    "initialized": True,
-                    "phase": "operating",
-                    "negotiation": type(
-                        "_Negotiation",
-                        (),
-                        {
-                            "server_capabilities": type(
-                                "_Capabilities",
-                                (),
-                                {"prompts": False, "resources": False},
-                            )()
-                        },
-                    )(),
-                },
-            )()
-            self.source = type("_Source", (), {"scope": "workflow"})()
-
-    class _Project:
-        def __init__(self) -> None:
-            self.mcp = service
-
-    service._sessions["local"] = _PromptResourceSession()  # type: ignore[assignment]
-    project = _Project()
-
-    tools_from_service, _ = service.build_node_tools(
-        project,
-        [MCPToolSelector(source="local", tool="*")],
-        [],
-        resolution_mode="inject",
-        hide_listed_tools=False,
-    )
-    tools_from_helper, _ = mcp_tool_materialization.build_node_tools(
-        service,
-        project,
-        [MCPToolSelector(source="local", tool="*")],
-        [],
-        resolution_mode="inject",
-        hide_listed_tools=False,
-    )
-
-    assert set(tools_from_service.keys()) == set(tools_from_helper.keys())
 
 
 def test_service_caches_and_clears_tool_descriptors_per_source() -> None:
@@ -1064,6 +929,30 @@ async def test_service_does_not_retain_failed_session_start() -> None:
 
     assert service.get_session("broken") is None
     assert service.list_sessions() == {}
+
+
+@pytest.mark.asyncio
+async def test_service_notifies_on_session_start_failure() -> None:
+    settings = MCPSettings(
+        sources={
+            "broken": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _BROKEN_SERVICE_SERVER],
+            )
+        }
+    )
+    notifications: list[str] = []
+    service = MCPService(
+        settings,
+        notification_callback=notifications.append,
+    )
+
+    with pytest.raises(MCPServiceError, match="failed to start mcp source broken"):
+        await service.start_session("broken")
+
+    assert notifications == [
+        "MCP source 'broken' failed to start: unexpected notification received before initialize response"
+    ]
 
 
 @pytest.mark.asyncio

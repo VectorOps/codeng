@@ -71,18 +71,17 @@ class LLMExecutor(runner_base.BaseExecutor):
             source_settings = mcp_settings.sources.get(source_name)
             if source_settings is None:
                 continue
-            if (
-                source_settings.scope.value == "workflow"
-                and self.project.current_workflow_run_id is not None
-            ):
+            if source_settings.scope.value == "workflow":
                 workflow_source_names.append(source_name)
                 continue
             direct_source_names.append(source_name)
 
-        if workflow_source_names and self.project.current_workflow_run_id is not None:
-            self._workflow_run_id = self.project.current_workflow_run_id
-            change = await self.project.mcp.apply_workflow_requirements(
-                self._workflow_run_id,
+        workflow_execution_id = self._get_workflow_execution_id()
+        if workflow_source_names and workflow_execution_id is not None:
+            self._workflow_run_id = workflow_execution_id
+            change = await self.project.mcp.apply_node_requirements(
+                workflow_execution_id,
+                self.config.name,
                 workflow_source_names,
             )
             for source_name in change.started_sources:
@@ -125,8 +124,9 @@ class LLMExecutor(runner_base.BaseExecutor):
     async def shutdown(self) -> None:
         if self.project.mcp is not None:
             if self._workflow_run_id is not None:
-                await self.project.mcp.clear_workflow_requirements(
+                await self.project.mcp.clear_node_requirements(
                     self._workflow_run_id,
+                    self.config.name,
                 )
             for source_name in self._started_mcp_sources:
                 await self.project.mcp.close_session(source_name)
@@ -134,6 +134,9 @@ class LLMExecutor(runner_base.BaseExecutor):
         self._node_mcp_tool_specs = {}
         self._workflow_run_id = None
         self._started_mcp_sources = []
+
+    def _get_workflow_execution_id(self) -> Optional[str]:
+        return self.workflow_execution_id
 
     async def _ensure_provider_authorization(self) -> Optional[str]:
         provider = None

@@ -56,6 +56,12 @@ class BaseManager:
         self._driver_task: Optional[asyncio.Task[None]] = None
         self._history = self.project.history
 
+    def _set_active_frame(self, frame: Optional[RunnerFrame]) -> None:
+        if frame is None:
+            self.project.current_workflow = None
+            return
+        self.project.current_workflow = frame.workflow_name
+
     def _ensure_driver_task(self) -> None:
         if self._driver_task is not None and not self._driver_task.done():
             return
@@ -129,7 +135,7 @@ class BaseManager:
             await self._stop_runner_frame(frame)
 
         self._runner_stack.clear()
-        self.project.current_workflow = None
+        self._set_active_frame(None)
 
     async def start_workflow(
         self,
@@ -146,7 +152,7 @@ class BaseManager:
             initial_message=initial_message,
         )
         self._runner_stack.append(frame)
-        self.project.current_workflow = workflow_name
+        self._set_active_frame(frame)
 
         self._ensure_driver_task()
         return runner
@@ -175,7 +181,7 @@ class BaseManager:
             raise RuntimeError(
                 f"Cannot continue runner in status '{frame.runner.status}'"
             )
-        self.project.current_workflow = frame.workflow_name
+        self._set_active_frame(frame)
 
         self._ensure_driver_task()
         return frame.runner
@@ -293,7 +299,7 @@ class BaseManager:
                     finished_frame.agen = None
 
                     if finished_frame.runner.status == state.RunnerStatus.STOPPED:
-                        self.project.current_workflow = finished_frame.workflow_name
+                        self._set_active_frame(finished_frame)
                         break
 
                     # If runner generator finished, pop it from the stack
@@ -319,10 +325,10 @@ class BaseManager:
                                     ),
                                 ),
                             )
-                        self.project.current_workflow = parent_frame.workflow_name
+                        self._set_active_frame(parent_frame)
                     else:
                         send = None
-                        self.project.current_workflow = None
+                        self._set_active_frame(None)
 
                     continue
 
@@ -348,14 +354,16 @@ class BaseManager:
                             resp_type=RunEventResponseType.MESSAGE,
                             message=error_message,
                         )
-                        self.project.current_workflow = parent_frame.workflow_name
+                        self._set_active_frame(parent_frame)
                         continue
 
                     send = None
-                    self.project.current_workflow = None
+                    self._set_active_frame(None)
                     continue
 
                 send = await self._emit_run_event(frame, event)
+                if self._runner_stack and self._runner_stack[-1] is not frame:
+                    send = None
         except asyncio.CancelledError:
             # Runner task was canceled, cleanup by canceling runner generator
             if self._runner_stack:
@@ -384,4 +392,4 @@ class BaseManager:
         finally:
             self._driver_task = None
             if not self._runner_stack:
-                self.project.current_workflow = None
+                self._set_active_frame(None)

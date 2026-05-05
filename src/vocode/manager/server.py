@@ -70,6 +70,9 @@ class UIServer:
             self._on_log_req_packet,
         )
 
+    def _on_mcp_service_notification(self, text: str) -> None:
+        asyncio.create_task(self.send_text_message(text))
+
     def _next_packet_id(self) -> int:
         self._push_msg_id += 1
         return self._push_msg_id
@@ -281,6 +284,10 @@ class UIServer:
         self._apply_logging_settings()
 
         project = self._manager.project
+        project.mcp_notification_callback = self._on_mcp_service_notification
+        if project.mcp is not None:
+            project.mcp.set_notification_callback(self._on_mcp_service_notification)
+
         settings = project.settings
         enable_know_progress = False
         if settings is not None and settings.know_enabled and settings.know is not None:

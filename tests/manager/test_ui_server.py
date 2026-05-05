@@ -1100,3 +1100,19 @@ async def test_uiserver_user_input_sends_error_when_no_active_input_request() ->
     resp_envelope = await client_endpoint.recv()
     assert isinstance(resp_envelope.payload, manager_proto.TextMessagePacket)
     assert "Input was rejected" in resp_envelope.payload.text
+
+
+@pytest.mark.asyncio
+async def test_uiserver_emits_text_message_for_mcp_notification() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await server.start()
+
+    assert project.mcp_notification_callback is not None
+    project.mcp_notification_callback("MCP source 'broken' failed to start: boom")
+
+    resp_envelope = await client_endpoint.recv()
+    assert isinstance(resp_envelope.payload, manager_proto.TextMessagePacket)
+    assert resp_envelope.payload.text == "MCP source 'broken' failed to start: boom"

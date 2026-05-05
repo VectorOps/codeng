@@ -2,7 +2,6 @@
 from . import base
 from . import exec_tool
 from . import apply_patch_tool
-from . import mcp_discovery_tool
 from . import update_plan_tool
 from . import run_agent
 from . import web_fetch_tool

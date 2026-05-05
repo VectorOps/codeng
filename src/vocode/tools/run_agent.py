@@ -20,7 +20,7 @@ class RunAgentTool(BaseTool):
             raise ValueError("RunAgentTool requires 'name' argument (string)")
 
         prj = self.prj
-        parent_name: Optional[str] = prj.current_workflow
+        parent_name: Optional[str] = req.execution.workflow_name
         settings = prj.settings
         if parent_name and settings and settings.workflows:
             parent_cfg = settings.workflows.get(parent_name)

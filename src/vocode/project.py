@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional, Union, Dict, Any, TYPE_CHECKING, List
+from collections.abc import Callable
 from asyncio import Queue
 import uuid
 
@@ -23,7 +24,7 @@ from .history.manager import HistoryManager
 from .auth import ProjectCredentialManager
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
-from vocode.mcp.service import MCPService
+from vocode.mcp.service import MCPService, MCPServiceError
 
 
 class Project:
@@ -47,11 +48,11 @@ class Project:
         self.shells: Optional[ShellManager] = None
         self.skills: List[Skill] = []
         self.mcp: Optional[MCPService] = None
+        self.mcp_notification_callback: Optional[Callable[[str], None]] = None
         self._queue = Queue()
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
         self.current_workflow: Optional[str] = None
-        self.current_workflow_run_id: Optional[str] = None
         self.last_root_workflow: Optional[str] = None
         self.session_id: str = uuid.uuid4().hex
         save_interval_s = 120.0
@@ -136,39 +137,26 @@ class Project:
     async def on_workflow_started(
         self,
         workflow_name: str,
-        workflow_run_id: Optional[str] = None,
     ) -> None:
         self.current_workflow = workflow_name
-        self.current_workflow_run_id = workflow_run_id
         return None
 
     async def on_workflow_finished(
         self,
         workflow_name: str,
-        keep_mcp_sessions: bool = False,
-        workflow_run_id: Optional[str] = None,
     ) -> None:
-        should_clear_current_workflow = self._should_clear_current_workflow(
-            workflow_name,
-            workflow_run_id=workflow_run_id,
-        )
-        if should_clear_current_workflow:
+        if self._should_clear_current_workflow(workflow_name):
             self.current_workflow = None
-            self.current_workflow_run_id = None
         return None
 
     def _should_clear_current_workflow(
         self,
         workflow_name: str,
-        *,
-        workflow_run_id: Optional[str] = None,
     ) -> bool:
         if self.current_workflow is None:
             return False
         if self.current_workflow != workflow_name:
             return False
-        if self.current_workflow_run_id is not None or workflow_run_id is not None:
-            return self.current_workflow_run_id == workflow_run_id
         return True
 
     # Lifecycle management
@@ -229,14 +217,16 @@ class Project:
                 mcp_settings,
                 credentials=self.credentials,
                 project_root_uri=self.base_path.resolve().as_uri(),
-                has_workflow_roots=False,
-                has_workflow_roots_list_changed=False,
                 tool_cache_update_callback=self.refresh_tools_from_registry,
+                notification_callback=self.mcp_notification_callback,
             )
         if self.settings and self.settings.mcp and self.settings.mcp.enabled:
             for name, source in self.settings.mcp.sources.items():
                 if source.scope.value == "project" and source.kind == "stdio":
-                    await self.mcp.start_session(name)
+                    try:
+                        await self.mcp.start_session(name)
+                    except MCPServiceError:
+                        continue
 
         # Discover skills
         self.skills = discover_skills(self.base_path)
