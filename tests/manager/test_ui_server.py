@@ -10,6 +10,7 @@ import pytest
 from tests.manager.runner_stubs import DummyRunnerWithWorkflow
 from tests.stub_project import StubProject
 from vocode import models, state
+from vocode import ui_events
 from vocode.history.manager import HistoryManager
 from vocode.history.models import HistoryMutationResult
 from vocode.input_manager import INPUT_TYPE_INTERACTIVE
@@ -1103,16 +1104,27 @@ async def test_uiserver_user_input_sends_error_when_no_active_input_request() ->
 
 
 @pytest.mark.asyncio
-async def test_uiserver_emits_text_message_for_mcp_notification() -> None:
+async def test_uiserver_emits_ui_event_packet_for_project_event() -> None:
     project = StubProject()
     server_endpoint, client_endpoint = InMemoryEndpoint.pair()
     server = UIServer(project=project, endpoint=server_endpoint)
 
     await server.start()
 
-    assert project.mcp_notification_callback is not None
-    project.mcp_notification_callback("MCP source 'broken' failed to start: boom")
+    await project.publish_ui_event(
+        ui_events.ProjectUIEvent(
+            severity=ui_events.UIEventSeverity.ERROR,
+            title="MCP source start failed",
+            source="broken",
+            message="MCP source 'broken' failed to start: boom",
+        )
+    )
 
     resp_envelope = await client_endpoint.recv()
-    assert isinstance(resp_envelope.payload, manager_proto.TextMessagePacket)
-    assert resp_envelope.payload.text == "MCP source 'broken' failed to start: boom"
+    assert isinstance(resp_envelope.payload, manager_proto.UIEventPacket)
+    assert resp_envelope.payload.event.title == "MCP source start failed"
+    assert resp_envelope.payload.event.source == "broken"
+    assert (
+        resp_envelope.payload.event.message
+        == "MCP source 'broken' failed to start: boom"
+    )

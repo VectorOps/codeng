@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
 
+from vocode import ui_events
 from vocode import settings as vocode_settings
 from vocode.auth import TokenCredentialManager
 from vocode.logger import logger
@@ -17,6 +18,9 @@ from vocode.mcp import naming as mcp_naming
 from vocode.mcp import registry as mcp_registry
 from vocode.mcp import tool_materialization as mcp_tool_materialization
 from vocode.mcp import transports as mcp_transports
+
+if TYPE_CHECKING:
+    from vocode.project import Project
 
 
 @dataclass(frozen=True)
@@ -37,12 +41,14 @@ class MCPService:
         self,
         settings: Optional[vocode_settings.MCPSettings],
         *,
+        project: Optional["Project"] = None,
         credentials: Optional[TokenCredentialManager] = None,
         project_root_uri: Optional[str] = None,
         tool_cache_update_callback: Optional[Callable[[], None]] = None,
         notification_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._settings = settings
+        self._project = project
         self._registry = mcp_registry.MCPRegistry(settings)
         self._auth = mcp_auth.MCPAuthManager(settings, credentials=credentials)
         self._log = logger.bind(component="mcp_service")
@@ -385,7 +391,12 @@ class MCPService:
                 scope=source.scope,
                 error=str(exc),
             )
-            self._notify(f"MCP source '{source_name}' failed to start: {exc}")
+            await self._notify(
+                f"MCP source '{source_name}' failed to start: {exc}",
+                severity=ui_events.UIEventSeverity.ERROR,
+                title="MCP source start failed",
+                source=source_name,
+            )
             raise MCPServiceError(
                 f"failed to start mcp source {source_name}: {exc}"
             ) from exc
@@ -723,7 +734,26 @@ class MCPService:
             return
         self._tool_cache_update_callback()
 
-    def _notify(self, message: str) -> None:
+    async def _notify(
+        self,
+        message: str,
+        *,
+        severity: ui_events.UIEventSeverity = ui_events.UIEventSeverity.INFO,
+        title: Optional[str] = None,
+        source: Optional[str] = None,
+        details: Optional[str] = None,
+    ) -> None:
+        if self._project is not None:
+            await self._project.publish_ui_event(
+                ui_events.ProjectUIEvent(
+                    severity=severity,
+                    title=title,
+                    source=source,
+                    message=message,
+                    details=details,
+                )
+            )
+            return
         if self._notification_callback is None:
             return
         self._notification_callback(message)

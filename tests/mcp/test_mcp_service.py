@@ -6,6 +6,7 @@ import sys
 import pytest
 from aiohttp import web
 
+from vocode import ui_events
 from vocode.auth import ProjectCredentialManager
 from vocode.mcp import client as mcp_client
 from vocode.mcp.registry import MCPRegistry
@@ -941,18 +942,28 @@ async def test_service_notifies_on_session_start_failure() -> None:
             )
         }
     )
-    notifications: list[str] = []
+    events: list[ui_events.ProjectUIEvent] = []
+
+    class _EventProject:
+        async def publish_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
+            events.append(event)
+
     service = MCPService(
         settings,
-        notification_callback=notifications.append,
+        project=_EventProject(),
     )
 
     with pytest.raises(MCPServiceError, match="failed to start mcp source broken"):
         await service.start_session("broken")
 
-    assert notifications == [
-        "MCP source 'broken' failed to start: unexpected notification received before initialize response"
-    ]
+    assert len(events) == 1
+    assert events[0].severity == ui_events.UIEventSeverity.ERROR
+    assert events[0].title == "MCP source start failed"
+    assert events[0].source == "broken"
+    assert (
+        events[0].message
+        == "MCP source 'broken' failed to start: unexpected notification received before initialize response"
+    )
 
 
 @pytest.mark.asyncio

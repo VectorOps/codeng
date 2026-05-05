@@ -8,6 +8,7 @@ import uuid
 
 from pydantic import BaseModel, Field, model_validator
 from vocode import state
+from vocode import ui_events
 from vocode.runner import proto as runner_proto
 
 
@@ -33,6 +34,7 @@ class BasePacketKind(str, Enum):
     AUTOCOMPLETE_REQ = "autocomplete_req"
     AUTOCOMPLETE_RESP = "autocomplete_resp"
     TEXT_MESSAGE = "text_message"
+    UI_EVENT = "ui_event"
     LOG_REQ = "log_req"
     LOG_RESP = "log_resp"
     PROGRESS = "progress"
@@ -180,6 +182,13 @@ class TextMessagePacket(BaseModel):
     format: TextMessageFormat = Field(default=TextMessageFormat.PLAIN)
 
 
+class UIEventPacket(BaseModel):
+    kind: typing.Literal[BasePacketKind.UI_EVENT] = Field(
+        default=BasePacketKind.UI_EVENT
+    )
+    event: ui_events.ProjectUIEvent
+
+
 class LogLevel(str, Enum):
     DEBUG = "debug"
     INFO = "info"
@@ -280,6 +289,7 @@ BasePacket = Annotated[
         AutocompleteReqPacket,
         AutocompleteRespPacket,
         TextMessagePacket,
+        UIEventPacket,
         LogReqPacket,
         LogRespPacket,
         ProgressPacket,

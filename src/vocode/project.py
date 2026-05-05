@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Optional, Union, Dict, Any, TYPE_CHECKING, List
-from collections.abc import Callable
-from asyncio import Queue
+from collections.abc import Awaitable, Callable
 import uuid
 
 if TYPE_CHECKING:
@@ -22,6 +21,8 @@ from .skills import Skill, discover_skills
 from .project_state import FileChangeModel, ProjectState
 from .history.manager import HistoryManager
 from .auth import ProjectCredentialManager
+from . import ui_events
+from .logger import logger
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 from vocode.mcp.service import MCPService, MCPServiceError
@@ -49,7 +50,9 @@ class Project:
         self.skills: List[Skill] = []
         self.mcp: Optional[MCPService] = None
         self.mcp_notification_callback: Optional[Callable[[str], None]] = None
-        self._queue = Queue()
+        self._ui_event_subscribers: set[
+            Callable[[ui_events.ProjectUIEvent], Awaitable[None]]
+        ] = set()
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
         self.current_workflow: Optional[str] = None
@@ -149,6 +152,30 @@ class Project:
             self.current_workflow = None
         return None
 
+    async def publish_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
+        for subscriber in list(self._ui_event_subscribers):
+            try:
+                await subscriber(event)
+            except Exception as exc:
+                logger.warning(
+                    "Project UI event subscriber failed",
+                    error=str(exc),
+                    severity=event.severity.value,
+                    source=event.source,
+                )
+
+    def subscribe_ui_events(
+        self,
+        callback: Callable[[ui_events.ProjectUIEvent], Awaitable[None]],
+    ) -> None:
+        self._ui_event_subscribers.add(callback)
+
+    def unsubscribe_ui_events(
+        self,
+        callback: Callable[[ui_events.ProjectUIEvent], Awaitable[None]],
+    ) -> None:
+        self._ui_event_subscribers.discard(callback)
+
     def _should_clear_current_workflow(
         self,
         workflow_name: str,
@@ -215,10 +242,10 @@ class Project:
             mcp_settings = self.settings.mcp if self.settings is not None else None
             self.mcp = MCPService(
                 mcp_settings,
+                project=self,
                 credentials=self.credentials,
                 project_root_uri=self.base_path.resolve().as_uri(),
                 tool_cache_update_callback=self.refresh_tools_from_registry,
-                notification_callback=self.mcp_notification_callback,
             )
         if self.settings and self.settings.mcp and self.settings.mcp.enabled:
             for name, source in self.settings.mcp.sources.items():

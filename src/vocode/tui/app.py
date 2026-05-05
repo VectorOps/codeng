@@ -123,6 +123,10 @@ class App:
             self._handle_packet_text_message,
         )
         self._router.register(
+            manager_proto.BasePacketKind.UI_EVENT,
+            self._handle_packet_ui_event,
+        )
+        self._router.register(
             manager_proto.BasePacketKind.PROGRESS,
             self._handle_packet_progress,
         )
@@ -209,6 +213,15 @@ class App:
             payload.text,
             text_format=payload.format.value,
         )
+        return None
+
+    async def _handle_packet_ui_event(
+        self, envelope: manager_proto.BasePacketEnvelope
+    ) -> typing.Optional[manager_proto.BasePacket]:
+        payload = envelope.payload
+        if not isinstance(payload, manager_proto.UIEventPacket):
+            return None
+        self._state.add_ui_event(payload.event)
         return None
 
     async def _recv_loop(self) -> None:

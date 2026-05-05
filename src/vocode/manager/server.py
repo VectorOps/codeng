@@ -10,6 +10,7 @@ from vocode import input_manager
 from vocode import settings as vocode_settings
 from vocode import models
 from vocode import state
+from vocode import ui_events
 from vocode.logger import get_log_manager_internal, init_log_manager, logger
 from vocode.project import Project
 from vocode.runner import proto as runner_proto
@@ -69,9 +70,6 @@ class UIServer:
             manager_proto.BasePacketKind.LOG_REQ,
             self._on_log_req_packet,
         )
-
-    def _on_mcp_service_notification(self, text: str) -> None:
-        asyncio.create_task(self.send_text_message(text))
 
     def _next_packet_id(self) -> int:
         self._push_msg_id += 1
@@ -277,6 +275,9 @@ class UIServer:
             envelope = await self._endpoint.recv()
             await self.on_ui_packet(envelope)
 
+    async def _on_project_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
+        await self.send_packet(manager_proto.UIEventPacket(event=event))
+
     async def start(self) -> None:
         if self._started:
             return
@@ -284,43 +285,49 @@ class UIServer:
         self._apply_logging_settings()
 
         project = self._manager.project
-        project.mcp_notification_callback = self._on_mcp_service_notification
-        if project.mcp is not None:
-            project.mcp.set_notification_callback(self._on_mcp_service_notification)
+        project.subscribe_ui_events(self._on_project_ui_event)
 
         settings = project.settings
         enable_know_progress = False
-        if settings is not None and settings.know_enabled and settings.know is not None:
-            try:
-                _ = project.know
-            except Exception:
-                enable_know_progress = False
-            else:
-                enable_know_progress = True
+        try:
+            if (
+                settings is not None
+                and settings.know_enabled
+                and settings.know is not None
+            ):
+                try:
+                    _ = project.know
+                except Exception:
+                    enable_know_progress = False
+                else:
+                    enable_know_progress = True
 
-        if enable_know_progress:
-            progress_id = "know:init"
-            await self._emit_progress_start(
-                progress_id=progress_id,
-                title="Initializing knowledge base",
-                message=None,
-                mode=manager_proto.ProgressMode.INDETERMINATE,
-                bar_type=manager_proto.ProgressBarType.PULSE,
-            )
-            previous_default_cb = project.know.default_progress_callback
-            project.know.default_progress_callback = (
-                self._make_knowlt_progress_callback(
+            if enable_know_progress:
+                progress_id = "know:init"
+                await self._emit_progress_start(
                     progress_id=progress_id,
-                    title="Indexing repositories",
+                    title="Initializing knowledge base",
+                    message=None,
+                    mode=manager_proto.ProgressMode.INDETERMINATE,
+                    bar_type=manager_proto.ProgressBarType.PULSE,
                 )
-            )
-            try:
+                previous_default_cb = project.know.default_progress_callback
+                project.know.default_progress_callback = (
+                    self._make_knowlt_progress_callback(
+                        progress_id=progress_id,
+                        title="Indexing repositories",
+                    )
+                )
+                try:
+                    await self._manager.start()
+                finally:
+                    project.know.default_progress_callback = previous_default_cb
+                    await self._emit_progress_end(progress_id=progress_id)
+            else:
                 await self._manager.start()
-            finally:
-                project.know.default_progress_callback = previous_default_cb
-                await self._emit_progress_end(progress_id=progress_id)
-        else:
-            await self._manager.start()
+        except Exception:
+            project.unsubscribe_ui_events(self._on_project_ui_event)
+            raise
         self._status = manager_proto.UIServerStatus.RUNNING
 
         self._recv_task = asyncio.create_task(self._recv_loop())
@@ -560,6 +567,8 @@ class UIServer:
 
         self._rpc.cancel_all()
         await self._manager.project.input_manager.reset()
+
+        self._manager.project.unsubscribe_ui_events(self._on_project_ui_event)
 
         await self._manager.stop()
         self._started = False

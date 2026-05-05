@@ -1,6 +1,7 @@
+import asyncio
 from pathlib import Path
 from typing import Optional
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from vocode import state, settings as vocode_settings
 from vocode.auth import ProjectCredentialManager
@@ -11,6 +12,7 @@ from vocode.project_state import ProjectState
 from vocode.proc.manager import ProcessManager
 from vocode.proc.shell import ShellManager
 from vocode.persistence import state_manager as persistence_state_manager
+from vocode import ui_events
 
 
 class StubProject:
@@ -31,6 +33,9 @@ class StubProject:
         self.project_state = ProjectState()
         self.mcp: MCPService | None = None
         self.mcp_notification_callback: Callable[[str], None] | None = None
+        self._ui_event_subscribers: set[
+            Callable[[ui_events.ProjectUIEvent], Awaitable[None]]
+        ] = set()
         self.processes: ProcessManager | None = process_manager
         self.shells: ShellManager | None = None
         if self.processes is not None:
@@ -73,6 +78,22 @@ class StubProject:
         if self.current_workflow == workflow_name:
             self.current_workflow = None
         return None
+
+    async def publish_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
+        for subscriber in list(self._ui_event_subscribers):
+            await subscriber(event)
+
+    def subscribe_ui_events(
+        self,
+        callback: Callable[[ui_events.ProjectUIEvent], Awaitable[None]],
+    ) -> None:
+        self._ui_event_subscribers.add(callback)
+
+    def unsubscribe_ui_events(
+        self,
+        callback: Callable[[ui_events.ProjectUIEvent], Awaitable[None]],
+    ) -> None:
+        self._ui_event_subscribers.discard(callback)
 
     async def start(self) -> None:
         return None
