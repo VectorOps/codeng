@@ -45,8 +45,95 @@ class LLMExecutionState(BaseModel):
 
 @runner_base.ExecutorFactory.register("llm")
 class LLMExecutor(runner_base.BaseExecutor):
+    def __init__(self, config: models.Node, project):
+        super().__init__(config, project)
+        self._node_mcp_tools: Dict[str, Any] = {}
+        self._node_mcp_tool_specs: Dict[str, Any] = {}
+        self._workflow_run_id: Optional[str] = None
+        self._started_mcp_sources: List[str] = []
+
     async def init(self):
+        if self.project.mcp is None:
+            return None
+        source_names = llm_helpers.resolve_node_mcp_source_names(
+            self.project,
+            self.config,
+        )
+        workflow_source_names: List[str] = []
+        direct_source_names: List[str] = []
+        mcp_settings = (
+            self.project.settings.mcp if self.project.settings is not None else None
+        )
+        for source_name in source_names:
+            if mcp_settings is None:
+                direct_source_names.append(source_name)
+                continue
+            source_settings = mcp_settings.sources.get(source_name)
+            if source_settings is None:
+                continue
+            if (
+                source_settings.scope.value == "workflow"
+                and self.project.current_workflow_run_id is not None
+            ):
+                workflow_source_names.append(source_name)
+                continue
+            direct_source_names.append(source_name)
+
+        if workflow_source_names and self.project.current_workflow_run_id is not None:
+            self._workflow_run_id = self.project.current_workflow_run_id
+            change = await self.project.mcp.apply_workflow_requirements(
+                self._workflow_run_id,
+                workflow_source_names,
+            )
+            for source_name in change.started_sources:
+                await self.project.mcp.refresh_tools(source_name)
+            for source_name in workflow_source_names:
+                if source_name in change.started_sources:
+                    continue
+                if not self.project.mcp.list_cached_tools(source_name):
+                    await self.project.mcp.refresh_tools(source_name)
+
+        for source_name in direct_source_names:
+            session = self.project.mcp.get_session(source_name)
+            if session is None:
+                await self.project.mcp.start_session(source_name)
+                self._started_mcp_sources.append(source_name)
+                await self.project.mcp.refresh_tools(source_name)
+                continue
+            if not self.project.mcp.list_cached_tools(source_name):
+                await self.project.mcp.refresh_tools(source_name)
+        (
+            self._node_mcp_tools,
+            self._node_mcp_tool_specs,
+        ) = self.project.mcp.build_node_tools(
+            self.project,
+            self.config.mcp.tools if self.config.mcp is not None else [],
+            self.config.mcp.disabled_tools if self.config.mcp is not None else [],
+            resolution_mode=(
+                self.config.mcp.resolution_mode
+                if self.config.mcp is not None
+                else "inject"
+            ),
+            hide_listed_tools=bool(
+                self.config.mcp.hide_listed_tools
+                if self.config.mcp is not None
+                else False
+            ),
+        )
         return None
+
+    async def shutdown(self) -> None:
+        if self.project.mcp is not None:
+            if self._workflow_run_id is not None:
+                await self.project.mcp.clear_workflow_requirements(
+                    self._workflow_run_id,
+                )
+            for source_name in self._started_mcp_sources:
+                await self.project.mcp.close_session(source_name)
+        self._node_mcp_tools = {}
+        self._node_mcp_tool_specs = {}
+        self._workflow_run_id = None
+        self._started_mcp_sources = []
 
     async def _ensure_provider_authorization(self) -> Optional[str]:
         provider = None
@@ -277,21 +364,21 @@ class LLMExecutor(runner_base.BaseExecutor):
     async def _build_connect_tools(
         self, effective_specs
     ) -> Optional[List[connect.ToolSpec]]:
-        cfg = self.config
-        if not effective_specs:
+        all_effective_specs = dict(effective_specs)
+        all_effective_specs.update(self._node_mcp_tool_specs)
+        if not all_effective_specs:
             return None
 
         tools: List[connect.ToolSpec] = []
-        project_tools = getattr(self.project, "tools", {}) or {}
+        available_tools: Dict[str, Any] = dict(self.project.tools or {})
+        available_tools.update(self._node_mcp_tools)
 
-        for spec in cfg.tools or []:
-            tool_name = spec.name
-            eff_spec = effective_specs.get(tool_name)
+        for tool_name, eff_spec in all_effective_specs.items():
             if eff_spec is None or not eff_spec.enabled:
                 continue
             if eff_spec.skip_listing:
                 continue
-            tool = project_tools.get(tool_name)
+            tool = available_tools.get(tool_name)
             if tool is None:
                 continue
             function_schema = await tool.openapi_spec(eff_spec)
@@ -450,6 +537,7 @@ class LLMExecutor(runner_base.BaseExecutor):
 
         system_prompt, connect_messages = self.build_connect_messages(inp)
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
+        effective_specs.update(self._node_mcp_tool_specs)
         tools = await self._build_connect_tools(effective_specs)
         outcome_names = llm_helpers.get_outcome_names(cfg)
         if (

@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Optional
 from vocode import settings as vocode_settings
 from vocode.auth import TokenCredentialManager
 from vocode.logger import logger
+from vocode.mcp.errors import MCPServiceError
 from vocode.mcp import auth as mcp_auth
 from vocode.mcp import client as mcp_client
 from vocode.mcp import converters as mcp_converters
@@ -16,10 +17,6 @@ from vocode.mcp import naming as mcp_naming
 from vocode.mcp import registry as mcp_registry
 from vocode.mcp import tool_materialization as mcp_tool_materialization
 from vocode.mcp import transports as mcp_transports
-
-
-class MCPServiceError(Exception):
-    pass
 
 
 @dataclass(frozen=True)
@@ -62,6 +59,8 @@ class MCPService:
         self._tool_cache_update_callback = tool_cache_update_callback
         self._active_workflow: Optional[vocode_settings.WorkflowConfig] = None
         self._active_workflow_ref: Optional[MCPActiveWorkflowRef] = None
+        self._workflow_sources_by_run: Dict[str, set[str]] = {}
+        self._workflow_runs_by_source: Dict[str, set[str]] = {}
         self._sessions: Dict[str, mcp_client.MCPClientSession] = {}
         self._tool_cache: Dict[str, Dict[str, mcp_models.MCPToolDescriptor]] = {}
         self._tool_refresh_tasks: Dict[str, asyncio.Task[None]] = {}
@@ -290,6 +289,24 @@ class MCPService:
             workflow=workflow,
         )
 
+    def build_node_tools(
+        self,
+        prj,
+        selectors: list[vocode_settings.MCPToolSelector],
+        disabled_selectors: list[vocode_settings.MCPToolSelector],
+        *,
+        resolution_mode: str,
+        hide_listed_tools: bool,
+    ) -> tuple[Dict[str, Any], Dict[str, vocode_settings.ToolSpec]]:
+        return mcp_tool_materialization.build_node_tools(
+            self,
+            prj,
+            selectors,
+            disabled_selectors,
+            resolution_mode=resolution_mode,
+            hide_listed_tools=hide_listed_tools,
+        )
+
     async def start_session(self, source_name: str) -> mcp_client.MCPClientSession:
         existing = self.get_session(source_name)
         if existing is not None:
@@ -384,6 +401,64 @@ class MCPService:
                 f"failed to start mcp source {source_name}: {exc}"
             ) from exc
         return session
+
+    async def apply_workflow_requirements(
+        self,
+        workflow_execution_id: str,
+        source_names: list[str],
+    ) -> MCPWorkflowSessionChange:
+        if self._settings is None or not self._settings.enabled:
+            return MCPWorkflowSessionChange([], [])
+        if not workflow_execution_id:
+            return MCPWorkflowSessionChange([], [])
+
+        current_sources = self._workflow_sources_by_run.get(
+            workflow_execution_id, set()
+        )
+        started_sources: list[str] = []
+        next_sources = set(current_sources)
+
+        for source_name in self._normalize_workflow_source_names(source_names):
+            if source_name in next_sources:
+                continue
+            runs = self._workflow_runs_by_source.setdefault(source_name, set())
+            should_start = not runs
+            runs.add(workflow_execution_id)
+            next_sources.add(source_name)
+            if should_start:
+                await self.start_session(source_name)
+                started_sources.append(source_name)
+
+        if next_sources:
+            self._workflow_sources_by_run[workflow_execution_id] = next_sources
+
+        await self._reconcile_session_roots()
+        return MCPWorkflowSessionChange(started_sources, [])
+
+    async def clear_workflow_requirements(
+        self,
+        workflow_execution_id: str,
+    ) -> MCPWorkflowSessionChange:
+        if self._settings is None or not self._settings.enabled:
+            return MCPWorkflowSessionChange([], [])
+        source_names = self._workflow_sources_by_run.pop(workflow_execution_id, set())
+        if not source_names:
+            return MCPWorkflowSessionChange([], [])
+
+        stopped_sources: list[str] = []
+        for source_name in source_names:
+            runs = self._workflow_runs_by_source.get(source_name)
+            if runs is None:
+                continue
+            runs.discard(workflow_execution_id)
+            if runs:
+                continue
+            self._workflow_runs_by_source.pop(source_name, None)
+            await self.close_session(source_name)
+            stopped_sources.append(source_name)
+
+        await self._reconcile_session_roots()
+        return MCPWorkflowSessionChange([], stopped_sources)
 
     async def start_workflow(
         self,
@@ -564,6 +639,19 @@ class MCPService:
                 continue
             names.append(name)
         return names
+
+    def _normalize_workflow_source_names(self, source_names: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for source_name in source_names:
+            if source_name in seen:
+                continue
+            source = self._registry.get_source(source_name)
+            if source is None or source.scope != "workflow":
+                continue
+            seen.add(source_name)
+            normalized.append(source_name)
+        return normalized
 
     def _resolve_workflow_source_names(
         self,

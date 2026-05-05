@@ -255,6 +255,47 @@ def build_effective_tool_specs(project: Any, cfg: LLMNode) -> Dict[str, ToolSpec
     return effective
 
 
+def is_node_mcp_tool_enabled(
+    node_mcp: Optional["LLMNodeMCPSettings"],
+    source_name: str,
+    tool_name: str,
+) -> bool:
+    if node_mcp is None or not node_mcp.enabled:
+        return False
+    for selector in node_mcp.disabled_tools:
+        if selector.source != source_name:
+            continue
+        if selector.tool == "*" or selector.tool == tool_name:
+            return False
+    for selector in node_mcp.tools:
+        if selector.source != source_name:
+            continue
+        if selector.tool == "*" or selector.tool == tool_name:
+            return True
+    return False
+
+
+def resolve_node_mcp_source_names(project: Any, cfg: LLMNode) -> List[str]:
+    if cfg.mcp is None or not cfg.mcp.enabled:
+        return []
+    settings = project.settings
+    if settings is None or settings.mcp is None or not settings.mcp.enabled:
+        return []
+    source_names: List[str] = []
+    seen: set[str] = set()
+    for selector in cfg.mcp.tools:
+        source_name = selector.source
+        if source_name in seen:
+            continue
+        if source_name not in settings.mcp.sources:
+            continue
+        if not is_node_mcp_tool_enabled(cfg.mcp, source_name, selector.tool):
+            continue
+        seen.add(source_name)
+        source_names.append(source_name)
+    return source_names
+
+
 def resolve_model_token_limit(cfg: LLMNode) -> Optional[int]:
     """Resolve the model input context window (prompt token limit).
 

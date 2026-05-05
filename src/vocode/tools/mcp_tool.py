@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from vocode.mcp.errors import MCPServiceError
 from vocode.mcp import models as mcp_models
-from vocode.mcp import service as mcp_service
 from vocode.tools import base as tools_base
 
 
@@ -36,7 +36,7 @@ class MCPToolAdapter(tools_base.BaseTool):
                 self.descriptor.tool_name,
                 args if isinstance(args, dict) else {},
             )
-        except mcp_service.MCPServiceError as exc:
+        except MCPServiceError as exc:
             raise tools_base.ToolExecutionError(
                 str(exc),
                 error_type=tools_base.ToolExecutionErrorType.protocol,

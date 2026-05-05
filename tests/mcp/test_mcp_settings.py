@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from vocode.runner.executors.llm.models import LLMNode
 from vocode.settings.loader import load_settings
 from vocode.settings import MCPExternalSourceSettings, MCPStdioSourceSettings
 
@@ -12,7 +13,7 @@ def _write_tmp(tmp_path: Path, text: str) -> Path:
     return p
 
 
-def test_loads_mcp_settings_and_workflow_selectors(tmp_path: Path) -> None:
+def test_loads_mcp_settings_and_node_selectors(tmp_path: Path) -> None:
     cfg = """
 mcp:
   hide_listed_tools: true
@@ -30,15 +31,19 @@ mcp:
       url: https://example.com/mcp
 workflows:
   demo:
-    mcp:
-      hide_listed_tools: true
-      tools:
-        - source: local
-          tool: "*"
-      disabled_tools:
-        - source: local
-          tool: dangerous
-    nodes: []
+    nodes:
+      - type: llm
+        name: assistant
+        model: test-model
+        mcp:
+          hide_listed_tools: true
+          resolution_mode: inject
+          tools:
+            - source: local
+              tool: "*"
+          disabled_tools:
+            - source: local
+              tool: dangerous
     edges: []
 """
     settings = load_settings(str(_write_tmp(tmp_path, cfg)))
@@ -52,11 +57,13 @@ workflows:
     assert isinstance(settings.mcp.sources["local"], MCPStdioSourceSettings)
     assert isinstance(settings.mcp.sources["remote"], MCPExternalSourceSettings)
 
-    workflow_mcp = settings.workflows["demo"].mcp
-    assert workflow_mcp is not None
-    assert workflow_mcp.hide_listed_tools is True
-    assert [(item.source, item.tool) for item in workflow_mcp.tools] == [("local", "*")]
-    assert [(item.source, item.tool) for item in workflow_mcp.disabled_tools] == [
+    node = settings.workflows["demo"].nodes[0]
+    assert isinstance(node, LLMNode)
+    assert node.mcp is not None
+    assert node.mcp.hide_listed_tools is True
+    assert node.mcp.resolution_mode == "inject"
+    assert [(item.source, item.tool) for item in node.mcp.tools] == [("local", "*")]
+    assert [(item.source, item.tool) for item in node.mcp.disabled_tools] == [
         ("local", "dangerous")
     ]
 
@@ -103,15 +110,34 @@ def test_rejects_empty_mcp_tool_selector_fields(tmp_path: Path) -> None:
     cfg = """
 workflows:
   demo:
-    mcp:
-      tools:
-        - source: ""
-          tool: search
-    nodes: []
+    nodes:
+      - type: llm
+        name: assistant
+        model: test-model
+        mcp:
+          tools:
+            - source: ""
+              tool: search
     edges: []
 """
 
     with pytest.raises(ValueError, match="source must be non-empty"):
+        load_settings(str(_write_tmp(tmp_path, cfg)))
+
+
+def test_rejects_workflow_level_mcp_config(tmp_path: Path) -> None:
+    cfg = """
+workflows:
+  demo:
+    mcp:
+      tools:
+        - source: local
+          tool: "*"
+    nodes: []
+    edges: []
+"""
+
+    with pytest.raises(ValueError, match="workflow-level mcp config"):
         load_settings(str(_write_tmp(tmp_path, cfg)))
 
 
