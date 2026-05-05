@@ -301,10 +301,10 @@ For the first implementation, reuse `TextMessagePacket` unless a stronger UX req
 
 Developer instructions:
 
-1. Remove `mcp` from `WorkflowConfig`.
-2. Add a new LLM-node-local MCP settings model.
-3. Add `mcp: Optional[...] = None` to `LLMNode`.
-4. Remove or rewrite tests that currently expect workflow-level MCP config.
+- [ ] Remove `mcp` from `WorkflowConfig`.
+- [ ] Add a new LLM-node-local MCP settings model.
+- [ ] Add `mcp: Optional[...] = None` to `LLMNode`.
+- [ ] Remove or rewrite tests that currently expect workflow-level MCP config.
 
 Verification:
 
@@ -315,10 +315,10 @@ Verification:
 
 Developer instructions:
 
-1. Read `LLMNode.mcp` directly inside `LLMExecutor.init()`.
-2. Start the required MCP sources there through the MCP service.
-3. Refresh tool cache for sources newly started for that workflow run.
-4. Build the node-local MCP tool set there without adding any new runner event.
+- [ ] Read `LLMNode.mcp` directly inside `LLMExecutor.init()`.
+- [ ] Start the required MCP sources there through the MCP service.
+- [ ] Refresh tool cache for sources newly started for that workflow run.
+- [ ] Build the node-local MCP tool set there without adding any new runner event.
 
 Completion indicator:
 
@@ -330,10 +330,10 @@ Completion indicator:
 
 Developer instructions:
 
-1. Replace workflow-name-based active state with workflow-execution-id-based references.
-2. Add apply and clear methods for workflow-instance source requirements.
-3. Reconcile start and shutdown based on active references.
-4. Keep project-scoped sessions unchanged.
+- [ ] Replace workflow-name-based active state with workflow-execution-id-based references.
+- [ ] Add apply and clear methods for workflow-instance source requirements.
+- [ ] Reconcile start and shutdown based on active references.
+- [ ] Keep project-scoped sessions unchanged.
 
 Verification:
 
@@ -344,11 +344,11 @@ Verification:
 
 Developer instructions:
 
-1. Replace workflow-based enablement helpers with node-based helpers.
-2. Build the effective MCP tool set for the current LLM node only.
-3. Auto-inject matched concrete tools in inject mode.
-4. Inject only `mcp_discovery` in discovery mode.
-5. Keep prompt/resource helper behavior aligned with node-local MCP selection.
+- [ ] Replace workflow-based enablement helpers with node-based helpers.
+- [ ] Build the effective MCP tool set for the current LLM node only.
+- [ ] Auto-inject matched concrete tools in inject mode.
+- [ ] Inject only `mcp_discovery` in discovery mode.
+- [ ] Keep prompt/resource helper behavior aligned with node-local MCP selection.
 
 Completion indicator:
 
@@ -360,9 +360,9 @@ Completion indicator:
 
 Developer instructions:
 
-1. Keep global static tools in `project.tools`.
-2. Stop materializing node-specific MCP adapters into the global registry.
-3. Let the LLM executor compose node-local MCP tools when building connect tool specs.
+- [ ] Keep global static tools in `project.tools`.
+- [ ] Stop materializing node-specific MCP adapters into the global registry.
+- [ ] Let the LLM executor compose node-local MCP tools when building connect tool specs.
 
 Completion indicator:
 
@@ -373,10 +373,10 @@ Completion indicator:
 
 Developer instructions:
 
-1. Add an MCP service notification callback for start/connect/reconcile failures.
-2. Register that callback from the manager/UI server path.
-3. Send visible user-facing messages to the TUI when MCP startup or connection fails.
-4. Add tests proving the message is emitted.
+- [ ] Add an MCP service notification callback for start/connect/reconcile failures.
+- [ ] Register that callback from the manager/UI server path.
+- [ ] Send visible user-facing messages to the TUI when MCP startup or connection fails.
+- [ ] Add tests proving the message is emitted.
 
 Completion indicator:
 
@@ -388,11 +388,11 @@ Completion indicator:
 
 Developer instructions:
 
-1. Replace workflow-level MCP config tests with node-level config tests.
-2. Add tests for executor-owned node-level MCP startup and wiring.
-3. Add manager aggregation tests for nested workflows and parallel workflow instances.
-4. Add node-local tool injection tests.
-5. Add TUI notification tests for MCP failures.
+- [ ] Replace workflow-level MCP config tests with node-level config tests.
+- [ ] Add tests for executor-owned node-level MCP startup and wiring.
+- [ ] Add manager aggregation tests for nested workflows and parallel workflow instances.
+- [ ] Add node-local tool injection tests.
+- [ ] Add TUI notification tests for MCP failures.
 
 Completion indicator:
 
@@ -402,9 +402,9 @@ Completion indicator:
 
 Developer instructions:
 
-1. Run `uv run black` on changed files.
-2. Run targeted pytest modules first.
-3. If green, run broader MCP, manager, and LLM executor test groups.
+- [ ] Run `uv run black` on changed files.
+- [ ] Run targeted pytest modules first.
+- [ ] If green, run broader MCP, manager, and LLM executor test groups.
 
 Suggested test commands:
 
