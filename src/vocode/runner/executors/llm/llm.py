@@ -135,6 +135,9 @@ class LLMExecutor(runner_base.BaseExecutor):
         self._workflow_run_id = None
         self._started_mcp_sources = []
 
+    def get_available_tools(self) -> Dict[str, Any]:
+        return dict(self._node_mcp_tools)
+
     def _get_workflow_execution_id(self) -> Optional[str]:
         return self.workflow_execution_id
 

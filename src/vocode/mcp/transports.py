@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import typing
-from typing import Any, Dict, List, Optional
+from collections.abc import AsyncIterable
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 import aiohttp
 
@@ -14,6 +18,87 @@ from vocode.mcp import protocol as mcp_protocol
 
 class MCPTransportError(Exception):
     pass
+
+
+@dataclass(slots=True)
+class MCPSSEFrame:
+    data: str
+    event: Optional[str] = None
+    id: Optional[str] = None
+    retry: Optional[int] = None
+
+
+async def iter_sse_frames(lines: AsyncIterable[str]) -> AsyncIterator[MCPSSEFrame]:
+    data_lines: List[str] = []
+    event: Optional[str] = None
+    event_id: Optional[str] = None
+    retry: Optional[int] = None
+    saw_fields = False
+
+    async for line in lines:
+        if line == "":
+            if saw_fields:
+                yield MCPSSEFrame(
+                    data="\n".join(data_lines),
+                    event=event,
+                    id=event_id,
+                    retry=retry,
+                )
+            data_lines = []
+            event = None
+            event_id = None
+            retry = None
+            saw_fields = False
+            continue
+
+        if line.startswith(":"):
+            continue
+
+        field, _, value = line.partition(":")
+        if value.startswith(" "):
+            value = value[1:]
+
+        saw_fields = True
+        if field == "data":
+            data_lines.append(value)
+        elif field == "event":
+            event = value
+        elif field == "id":
+            event_id = value
+        elif field == "retry":
+            try:
+                retry = int(value)
+            except ValueError:
+                pass
+
+    if saw_fields:
+        yield MCPSSEFrame(
+            data="\n".join(data_lines),
+            event=event,
+            id=event_id,
+            retry=retry,
+        )
+
+
+async def iter_sse_lines(chunks: AsyncIterable[bytes]) -> AsyncIterator[str]:
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    buffered = ""
+
+    async for chunk in chunks:
+        if not chunk:
+            continue
+        buffered += decoder.decode(chunk)
+        while True:
+            newline_index = buffered.find("\n")
+            if newline_index < 0:
+                break
+            line = buffered[:newline_index]
+            buffered = buffered[newline_index + 1 :]
+            yield line.rstrip("\r")
+
+    buffered += decoder.decode(b"", final=True)
+    if buffered:
+        yield buffered.rstrip("\r")
 
 
 class MCPStdioTransport:
@@ -163,6 +248,9 @@ class MCPHTTPTransport:
         self._owns_session = session is None
         self._auth_challenge_handler = auth_challenge_handler
         self._log = logger.bind(component="mcp_http_transport", url=url)
+        self._incoming_messages: asyncio.Queue[mcp_protocol.MCPJSONRPCMessage] = (
+            asyncio.Queue()
+        )
 
     @property
     def is_running(self) -> bool:
@@ -179,10 +267,12 @@ class MCPHTTPTransport:
         self._protocol_version = value
 
     async def send(self, message: mcp_protocol.MCPJSONRPCMessage) -> None:
-        raise MCPTransportError("HTTP transport does not support buffered send")
+        await self._post_message(message, expect_response=False)
 
     async def receive(self) -> mcp_protocol.MCPJSONRPCMessage:
-        raise MCPTransportError("HTTP transport does not support buffered receive")
+        if not self.is_running:
+            raise MCPTransportError("http transport is not running")
+        return await self._incoming_messages.get()
 
     async def notify(self, message: mcp_protocol.MCPJSONRPCNotification) -> None:
         await self._post_message(message, expect_response=False)
@@ -191,29 +281,23 @@ class MCPHTTPTransport:
         self,
         message: mcp_protocol.MCPJSONRPCMessage,
     ) -> mcp_protocol.MCPJSONRPCMessage:
-        response_text = await self._post_message(message, expect_response=True)
-        if response_text is None:
+        response_payload = await self._post_message(message, expect_response=True)
+        if response_payload is None:
             raise MCPTransportError("http transport returned an empty response")
-        try:
-            data = json.loads(response_text)
-        except json.JSONDecodeError as exc:
-            raise MCPTransportError(
-                "received invalid JSON from http transport"
-            ) from exc
-        if "method" in data and "id" in data:
-            return mcp_protocol.MCPJSONRPCRequest.model_validate(data)
-        if "method" in data:
-            return mcp_protocol.MCPJSONRPCNotification.model_validate(data)
-        if "error" in data:
-            return mcp_protocol.MCPJSONRPCErrorResponse.model_validate(data)
-        return mcp_protocol.MCPJSONRPCResponse.model_validate(data)
+        if isinstance(response_payload, str):
+            return self._parse_jsonrpc_message(response_payload)
+        while True:
+            streamed_message = await response_payload.get()
+            if self._is_matching_response(message, streamed_message):
+                return streamed_message
+            await self._incoming_messages.put(streamed_message)
 
     async def _post_message(
         self,
         message: mcp_protocol.MCPJSONRPCMessage,
         *,
         expect_response: bool,
-    ) -> Optional[str]:
+    ) -> Optional[str | asyncio.Queue[mcp_protocol.MCPJSONRPCMessage]]:
         if not self.is_running or self._session is None:
             raise MCPTransportError("http transport is not running")
         auth_attempt = 0
@@ -221,7 +305,7 @@ class MCPHTTPTransport:
         next_authorization_header: Optional[str] = None
         while True:
             headers = dict(self._headers)
-            headers["Accept"] = "application/json"
+            headers["Accept"] = "application/json, text/event-stream"
             if self._authorization_header is not None:
                 headers["Authorization"] = self._authorization_header
             if self._auth_token is not None:
@@ -261,8 +345,8 @@ class MCPHTTPTransport:
                         )
                         auth_attempt += 1
                         continue
-                text = await response.text()
                 if response.status >= 400:
+                    text = await response.text()
                     self._log.warning(
                         "MCP HTTP request failed",
                         status_code=response.status,
@@ -274,7 +358,66 @@ class MCPHTTPTransport:
                     self._authorization_header = next_authorization_header
                 if not expect_response:
                     return None
+                if response.headers.get("Content-Type", "").startswith(
+                    "text/event-stream"
+                ):
+                    return await self._consume_sse_response(response, message)
+                text = await response.text()
                 return text
+
+    def _parse_jsonrpc_message(
+        self,
+        payload: str,
+    ) -> mcp_protocol.MCPJSONRPCMessage:
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise MCPTransportError(
+                "received invalid JSON from http transport"
+            ) from exc
+        if "method" in data and "id" in data:
+            return mcp_protocol.MCPJSONRPCRequest.model_validate(data)
+        if "method" in data:
+            return mcp_protocol.MCPJSONRPCNotification.model_validate(data)
+        if "error" in data:
+            return mcp_protocol.MCPJSONRPCErrorResponse.model_validate(data)
+        return mcp_protocol.MCPJSONRPCResponse.model_validate(data)
+
+    async def _consume_sse_response(
+        self,
+        response: aiohttp.ClientResponse,
+        request_message: mcp_protocol.MCPJSONRPCMessage,
+    ) -> asyncio.Queue[mcp_protocol.MCPJSONRPCMessage]:
+        messages: asyncio.Queue[mcp_protocol.MCPJSONRPCMessage] = asyncio.Queue()
+        matched = False
+        async for frame in iter_sse_frames(
+            iter_sse_lines(response.content.iter_chunked(65536))
+        ):
+            if not frame.data:
+                continue
+            parsed_message = self._parse_jsonrpc_message(frame.data)
+            await messages.put(parsed_message)
+            if self._is_matching_response(request_message, parsed_message):
+                matched = True
+                break
+        if not matched:
+            raise MCPTransportError(
+                "http transport closed SSE stream before sending the request response"
+            )
+        return messages
+
+    def _is_matching_response(
+        self,
+        request_message: mcp_protocol.MCPJSONRPCMessage,
+        candidate: mcp_protocol.MCPJSONRPCMessage,
+    ) -> bool:
+        if not isinstance(request_message, mcp_protocol.MCPJSONRPCRequest):
+            return False
+        if isinstance(candidate, mcp_protocol.MCPJSONRPCRequest):
+            return False
+        if isinstance(candidate, mcp_protocol.MCPJSONRPCNotification):
+            return False
+        return candidate.id == request_message.id
 
     async def close(self) -> None:
         if self._session is None:

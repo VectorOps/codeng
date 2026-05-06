@@ -3,6 +3,7 @@ from typing import (
     ClassVar,
     List,
     Any,
+    Dict,
     Type,
     AsyncIterator,
     Iterator,
@@ -75,6 +76,9 @@ class BaseExecutor:
 
     async def shutdown(self) -> None:
         return None
+
+    def get_available_tools(self) -> Dict[str, Any]:
+        return {}
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         """

@@ -10,6 +10,8 @@ from vocode.mcp import models as mcp_models
 from vocode.mcp import naming as mcp_naming
 from vocode.mcp.service import MCPWorkflowSessionChange
 from vocode.mcp import tool_materialization as mcp_tool_materialization
+from vocode.manager.base import Workflow
+from vocode.runner.runner import Runner
 from vocode.runner.executors.llm.llm import LLMExecutor
 from vocode.runner.executors.llm.models import LLMNodeMCPSettings
 from vocode.runner.executors.llm.models import LLMNode
@@ -338,6 +340,23 @@ class FakeMCPService:
         self.closed_sources.append(source_name)
         self.sessions.pop(source_name, None)
 
+    async def call_tool(
+        self,
+        source_name: str,
+        tool_name: str,
+        arguments: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        _ = arguments
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"{source_name}:{tool_name}",
+                }
+            ],
+            "isError": False,
+        }
+
 
 @pytest.mark.asyncio
 async def test_llm_executor_with_connect_mock_response(
@@ -527,6 +546,76 @@ async def test_llm_executor_init_adds_node_local_mcp_tools() -> None:
     assert [tool.name for tool in tools] == [
         mcp_naming.build_internal_tool_name("local", "echo")
     ]
+
+
+@pytest.mark.asyncio
+async def test_runner_executes_node_local_mcp_tool() -> None:
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            mcp=vocode_settings.MCPSettings(
+                sources={
+                    "local": vocode_settings.MCPStdioSourceSettings(
+                        command="uvx",
+                    )
+                }
+            )
+        )
+    )
+    project.mcp = FakeMCPService()  # type: ignore[assignment]
+    project.mcp.sessions["local"] = object()
+    project.mcp.cached_tools["local"] = {
+        "echo": mcp_models.MCPToolDescriptor(
+            source_name="local",
+            tool_name="echo",
+            title=None,
+            description="Echo tool",
+            input_schema={"type": "object", "properties": {}},
+        )
+    }
+
+    node = LLMNode(
+        name="node-mcp-tools",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="local", tool="echo")]
+        ),
+    )
+    workflow = Workflow(
+        name="wf",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(workflow, project, None)
+    executor = runner._executors[node.name]
+    assert isinstance(executor, LLMExecutor)
+    await executor.init()
+
+    tool_name = mcp_naming.build_internal_tool_name("local", "echo")
+    execution = state.NodeExecution(
+        workflow_execution=runner.execution,
+        node=node.name,
+        status=state.RunStatus.RUNNING,
+    )
+    execution = project.history.upsert_node_execution(runner.execution, execution)
+    result = await runner._execute_tool_call(
+        state.ToolCallReq(
+            id="call-local-mcp-tool",
+            name=tool_name,
+            arguments={"value": "hello"},
+        ),
+        execution,
+    )
+
+    assert result.kind == "response"
+    response = result.response
+    assert response.status == state.ToolCallStatus.COMPLETED
+    assert response.result == {
+        "content": [{"type": "text", "text": "local:echo"}],
+        "isError": False,
+        "text": "local:echo",
+    }
+
+    await executor.shutdown()
 
 
 @pytest.mark.asyncio

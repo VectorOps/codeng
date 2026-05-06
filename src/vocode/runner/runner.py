@@ -99,12 +99,26 @@ class Runner:
             return True
         return False
 
+    def _get_tool_for_request(
+        self,
+        req: state.ToolCallReq,
+        execution: Optional[state.NodeExecution] = None,
+    ):
+        if execution is not None:
+            executor = self._executors.get(execution.node)
+            if executor is not None:
+                tool = executor.get_available_tools().get(req.name)
+                if tool is not None:
+                    return tool
+        return self.project.tools.get(req.name)
+
     async def _execute_tool_call(
-        self, req: state.ToolCallReq
+        self,
+        req: state.ToolCallReq,
+        execution: Optional[state.NodeExecution] = None,
     ) -> runner_proto.ToolExecResult:
         spec = self._get_tool_spec_for_request(req)
-        tools = self.project.tools
-        tool = tools.get(req.name)
+        tool = self._get_tool_for_request(req, execution)
         if tool is None:
             resp = state.ToolCallResp(
                 id=req.id,
@@ -249,9 +263,12 @@ class Runner:
     async def _execute_approved_tool_calls(
         self,
         approved: list[state.ToolCallReq],
+        execution: Optional[state.NodeExecution] = None,
     ) -> list[runner_proto.ToolExecResult]:
         return list(
-            await asyncio.gather(*(self._execute_tool_call(req) for req in approved))
+            await asyncio.gather(
+                *(self._execute_tool_call(req, execution) for req in approved)
+            )
         )
 
     def _create_transition_error_event(
@@ -906,7 +923,10 @@ class Runner:
 
                         exec_results = await self._tool_orchestrator.execute_plan(
                             approved,
-                            self._execute_approved_tool_calls,
+                            lambda approved_reqs: self._execute_approved_tool_calls(
+                                approved_reqs,
+                                current_execution,
+                            ),
                         )
                         for plan_item, exec_result in zip(approved, exec_results):
                             tool_req = plan_item.request

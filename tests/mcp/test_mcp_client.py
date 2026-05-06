@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 
 import pytest
@@ -646,6 +647,90 @@ async def test_client_session_initialize_and_request_over_http_transport(
 
     await session.close()
     await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_client_session_dispatches_sse_notifications_over_http_transport(
+    unused_tcp_port,
+) -> None:
+    notification_received = asyncio.Event()
+    notifications: list[str] = []
+    state = {"initialized": False}
+
+    async def handler(request: web.Request) -> web.StreamResponse | web.Response:
+        payload = await request.json()
+        method = payload.get("method")
+        if method == "initialize":
+            return web.json_response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": payload["id"],
+                    "result": {
+                        "protocolVersion": "2025-03-26",
+                        "serverInfo": {"name": "http-mcp", "version": "1.0.0"},
+                        "capabilities": {"tools": {"listChanged": True}},
+                    },
+                }
+            )
+        if method == "notifications/initialized":
+            state["initialized"] = True
+            return web.Response(status=202)
+        if method == "tools/list":
+            assert state["initialized"] is True
+            response = web.StreamResponse(
+                status=200,
+                headers={"Content-Type": "text/event-stream"},
+            )
+            await response.prepare(request)
+            await response.write(
+                b'data: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n'
+            )
+            await response.write(
+                (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": payload["id"],
+                            "result": {"tools": [{"name": "http-search"}]},
+                        }
+                    )
+                    + "\n\n"
+                ).encode("utf-8")
+            )
+            await response.write_eof()
+            return response
+        raise AssertionError(f"unexpected method: {method}")
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", unused_tcp_port)
+    await site.start()
+
+    session = MCPClientSession(
+        _make_http_source(),
+        MCPHTTPTransport(f"http://127.0.0.1:{unused_tcp_port}/mcp"),
+    )
+
+    def _on_notification(notification) -> None:
+        notifications.append(notification.method)
+        if notification.method == "notifications/tools/list_changed":
+            notification_received.set()
+
+    session.add_notification_handler(_on_notification)
+
+    try:
+        await session.start()
+        tools = await session.list_tools()
+        await asyncio.wait_for(notification_received.wait(), timeout=1.0)
+
+        assert tools["tools"][0]["name"] == "http-search"
+        assert notifications == ["notifications/tools/list_changed"]
+    finally:
+        await session.close()
+        await runner.cleanup()
 
 
 @pytest.mark.asyncio

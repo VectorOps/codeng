@@ -360,8 +360,6 @@ class MCPClientSession:
         )
 
     def _ensure_receive_loop(self) -> None:
-        if not isinstance(self.transport, mcp_transports.MCPStdioTransport):
-            return
         if self._receive_task is not None and not self._receive_task.done():
             return
         self._receive_task = asyncio.create_task(self._run_receive_loop())
