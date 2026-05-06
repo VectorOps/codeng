@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Union, Dict, Any, TYPE_CHECKING, List
+from typing import Optional, Union, Dict, TYPE_CHECKING, List
 from collections.abc import Awaitable, Callable
 import uuid
 
@@ -49,7 +49,6 @@ class Project:
         self.shells: Optional[ShellManager] = None
         self.skills: List[Skill] = []
         self.mcp: Optional[MCPService] = None
-        self.mcp_notification_callback: Optional[Callable[[str], None]] = None
         self._ui_event_subscribers: set[
             Callable[[ui_events.ProjectUIEvent], Awaitable[None]]
         ] = set()

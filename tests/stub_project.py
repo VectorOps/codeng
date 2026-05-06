@@ -1,6 +1,3 @@
-import asyncio
-from pathlib import Path
-from typing import Optional
 from collections.abc import Awaitable, Callable
 
 from vocode import state, settings as vocode_settings
@@ -32,7 +29,6 @@ class StubProject:
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
         self.project_state = ProjectState()
         self.mcp: MCPService | None = None
-        self.mcp_notification_callback: Callable[[str], None] | None = None
         self._ui_event_subscribers: set[
             Callable[[ui_events.ProjectUIEvent], Awaitable[None]]
         ] = set()

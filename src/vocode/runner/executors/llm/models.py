@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, List, Optional, Dict, Any, Final, Literal
-import json
-import re
-import asyncio
-from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any, Literal
+from pydantic import Field
 
 from vocode import models
 from vocode import settings

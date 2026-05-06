@@ -19,7 +19,7 @@ from vocode.runner.executors.input import InputNode
 from vocode.runner.executors.llm.models import LLMNodeMCPSettings
 from vocode.runner.executors.llm.models import LLMNode
 from vocode.manager import base as manager_base
-from vocode.runner.proto import RunEventReqKind, RunEventResp, RunEventResponseType
+from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.runner import proto as runner_proto
 from vocode.runner.runner import RunEvent, Runner, RunnerStopped
 from vocode.tools import base as tools_base
@@ -2280,9 +2280,10 @@ async def test_runner_tool_request_status_updates_do_not_depend_on_object_identi
 
     async def execute_with_copied_requests(
         approved: list[state.ToolCallReq],
+        execution: Optional[state.NodeExecution] = None,
     ) -> list[runner_proto.ToolExecResult]:
         copied = [req.model_copy(deep=True) for req in approved]
-        return await original_execute(copied)
+        return await original_execute(copied, execution)
 
     runner._execute_approved_tool_calls = execute_with_copied_requests
 
