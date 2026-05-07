@@ -71,6 +71,7 @@ async def test_project_start_initializes_subsystems_and_tools(tmp_path):
     assert project.shells is not None
     assert isinstance(project.tools, dict)
     assert "exec" in project.tools
+    assert "read_files" not in project.tools
 
     await project.shutdown()
 
@@ -236,5 +237,6 @@ async def test_project_start_with_know_disabled(tmp_path):
     assert project.shells is not None
     assert isinstance(project.tools, dict)
     assert "exec" in project.tools
+    assert "read_files" in project.tools
 
     await project.shutdown()

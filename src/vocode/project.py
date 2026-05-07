@@ -115,10 +115,13 @@ class Project:
 
         # Code tools
         all_tools = ToolFactory.all()
+        know_enabled = bool(self.settings and self.settings.know_enabled)
         self.tools = {
             name: cls(self)
             for name, cls in all_tools.items()
-            if name not in disabled_tool_names and name != "mcp_discovery"
+            if name not in disabled_tool_names
+            and name != "mcp_discovery"
+            and (name != "read_files" or not know_enabled)
         }
 
         if self.settings and self.settings.know_enabled and self.settings.know:
