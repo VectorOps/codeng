@@ -8,6 +8,7 @@ from . import mcp_get_prompt_tool
 from . import mcp_read_resource_tool
 from . import update_plan_tool
 from . import run_agent
+from . import web_fetch_tool
 
 BaseTool = base.BaseTool
 ToolResponseType = base.ToolResponseType
