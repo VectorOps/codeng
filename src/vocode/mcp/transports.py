@@ -221,6 +221,7 @@ class MCPHTTPTransport:
         next_authorization_header: Optional[str] = None
         while True:
             headers = dict(self._headers)
+            headers["Accept"] = "application/json"
             if self._authorization_header is not None:
                 headers["Authorization"] = self._authorization_header
             if self._auth_token is not None:

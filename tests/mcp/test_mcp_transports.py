@@ -187,6 +187,7 @@ async def test_http_transport_posts_jsonrpc_and_injects_headers(
         observed["authorization"] = request.headers.get("Authorization")
         observed["protocol_version"] = request.headers.get("MCP-Protocol-Version")
         observed["custom"] = request.headers.get("X-Test")
+        observed["accept"] = request.headers.get("Accept")
         observed["payload"] = await request.json()
         return web.json_response(
             {
@@ -221,12 +222,54 @@ async def test_http_transport_posts_jsonrpc_and_injects_headers(
     assert observed["authorization"] == "Bearer secret-token"
     assert observed["protocol_version"] == "2025-03-26"
     assert observed["custom"] == "yes"
+    assert observed["accept"] == "application/json"
     assert observed["payload"] == {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "initialize",
         "params": {},
     }
+
+    await transport.close()
+    await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_http_transport_overrides_accept_header_with_json_only(
+    unused_tcp_port,
+) -> None:
+    observed: dict[str, object] = {}
+
+    async def handler(request: web.Request) -> web.Response:
+        observed["accept"] = request.headers.get("Accept")
+        return web.json_response(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2025-03-26",
+                },
+            }
+        )
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = unused_tcp_port
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    await site.start()
+
+    transport = MCPHTTPTransport(
+        f"http://127.0.0.1:{port}/mcp",
+        headers={"Accept": "text/event-stream"},
+    )
+    await transport.start()
+
+    response = await transport.request(MCPJSONRPCRequest(id=1, method="initialize"))
+
+    assert isinstance(response, MCPJSONRPCResponse)
+    assert observed["accept"] == "application/json"
 
     await transport.close()
     await runner.cleanup()
