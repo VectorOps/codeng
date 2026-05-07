@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional, Dict, AsyncIterator
 
-from vocode import models, state
+from vocode import input_manager, models, state
 from vocode import settings as vocode_settings
 from vocode.tools import base as tools_base
 from vocode.lib.date import utcnow
@@ -9,6 +9,7 @@ from vocode.logger import logger
 from vocode.project import Project
 from vocode.graph import RuntimeGraph
 from vocode.lib import message_helpers, validators
+from vocode.runner.executors import input as input_executor
 from .base import BaseExecutor, ExecutorFactory, ExecutorInput
 from .proto import RunEventReq, RunEventResp, RunEventResponseType
 from . import proto as runner_proto
@@ -502,6 +503,7 @@ class Runner:
         req: RunEventReq,
         resp: Optional[RunEventResp],
         only_new: bool = False,
+        input_type: Optional[str] = None,
     ) -> Optional[state.Step]:
         if resp is not None and resp.resp_type != RunEventResponseType.NOOP:
             return self._handle_run_event_response(req, resp)
@@ -512,6 +514,7 @@ class Runner:
 
         message = await self.project.input_manager.wait_for_input(
             only_new=only_new,
+            input_type=input_type,
         )
         managed_resp: Optional[RunEventResp] = None
 
@@ -546,6 +549,14 @@ class Runner:
         if managed_resp is None:
             return None
         return self._handle_run_event_response(req, managed_resp)
+
+    def _get_managed_input_type_for_step(self, step: state.Step) -> str:
+        if step.type != state.StepType.PROMPT:
+            return input_manager.INPUT_TYPE_INTERACTIVE
+        node = self.workflow.graph.node_by_name.get(step.execution.node)
+        if isinstance(node, input_executor.InputNode):
+            return input_manager.normalize_input_type(node.accepted_input_type)
+        return input_manager.INPUT_TYPE_INTERACTIVE
 
     async def _init_executors(self) -> None:
         await self.project.on_workflow_started(
@@ -625,6 +636,7 @@ class Runner:
                 response_step = await self._wait_for_managed_input_response(
                     req,
                     resp,
+                    input_type=input_manager.INPUT_TYPE_INTERACTIVE,
                 )
                 response_event = self._build_response_event(response_step)
                 if response_event is not None:
@@ -711,6 +723,9 @@ class Runner:
                             response_step = await self._wait_for_managed_input_response(
                                 req,
                                 resp,
+                                input_type=self._get_managed_input_type_for_step(
+                                    persisted_step
+                                ),
                             )
                         else:
                             response_step = self._handle_run_event_response(req, resp)
@@ -858,6 +873,7 @@ class Runner:
                                 req_event,
                                 resp_event,
                                 only_new=True,
+                                input_type=input_manager.INPUT_TYPE_INTERACTIVE,
                             )
                             response_event = self._build_response_event(response_step)
                             if response_event is not None:
@@ -1042,6 +1058,7 @@ class Runner:
                             req_event,
                             resp_event,
                             only_new=True,
+                            input_type=input_manager.INPUT_TYPE_INTERACTIVE,
                         )
                         response_event = self._build_response_event(response_step)
                         if response_event is not None:
