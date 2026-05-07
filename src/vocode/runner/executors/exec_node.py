@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Literal, Optional
 from typing import List, Set
 from typing import TYPE_CHECKING
 
 from pydantic import model_validator
 
 from vocode import models, state, settings
+from vocode.proc.shell import ManagedShellCommand
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 if TYPE_CHECKING:
@@ -18,6 +19,8 @@ class ExecNode(models.Node):
     type: str = "exec"
 
     command: str
+    stdin: Optional[str] = None
+    stdin_source: Optional[Literal["literal", "input_message"]] = None
     timeout_s: Optional[float] = None
     expected_return_code: Optional[int] = None
     message: Optional[str] = None
@@ -25,6 +28,12 @@ class ExecNode(models.Node):
 
     @model_validator(mode="after")
     def _validate_outcomes_vs_expected_code(self) -> "ExecNode":
+        if self.stdin_source == "literal" and self.stdin is None:
+            raise ValueError(
+                "ExecNode: 'stdin' is required when 'stdin_source' is 'literal'"
+            )
+        if self.stdin_source is None and self.stdin is not None:
+            self.stdin_source = "literal"
         exp = self.expected_return_code
         if exp is None:
             if len(self.outcomes) > 1:
@@ -64,8 +73,26 @@ class ExecExecutor(BaseExecutor):
         shell_manager = self.project.shells
         if shell_manager is None:
             raise RuntimeError("ExecExecutor requires project.shells (ShellManager)")
+        stdin_data = self._resolve_stdin(inp)
 
-        handle = await shell_manager.run(cfg.command, timeout=cfg.timeout_s)
+        if stdin_data is None:
+            handle = await shell_manager.run(cfg.command, timeout=cfg.timeout_s)
+        else:
+            process_manager = self.project.processes
+            if process_manager is None:
+                raise RuntimeError("ExecExecutor requires project.processes")
+            handle = await process_manager.spawn(
+                command=cfg.command,
+                cwd=process_manager._default_cwd,
+                shell=True,
+                stdin_to_null=False,
+            )
+            handle = ManagedShellCommand(
+                inner=handle,
+                timeout=cfg.timeout_s,
+            )
+            await handle.write(stdin_data)
+            await handle.close_stdin()
 
         header_parts: List[str] = []
         if cfg.message:
@@ -159,3 +186,14 @@ class ExecExecutor(BaseExecutor):
         step.is_final = True
         step.outcome_name = outcome_name
         yield step
+
+    def _resolve_stdin(self, inp: ExecutorInput) -> Optional[str]:
+        stdin_source = self.config.stdin_source
+        if stdin_source is None:
+            return None
+        if stdin_source == "literal":
+            return self.config.stdin or ""
+        input_messages = inp.execution.input_messages
+        if not input_messages:
+            return ""
+        return input_messages[-1].text
