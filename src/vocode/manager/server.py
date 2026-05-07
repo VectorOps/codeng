@@ -578,7 +578,8 @@ class UIServer:
         node_by_name = frame.runner.workflow.graph.node_by_name
         node = node_by_name.get(node_name)
         if node is not None and (
-            node.collapse is not None
+            node.alert
+            or node.collapse is not None
             or node.collapse_lines is not None
             or not node.visible
             or node.tool_collapse is not None
@@ -588,6 +589,7 @@ class UIServer:
                 collapse_lines=node.collapse_lines,
                 visible=node.visible,
                 tool_collapse=node.tool_collapse,
+                alert=node.alert,
             )
 
         input_title: Optional[str] = None

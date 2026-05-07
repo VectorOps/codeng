@@ -214,3 +214,137 @@ async def test_runner_req_display_opts_propagates_tool_collapse_flag() -> None:
         or isinstance(c, tool_call_req_component.ToolCallReqComponent)
     ]
     assert tool_components
+
+
+@pytest.mark.asyncio
+async def test_runner_req_display_opts_propagates_alert_flag() -> None:
+    settings = vocode_settings.Settings()
+    settings.workflows["wf"] = vocode_settings.WorkflowConfig(
+        need_input=False,
+        nodes=[
+            {
+                "name": "n1",
+                "type": "noop",
+                "outcomes": [{"name": "done"}],
+                "alert": True,
+            },
+            {
+                "name": "end",
+                "type": "noop",
+                "outcomes": [],
+            },
+        ],
+        edges=[
+            {
+                "source_node": "n1",
+                "source_outcome": "done",
+                "target_node": "end",
+            },
+        ],
+    )
+    project = StubProject(settings=settings)
+
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    await server.start()
+    await server.manager.start_workflow("wf")
+
+    try:
+        while True:
+            envelope = await asyncio.wait_for(client_endpoint.recv(), timeout=1.0)
+            if envelope.payload.kind == manager_proto.BasePacketKind.RUNNER_REQ:
+                break
+        payload = envelope.payload
+        assert payload.display is not None
+        assert payload.display.alert is True
+    finally:
+        await server.stop()
+
+
+def test_tui_state_bells_once_per_execution_when_alert_enabled() -> None:
+    history = HistoryManager()
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+    run = state.WorkflowExecution(workflow_name="wf")
+    first_execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="node",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    message_one = state.Message(
+        role=models.Role.ASSISTANT,
+        text="first",
+    )
+    history.upsert_message(run, message_one)
+    first_step = history.upsert_step(
+        run,
+        state.Step(
+            id=uuid4(),
+            execution_id=first_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message_one.id,
+        ),
+    )
+    second_message_same_execution = state.Message(
+        role=models.Role.ASSISTANT,
+        text="update",
+    )
+    history.upsert_message(run, second_message_same_execution)
+    second_step_same_execution = history.upsert_step(
+        run,
+        state.Step(
+            id=uuid4(),
+            execution_id=first_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=second_message_same_execution.id,
+        ),
+    )
+    second_execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="node",
+            previous_id=first_execution.id,
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    message_two = state.Message(
+        role=models.Role.ASSISTANT,
+        text="second",
+    )
+    history.upsert_message(run, message_two)
+    step_second_execution = history.upsert_step(
+        run,
+        state.Step(
+            id=uuid4(),
+            execution_id=second_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message_two.id,
+        ),
+    )
+
+    display = manager_proto.RunnerReqDisplayOpts(alert=True)
+
+    ui_state.handle_step(first_step, display=display)
+    ui_state.handle_step(first_step, display=display)
+    ui_state.handle_step(second_step_same_execution, display=display)
+    ui_state.handle_step(step_second_execution, display=display)
+
+    assert buffer.getvalue().count("\a") == 2

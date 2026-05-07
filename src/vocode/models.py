@@ -138,6 +138,10 @@ class Node(vars_mod.BaseVarModel):
     description: Optional[str] = Field(
         None, description="Node description for UI display"
     )
+    alert: bool = Field(
+        default=False,
+        description="If true, emit a TUI bell when a fresh execution of this node starts.",
+    )
     outcomes: List[OutcomeSlot] = Field(default_factory=list)
     skip: bool = Field(
         default=False,
