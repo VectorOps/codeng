@@ -6,7 +6,14 @@ import pytest
 
 from vocode import state, models, settings as vocode_settings
 from vocode.history.manager import HistoryManager
+from vocode.mcp import models as mcp_models
+from vocode.mcp import naming as mcp_naming
+from vocode.mcp.service import MCPWorkflowSessionChange
+from vocode.mcp import tool_materialization as mcp_tool_materialization
+from vocode.manager.base import Workflow
+from vocode.runner.runner import Runner
 from vocode.runner.executors.llm.llm import LLMExecutor
+from vocode.runner.executors.llm.models import LLMNodeMCPSettings
 from vocode.runner.executors.llm.models import LLMNode
 from vocode.runner.executors.llm import helpers as llm_helpers
 from vocode.runner.base import ExecutorInput
@@ -206,6 +213,151 @@ def _build_execution_with_input(
     return run, execution
 
 
+class FakeMCPService:
+    def __init__(self) -> None:
+        self.applied_workflow_requirements: List[tuple[str, List[str]]] = []
+        self.cleared_workflow_requirements: List[str] = []
+        self.started_sources: List[str] = []
+        self.closed_sources: List[str] = []
+        self.refreshed_sources: List[str] = []
+        self.sessions: dict[str, object] = {}
+        self.cached_tools: dict[str, dict[str, Any]] = {}
+        self.workflow_sources_by_owner: dict[tuple[str, str], set[str]] = {}
+        self.workflow_owners_by_source: dict[str, set[tuple[str, str]]] = {}
+
+    def get_session(self, source_name: str) -> Optional[object]:
+        return self.sessions.get(source_name)
+
+    async def start_session(self, source_name: str) -> object:
+        self.started_sources.append(source_name)
+        session = object()
+        self.sessions[source_name] = session
+        return session
+
+    async def refresh_tools(self, source_name: str) -> dict[str, Any]:
+        self.refreshed_sources.append(source_name)
+        return dict(self.cached_tools.get(source_name, {}))
+
+    def list_cached_tools(self, source_name: str) -> dict[str, Any]:
+        return dict(self.cached_tools.get(source_name, {}))
+
+    def list_tool_cache(self) -> dict[str, dict[str, Any]]:
+        return {name: dict(items) for name, items in self.cached_tools.items()}
+
+    def list_prompt_sources(self) -> list[str]:
+        return []
+
+    def list_resource_sources(self) -> list[str]:
+        return []
+
+    def build_node_tools(
+        self,
+        prj,
+        selectors: list[vocode_settings.MCPToolSelector],
+        disabled_selectors: list[vocode_settings.MCPToolSelector],
+        *,
+        resolution_mode: str,
+        hide_listed_tools: bool,
+    ) -> tuple[dict[str, Any], dict[str, vocode_settings.ToolSpec]]:
+        return mcp_tool_materialization.build_node_tools(
+            self,
+            prj,
+            selectors,
+            disabled_selectors,
+            resolution_mode=resolution_mode,
+            hide_listed_tools=hide_listed_tools,
+        )
+
+    async def apply_workflow_requirements(
+        self,
+        workflow_execution_id: str,
+        source_names: list[str],
+    ):
+        return await self.apply_node_requirements(
+            workflow_execution_id,
+            "__workflow__",
+            source_names,
+        )
+
+    async def apply_node_requirements(
+        self,
+        workflow_execution_id: str,
+        owner_id: str,
+        source_names: list[str],
+    ):
+        self.applied_workflow_requirements.append(
+            (workflow_execution_id, list(source_names))
+        )
+        owner_key = (workflow_execution_id, owner_id)
+        current_sources = self.workflow_sources_by_owner.setdefault(owner_key, set())
+        started_sources: List[str] = []
+        for source_name in source_names:
+            if source_name in current_sources:
+                continue
+            owners = self.workflow_owners_by_source.setdefault(source_name, set())
+            should_start = not owners
+            owners.add(owner_key)
+            current_sources.add(source_name)
+            if should_start:
+                await self.start_session(source_name)
+                started_sources.append(source_name)
+        return MCPWorkflowSessionChange(
+            started_sources=started_sources,
+            stopped_sources=[],
+        )
+
+    async def clear_workflow_requirements(self, workflow_execution_id: str):
+        return await self.clear_node_requirements(
+            workflow_execution_id,
+            "__workflow__",
+        )
+
+    async def clear_node_requirements(
+        self,
+        workflow_execution_id: str,
+        owner_id: str,
+    ):
+        self.cleared_workflow_requirements.append(workflow_execution_id)
+        owner_key = (workflow_execution_id, owner_id)
+        source_names = self.workflow_sources_by_owner.pop(owner_key, set())
+        stopped_sources: List[str] = []
+        for source_name in source_names:
+            owners = self.workflow_owners_by_source.get(source_name)
+            if owners is None:
+                continue
+            owners.discard(owner_key)
+            if owners:
+                continue
+            self.workflow_owners_by_source.pop(source_name, None)
+            await self.close_session(source_name)
+            stopped_sources.append(source_name)
+        return MCPWorkflowSessionChange(
+            started_sources=[],
+            stopped_sources=stopped_sources,
+        )
+
+    async def close_session(self, source_name: str) -> None:
+        self.closed_sources.append(source_name)
+        self.sessions.pop(source_name, None)
+
+    async def call_tool(
+        self,
+        source_name: str,
+        tool_name: str,
+        arguments: Optional[dict[str, object]] = None,
+    ) -> dict[str, object]:
+        _ = arguments
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"{source_name}:{tool_name}",
+                }
+            ],
+            "isError": False,
+        }
+
+
 @pytest.mark.asyncio
 async def test_llm_executor_with_connect_mock_response(
     monkeypatch: pytest.MonkeyPatch,
@@ -227,6 +379,7 @@ async def test_llm_executor_with_connect_mock_response(
         system="You are a test assistant.",
     )
     executor = LLMExecutor(config=node, project=project)
+    executor.bind_run_context("run-1", "wf")
 
     run, execution = _build_execution_with_input("node-1", "Hey, I'm a mock request")
     inp = ExecutorInput(execution=execution, run=run)
@@ -256,6 +409,213 @@ async def test_llm_executor_with_connect_mock_response(
     for s in output_steps[:-1]:
         assert s.is_complete is False
     assert final_message_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_init_starts_node_mcp_sources_and_refreshes_cache() -> None:
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            mcp=vocode_settings.MCPSettings(
+                sources={
+                    "local": vocode_settings.MCPStdioSourceSettings(
+                        command="uvx",
+                    )
+                }
+            )
+        )
+    )
+    project.mcp = FakeMCPService()  # type: ignore[assignment]
+    node = LLMNode(
+        name="node-mcp-init",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="local", tool="*")]
+        ),
+    )
+    executor = LLMExecutor(config=node, project=project)
+    executor.bind_run_context("run-1", "wf")
+
+    await executor.init()
+
+    assert project.mcp.applied_workflow_requirements == [("run-1", ["local"])]
+    assert project.mcp.started_sources == ["local"]
+    assert project.mcp.refreshed_sources == ["local"]
+
+    await executor.shutdown()
+
+    assert project.mcp.cleared_workflow_requirements == ["run-1"]
+    assert project.mcp.closed_sources == ["local"]
+
+
+@pytest.mark.asyncio
+async def test_llm_executors_share_workflow_scoped_mcp_session_per_run() -> None:
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            mcp=vocode_settings.MCPSettings(
+                sources={
+                    "local": vocode_settings.MCPStdioSourceSettings(
+                        command="uvx",
+                    )
+                }
+            )
+        )
+    )
+    project.mcp = FakeMCPService()  # type: ignore[assignment]
+    first_node = LLMNode(
+        name="node-mcp-shared-a",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="local", tool="*")]
+        ),
+    )
+    second_node = LLMNode(
+        name="node-mcp-shared-b",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="local", tool="*")]
+        ),
+    )
+
+    first_executor = LLMExecutor(config=first_node, project=project)
+    second_executor = LLMExecutor(config=second_node, project=project)
+    first_executor.bind_run_context("run-1", "wf")
+    second_executor.bind_run_context("run-1", "wf")
+
+    await first_executor.init()
+    await second_executor.init()
+
+    assert project.mcp.started_sources == ["local"]
+    assert project.mcp.applied_workflow_requirements == [
+        ("run-1", ["local"]),
+        ("run-1", ["local"]),
+    ]
+
+    await first_executor.shutdown()
+
+    assert project.mcp.closed_sources == []
+
+    await second_executor.shutdown()
+
+    assert project.mcp.closed_sources == ["local"]
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_init_adds_node_local_mcp_tools() -> None:
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            mcp=vocode_settings.MCPSettings(
+                sources={
+                    "local": vocode_settings.MCPStdioSourceSettings(
+                        command="uvx",
+                    )
+                }
+            )
+        )
+    )
+    project.mcp = FakeMCPService()  # type: ignore[assignment]
+    project.mcp.sessions["local"] = object()
+    project.mcp.cached_tools["local"] = {
+        "echo": mcp_models.MCPToolDescriptor(
+            source_name="local",
+            tool_name="echo",
+            title=None,
+            description="Echo tool",
+            input_schema={"type": "object", "properties": {}},
+        )
+    }
+
+    node = LLMNode(
+        name="node-mcp-tools",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="local", tool="echo")]
+        ),
+    )
+    executor = LLMExecutor(config=node, project=project)
+    executor.bind_run_context("run-1", "wf")
+
+    await executor.init()
+
+    tools = await executor._build_connect_tools({})
+
+    assert tools is not None
+    assert [tool.name for tool in tools] == [
+        mcp_naming.build_internal_tool_name("local", "echo")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_executes_node_local_mcp_tool() -> None:
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            mcp=vocode_settings.MCPSettings(
+                sources={
+                    "local": vocode_settings.MCPStdioSourceSettings(
+                        command="uvx",
+                    )
+                }
+            )
+        )
+    )
+    project.mcp = FakeMCPService()  # type: ignore[assignment]
+    project.mcp.sessions["local"] = object()
+    project.mcp.cached_tools["local"] = {
+        "echo": mcp_models.MCPToolDescriptor(
+            source_name="local",
+            tool_name="echo",
+            title=None,
+            description="Echo tool",
+            input_schema={"type": "object", "properties": {}},
+        )
+    }
+
+    node = LLMNode(
+        name="node-mcp-tools",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="local", tool="echo")]
+        ),
+    )
+    workflow = Workflow(
+        name="wf",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = Runner(workflow, project, None)
+    executor = runner._executors[node.name]
+    assert isinstance(executor, LLMExecutor)
+    await executor.init()
+
+    tool_name = mcp_naming.build_internal_tool_name("local", "echo")
+    execution = state.NodeExecution(
+        workflow_execution=runner.execution,
+        node=node.name,
+        status=state.RunStatus.RUNNING,
+    )
+    execution = project.history.upsert_node_execution(runner.execution, execution)
+    result = await runner._execute_tool_call(
+        state.ToolCallReq(
+            id="call-local-mcp-tool",
+            name=tool_name,
+            arguments={"value": "hello"},
+        ),
+        execution,
+    )
+
+    assert result.kind == "response"
+    response = result.response
+    assert response.status == state.ToolCallStatus.COMPLETED
+    assert response.result == {
+        "content": [{"type": "text", "text": "local:echo"}],
+        "isError": False,
+        "text": "local:echo",
+    }
+
+    await executor.shutdown()
 
 
 @pytest.mark.asyncio

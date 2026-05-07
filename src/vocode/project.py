@@ -1,6 +1,6 @@
 from pathlib import Path
-from typing import Optional, Union, Dict, Any, TYPE_CHECKING, List
-from asyncio import Queue
+from typing import Optional, Union, Dict, TYPE_CHECKING, List
+from collections.abc import Awaitable, Callable
 import uuid
 
 if TYPE_CHECKING:
@@ -21,9 +21,11 @@ from .skills import Skill, discover_skills
 from .project_state import FileChangeModel, ProjectState
 from .history.manager import HistoryManager
 from .auth import ProjectCredentialManager
+from . import ui_events
+from .logger import logger
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
-from vocode.mcp.service import MCPService
+from vocode.mcp.service import MCPService, MCPServiceError
 
 
 class Project:
@@ -47,11 +49,12 @@ class Project:
         self.shells: Optional[ShellManager] = None
         self.skills: List[Skill] = []
         self.mcp: Optional[MCPService] = None
-        self._queue = Queue()
+        self._ui_event_subscribers: set[
+            Callable[[ui_events.ProjectUIEvent], Awaitable[None]]
+        ] = set()
         # Name of the currently running workflow (top-level frame in UIState), if any.
         # Set/cleared by the runner/UI layer; tools may use this for contextual validation.
         self.current_workflow: Optional[str] = None
-        self.current_workflow_run_id: Optional[str] = None
         self.last_root_workflow: Optional[str] = None
         self.session_id: str = uuid.uuid4().hex
         save_interval_s = 120.0
@@ -123,18 +126,6 @@ class Project:
                 if t.tool_name not in disabled_tool_names:
                     self.tools[t.tool_name] = convert_know_tool(self, t)
 
-        if self.mcp is not None:
-            workflow = None
-            if self.settings is not None and self.current_workflow is not None:
-                workflow = self.settings.workflows.get(self.current_workflow)
-            self.tools.update(
-                self.mcp.build_project_tools(
-                    self,
-                    disabled_tool_names,
-                    workflow=workflow,
-                )
-            )
-
     # LLM usage totals
     def add_llm_usage(
         self, prompt_delta: int, completion_delta: int, cost_delta: float
@@ -148,63 +139,50 @@ class Project:
     async def on_workflow_started(
         self,
         workflow_name: str,
-        workflow_run_id: Optional[str] = None,
     ) -> None:
         self.current_workflow = workflow_name
-        self.current_workflow_run_id = workflow_run_id
-        if self.mcp is None:
-            return
-        workflow = None
-        if self.settings is not None:
-            workflow = self.settings.workflows.get(workflow_name)
-        change = await self.mcp.start_workflow(
-            workflow_name,
-            workflow,
-            workflow_run_id=workflow_run_id,
-        )
-        for source_name in change.started_sources:
-            await self.mcp.refresh_tools(source_name)
-        if change.started_sources or change.stopped_sources:
-            self.refresh_tools_from_registry()
+        return None
 
     async def on_workflow_finished(
         self,
         workflow_name: str,
-        keep_mcp_sessions: bool = False,
-        workflow_run_id: Optional[str] = None,
     ) -> None:
-        should_clear_current_workflow = self._should_clear_current_workflow(
-            workflow_name,
-            workflow_run_id=workflow_run_id,
-        )
-        if self.mcp is None:
-            if should_clear_current_workflow:
-                self.current_workflow = None
-                self.current_workflow_run_id = None
-            return
-        change = await self.mcp.finish_workflow(
-            workflow_name,
-            keep_mcp_sessions,
-            workflow_run_id=workflow_run_id,
-        )
-        if should_clear_current_workflow:
+        if self._should_clear_current_workflow(workflow_name):
             self.current_workflow = None
-            self.current_workflow_run_id = None
-        if change.started_sources or change.stopped_sources:
-            self.refresh_tools_from_registry()
+        return None
+
+    async def publish_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
+        for subscriber in list(self._ui_event_subscribers):
+            try:
+                await subscriber(event)
+            except Exception as exc:
+                logger.warning(
+                    "Project UI event subscriber failed",
+                    error=str(exc),
+                    severity=event.severity.value,
+                    source=event.source,
+                )
+
+    def subscribe_ui_events(
+        self,
+        callback: Callable[[ui_events.ProjectUIEvent], Awaitable[None]],
+    ) -> None:
+        self._ui_event_subscribers.add(callback)
+
+    def unsubscribe_ui_events(
+        self,
+        callback: Callable[[ui_events.ProjectUIEvent], Awaitable[None]],
+    ) -> None:
+        self._ui_event_subscribers.discard(callback)
 
     def _should_clear_current_workflow(
         self,
         workflow_name: str,
-        *,
-        workflow_run_id: Optional[str] = None,
     ) -> bool:
         if self.current_workflow is None:
             return False
         if self.current_workflow != workflow_name:
             return False
-        if self.current_workflow_run_id is not None or workflow_run_id is not None:
-            return self.current_workflow_run_id == workflow_run_id
         return True
 
     # Lifecycle management
@@ -261,27 +239,20 @@ class Project:
 
         if self.mcp is None:
             mcp_settings = self.settings.mcp if self.settings is not None else None
-            has_workflow_roots = False
-            has_workflow_roots_list_changed = False
-            if self.settings is not None:
-                for workflow in self.settings.workflows.values():
-                    if workflow.mcp is None or workflow.mcp.roots is None:
-                        continue
-                    has_workflow_roots = True
-                    if workflow.mcp.roots.list_changed:
-                        has_workflow_roots_list_changed = True
             self.mcp = MCPService(
                 mcp_settings,
+                project=self,
                 credentials=self.credentials,
                 project_root_uri=self.base_path.resolve().as_uri(),
-                has_workflow_roots=has_workflow_roots,
-                has_workflow_roots_list_changed=has_workflow_roots_list_changed,
                 tool_cache_update_callback=self.refresh_tools_from_registry,
             )
         if self.settings and self.settings.mcp and self.settings.mcp.enabled:
             for name, source in self.settings.mcp.sources.items():
                 if source.scope.value == "project" and source.kind == "stdio":
-                    await self.mcp.start_session(name)
+                    try:
+                        await self.mcp.start_session(name)
+                    except MCPServiceError:
+                        continue
 
         # Discover skills
         self.skills = discover_skills(self.base_path)

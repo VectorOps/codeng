@@ -99,12 +99,26 @@ class Runner:
             return True
         return False
 
+    def _get_tool_for_request(
+        self,
+        req: state.ToolCallReq,
+        execution: Optional[state.NodeExecution] = None,
+    ):
+        if execution is not None:
+            executor = self._executors.get(execution.node)
+            if executor is not None:
+                tool = executor.get_available_tools().get(req.name)
+                if tool is not None:
+                    return tool
+        return self.project.tools.get(req.name)
+
     async def _execute_tool_call(
-        self, req: state.ToolCallReq
+        self,
+        req: state.ToolCallReq,
+        execution: Optional[state.NodeExecution] = None,
     ) -> runner_proto.ToolExecResult:
         spec = self._get_tool_spec_for_request(req)
-        tools = self.project.tools
-        tool = tools.get(req.name)
+        tool = self._get_tool_for_request(req, execution)
         if tool is None:
             resp = state.ToolCallResp(
                 id=req.id,
@@ -249,9 +263,12 @@ class Runner:
     async def _execute_approved_tool_calls(
         self,
         approved: list[state.ToolCallReq],
+        execution: Optional[state.NodeExecution] = None,
     ) -> list[runner_proto.ToolExecResult]:
         return list(
-            await asyncio.gather(*(self._execute_tool_call(req) for req in approved))
+            await asyncio.gather(
+                *(self._execute_tool_call(req, execution) for req in approved)
+            )
         )
 
     def _create_transition_error_event(
@@ -559,21 +576,16 @@ class Runner:
         return input_manager.INPUT_TYPE_INTERACTIVE
 
     async def _init_executors(self) -> None:
-        await self.project.on_workflow_started(
-            self.workflow.name,
-            workflow_run_id=str(self.execution.id),
-        )
+        await self.project.on_workflow_started(self.workflow.name)
         for executor in self._executors.values():
+            executor.bind_run_context(str(self.execution.id), self.workflow.name)
             await executor.init()
 
-    async def _shutdown_executors(self, keep_mcp_sessions: bool = False) -> None:
+    async def _shutdown_executors(self) -> None:
         for executor in self._executors.values():
             await executor.shutdown()
-        await self.project.on_workflow_finished(
-            self.workflow.name,
-            keep_mcp_sessions,
-            workflow_run_id=str(self.execution.id),
-        )
+            executor.clear_run_context()
+        await self.project.on_workflow_finished(self.workflow.name)
 
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
@@ -911,7 +923,10 @@ class Runner:
 
                         exec_results = await self._tool_orchestrator.execute_plan(
                             approved,
-                            self._execute_approved_tool_calls,
+                            lambda approved_reqs: self._execute_approved_tool_calls(
+                                approved_reqs,
+                                current_execution,
+                            ),
                         )
                         for plan_item, exec_result in zip(approved, exec_results):
                             tool_req = plan_item.request
@@ -1237,9 +1252,7 @@ class Runner:
             return
         finally:
             await self.project.input_manager.reset()
-            await self._shutdown_executors(
-                self.status == state.RunnerStatus.STOPPED,
-            )
+            await self._shutdown_executors()
 
     def set_status(
         self,

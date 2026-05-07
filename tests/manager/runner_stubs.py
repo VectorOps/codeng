@@ -7,6 +7,7 @@ from vocode import state
 
 class DummyNode:
     def __init__(self) -> None:
+        self.alert = False
         self.collapse = None
         self.collapse_lines = None
         self.visible = True

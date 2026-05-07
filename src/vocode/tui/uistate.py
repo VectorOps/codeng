@@ -7,11 +7,13 @@ import typing
 from rich import console as rich_console
 from rich import control as rich_control
 from rich import align as rich_align
+from rich import markup as rich_markup
 from rich import text as rich_text
 import pyfiglet
 from vocode import state as vocode_state
 from vocode import models as vocode_models
 from vocode import settings as vocode_settings
+from vocode import ui_events
 from vocode.logger import logger
 from vocode.manager import proto as manager_proto
 from vocode.tui import lib as tui_terminal
@@ -52,6 +54,24 @@ class ActionItem:
     kind: ActionKind
     component: tui_terminal.Component
     animated: bool = False
+
+
+def format_ui_event_markup(event: ui_events.ProjectUIEvent) -> str:
+    severity_style = {
+        ui_events.UIEventSeverity.INFO: "cyan",
+        ui_events.UIEventSeverity.WARNING: "yellow",
+        ui_events.UIEventSeverity.ERROR: "bold red",
+    }
+    label = event.title or event.severity.value.capitalize()
+    parts = [f"[{severity_style[event.severity]}]{rich_markup.escape(label)}[/]"]
+    if event.source:
+        parts.append(f"[dim]({rich_markup.escape(event.source)})[/]")
+    if event.message:
+        parts.append(rich_markup.escape(event.message))
+    lines = [" ".join(parts)]
+    if event.details:
+        lines.append(f"[dim]{rich_markup.escape(event.details)}[/]")
+    return "\n".join(lines)
 
 
 class TUIState:
@@ -859,6 +879,18 @@ class TUIState:
             self.add_rich_text(text, component_style=component_style, markup=False)
         else:
             self.add_rich_text(text, component_style=component_style)
+
+    def add_ui_event(
+        self,
+        event: ui_events.ProjectUIEvent,
+        component_style: tui_terminal.ComponentStyle | None = None,
+    ) -> None:
+        if component_style is None:
+            component_style = tui_styles.OUTPUT_MESSAGE_STYLE
+        self.add_rich_text(
+            format_ui_event_markup(event),
+            component_style=component_style,
+        )
 
     def _format_message_markdown(self, step: vocode_state.Step) -> str | None:
         message = step.message

@@ -35,6 +35,11 @@ This repository implements a configurable, graph-driven workflow runner with LLM
   - Use type-name registration for node dispatch.
 - Commands and tools:
   - Async-first handlers; avoid blocking I/O; keep dataclass command defs minimal.
+- Design and ownership:
+  - Follow single responsibility principle. Each module or service should own one clear area of behavior.
+  - Keep ownership boundaries explicit. The type or subsystem that owns a model is responsible for interpreting it.
+  - Dependency direction must follow ownership. Higher-level orchestration may call into an owner, but it must not inspect or reconstruct the owner's private model shape.
+  - If a model changes, prefer updating its owner rather than spreading shape knowledge across unrelated modules.
 
 ## What to change vs never touch (boundaries)
 - Never commit secrets or credentials; use environment variables.

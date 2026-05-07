@@ -65,7 +65,15 @@ class WorkflowConfig(vars_mod.BaseVarModel):
     nodes: List[vocode_models.Node] = Field(default_factory=list)
     edges: List[vocode_models.Edge] = Field(default_factory=list)
     agents: Optional[List[str]] = None
-    mcp: Optional["MCPWorkflowSettings"] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_workflow_mcp(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "mcp" in value:
+            raise ValueError(
+                "workflow-level mcp config is no longer supported; move it to llm nodes"
+            )
+        return value
 
     @field_validator("nodes", mode="before")
     @classmethod
@@ -430,14 +438,6 @@ class MCPDiscoverySettings(vars_mod.BaseVarModel):
     description_weight: float = Field(default=1.0, ge=0.0)
     schema_weight: float = Field(default=0.5, ge=0.0)
     min_score: float = Field(default=0.1, ge=0.0)
-
-
-class MCPWorkflowSettings(vars_mod.BaseVarModel):
-    enabled: bool = True
-    tools: List[MCPToolSelector] = Field(default_factory=list)
-    disabled_tools: List[MCPToolSelector] = Field(default_factory=list)
-    hide_listed_tools: bool = False
-    roots: Optional[MCPRootSettings] = None
 
 
 class MCPSettings(vars_mod.BaseVarModel):

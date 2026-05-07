@@ -1,5 +1,4 @@
-from pathlib import Path
-from typing import Optional
+from collections.abc import Awaitable, Callable
 
 from vocode import state, settings as vocode_settings
 from vocode.auth import ProjectCredentialManager
@@ -10,6 +9,7 @@ from vocode.project_state import ProjectState
 from vocode.proc.manager import ProcessManager
 from vocode.proc.shell import ShellManager
 from vocode.persistence import state_manager as persistence_state_manager
+from vocode import ui_events
 
 
 class StubProject:
@@ -21,7 +21,6 @@ class StubProject:
         self.llm_usage = state.LLMUsageStats()
         self.settings = settings or vocode_settings.Settings()
         self.current_workflow = None
-        self.current_workflow_run_id = None
         self.last_root_workflow = None
         self.tools = {}
         self.history = HistoryManager()
@@ -30,6 +29,9 @@ class StubProject:
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
         self.project_state = ProjectState()
         self.mcp: MCPService | None = None
+        self._ui_event_subscribers: set[
+            Callable[[ui_events.ProjectUIEvent], Awaitable[None]]
+        ] = set()
         self.processes: ProcessManager | None = process_manager
         self.shells: ShellManager | None = None
         if self.processes is not None:
@@ -61,41 +63,33 @@ class StubProject:
     async def on_workflow_started(
         self,
         workflow_name: str,
-        workflow_run_id: Optional[str] = None,
     ) -> None:
         self.current_workflow = workflow_name
-        self.current_workflow_run_id = workflow_run_id
-        if self.mcp is None:
-            return
-        workflow = self.settings.workflows.get(workflow_name)
-        change = await self.mcp.start_workflow(
-            workflow_name,
-            workflow,
-            workflow_run_id=workflow_run_id,
-        )
-        for source_name in change.started_sources:
-            await self.mcp.refresh_tools(source_name)
-        if change.started_sources or change.stopped_sources:
-            self.refresh_tools_from_registry()
+        return None
 
     async def on_workflow_finished(
         self,
         workflow_name: str,
-        keep_mcp_sessions: bool = False,
-        workflow_run_id: Optional[str] = None,
     ) -> None:
-        if self.mcp is None:
-            return
-        change = await self.mcp.finish_workflow(
-            workflow_name,
-            keep_mcp_sessions,
-            workflow_run_id=workflow_run_id,
-        )
-        if self.current_workflow_run_id == workflow_run_id:
+        if self.current_workflow == workflow_name:
             self.current_workflow = None
-            self.current_workflow_run_id = None
-        if change.started_sources or change.stopped_sources:
-            self.refresh_tools_from_registry()
+        return None
+
+    async def publish_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
+        for subscriber in list(self._ui_event_subscribers):
+            await subscriber(event)
+
+    def subscribe_ui_events(
+        self,
+        callback: Callable[[ui_events.ProjectUIEvent], Awaitable[None]],
+    ) -> None:
+        self._ui_event_subscribers.add(callback)
+
+    def unsubscribe_ui_events(
+        self,
+        callback: Callable[[ui_events.ProjectUIEvent], Awaitable[None]],
+    ) -> None:
+        self._ui_event_subscribers.discard(callback)
 
     async def start(self) -> None:
         return None

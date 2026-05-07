@@ -3,6 +3,7 @@ from typing import (
     ClassVar,
     List,
     Any,
+    Dict,
     Type,
     AsyncIterator,
     Iterator,
@@ -55,12 +56,29 @@ class BaseExecutor:
         """Initialize an executor instance with its corresponding Node config and Project."""
         self.config = config
         self.project = project
+        self.workflow_execution_id: Optional[str] = None
+        self.workflow_name: Optional[str] = None
+
+    def bind_run_context(
+        self,
+        workflow_execution_id: str,
+        workflow_name: str,
+    ) -> None:
+        self.workflow_execution_id = workflow_execution_id
+        self.workflow_name = workflow_name
+
+    def clear_run_context(self) -> None:
+        self.workflow_execution_id = None
+        self.workflow_name = None
 
     async def init(self) -> None:
         return None
 
     async def shutdown(self) -> None:
         return None
+
+    def get_available_tools(self) -> Dict[str, Any]:
+        return {}
 
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
         """

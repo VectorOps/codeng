@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, List, Optional, Dict, Any, Final
-import json
-import re
-import asyncio
-from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any, Literal
+from pydantic import Field
 
 from vocode import models
 from vocode import settings
+from vocode import vars as vars_mod
+
+
+class LLMNodeMCPSettings(vars_mod.BaseVarModel):
+    enabled: bool = True
+    resolution_mode: Literal["inject", "discovery"] = "inject"
+    tools: List[settings.MCPToolSelector] = Field(default_factory=list)
+    disabled_tools: List[settings.MCPToolSelector] = Field(default_factory=list)
+    hide_listed_tools: bool = False
 
 
 class LLMNode(models.Node):
@@ -43,6 +49,7 @@ class LLMNode(models.Node):
         default_factory=list,
         description="Enabled tools (supports string or object spec)",
     )
+    mcp: Optional[LLMNodeMCPSettings] = None
     extra: Dict[str, Any] = Field(default_factory=dict)
     preprocessors: List[models.PreprocessorSpec] = Field(
         default_factory=list,

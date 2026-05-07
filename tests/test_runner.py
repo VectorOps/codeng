@@ -11,14 +11,18 @@ from vocode.history.manager import HistoryManager
 from vocode.mcp import models as mcp_models
 from vocode.mcp import service as mcp_service
 from vocode.mcp.service import MCPService
+from vocode.mcp.tools import MCPToolAdapter
+from vocode.runner.executors.llm.llm import LLMExecutor
 from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
+from vocode.runner.executors.llm.models import LLMNodeMCPSettings
+from vocode.runner.executors.llm.models import LLMNode
+from vocode.manager import base as manager_base
 from vocode.runner.proto import RunEventResp, RunEventResponseType
 from vocode.runner import proto as runner_proto
 from vocode.runner.runner import RunEvent, Runner, RunnerStopped
 from vocode.tools import base as tools_base
-from vocode.tools.mcp_tool import MCPToolAdapter
 from tests.stub_project import StubProject
 
 
@@ -2276,9 +2280,10 @@ async def test_runner_tool_request_status_updates_do_not_depend_on_object_identi
 
     async def execute_with_copied_requests(
         approved: list[state.ToolCallReq],
+        execution: Optional[state.NodeExecution] = None,
     ) -> list[runner_proto.ToolExecResult]:
         copied = [req.model_copy(deep=True) for req in approved]
-        return await original_execute(copied)
+        return await original_execute(copied, execution)
 
     runner._execute_approved_tool_calls = execute_with_copied_requests
 
@@ -3734,15 +3739,193 @@ async def test_runner_initializes_and_finishes_workflow_scoped_mcp_sessions() ->
 
 
 @pytest.mark.asyncio
-async def test_runner_stop_and_resume_reuses_workflow_scoped_mcp_session() -> None:
+async def test_nested_workflow_mcp_lifecycle_keeps_parent_sessions_active() -> None:
     settings = vocode_settings.Settings(
-        workflows={
-            "wf-runner-mcp": vocode_settings.WorkflowConfig(
-                mcp=vocode_settings.MCPWorkflowSettings(
-                    tools=[vocode_settings.MCPToolSelector(source="wf_local", tool="*")]
-                )
-            )
-        },
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "parent_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                ),
+                "child_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                ),
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp)
+
+    parent_node = LLMNode(
+        name="parent-node",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="parent_local", tool="*")]
+        ),
+    )
+    child_node = LLMNode(
+        name="child-node",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="child_local", tool="*")]
+        ),
+    )
+
+    parent_run = state.WorkflowExecution(workflow_name="parent")
+    child_run = state.WorkflowExecution(workflow_name="child")
+
+    parent_executor = LLMExecutor(config=parent_node, project=project)
+    parent_executor.bind_run_context(str(parent_run.id), "parent")
+    await parent_executor.init()
+
+    assert set(project.mcp.list_sessions().keys()) == {"parent_local"}
+
+    child_executor = LLMExecutor(config=child_node, project=project)
+    child_executor.bind_run_context(str(child_run.id), "child")
+    await child_executor.init()
+
+    assert set(project.mcp.list_sessions().keys()) == {"parent_local", "child_local"}
+
+    await child_executor.shutdown()
+
+    assert set(project.mcp.list_sessions().keys()) == {"parent_local"}
+
+    await parent_executor.shutdown()
+
+    assert project.mcp.list_sessions() == {}
+
+
+@pytest.mark.asyncio
+async def test_manager_nested_workflow_switches_active_workflow_run_for_mcp() -> None:
+    settings = vocode_settings.Settings(
+        mcp=vocode_settings.MCPSettings(
+            sources={
+                "parent_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                ),
+                "child_local": vocode_settings.MCPStdioSourceSettings(
+                    command=sys.executable,
+                    args=["-c", _RUNNER_MCP_SERVER],
+                    scope=vocode_settings.MCPSourceScope.workflow,
+                ),
+            }
+        )
+    )
+    project = StubProject(settings=settings)
+    project.mcp = MCPService(settings.mcp)
+
+    parent_node = LLMNode(
+        name="parent-node",
+        type="llm",
+        model="openai/gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="parent_local", tool="*")]
+        ),
+    )
+    child_node = LLMNode(
+        name="child-node",
+        type="llm",
+        model="openai/gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="child_local", tool="*")]
+        ),
+    )
+    manager = manager_base.BaseManager(
+        project=project,
+        run_event_listener=lambda _frame, _event: asyncio.sleep(
+            0,
+            result=RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            ),
+        ),
+    )
+    parent_workflow = DummyWorkflow(
+        name="parent",
+        graph=models.Graph(nodes=[parent_node], edges=[]),
+    )
+    child_workflow = DummyWorkflow(
+        name="child",
+        graph=models.Graph(nodes=[child_node], edges=[]),
+    )
+
+    parent_runner = Runner(
+        workflow=parent_workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="parent-start",
+        ),
+    )
+    child_runner = Runner(
+        workflow=child_workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="child-start",
+        ),
+    )
+
+    parent_frame = manager_base.RunnerFrame(
+        workflow_name="parent",
+        runner=parent_runner,
+        initial_message=parent_runner.initial_message,
+    )
+    child_frame = manager_base.RunnerFrame(
+        workflow_name="child",
+        runner=child_runner,
+        initial_message=child_runner.initial_message,
+    )
+
+    manager._runner_stack.append(parent_frame)
+    manager._set_active_frame(parent_frame)
+    assert project.current_workflow == "parent"
+
+    await project.start()
+
+    parent_executor = LLMExecutor(config=parent_node, project=project)
+    parent_executor.bind_run_context(str(parent_runner.execution.id), "parent")
+    await parent_executor.init()
+    assert set(project.mcp.list_sessions().keys()) == {"parent_local"}
+
+    manager._runner_stack.append(child_frame)
+    manager._set_active_frame(child_frame)
+    assert project.current_workflow == "child"
+
+    child_executor = LLMExecutor(config=child_node, project=project)
+    child_executor.bind_run_context(str(child_runner.execution.id), "child")
+    await child_executor.init()
+    assert set(project.mcp.list_sessions().keys()) == {
+        "parent_local",
+        "child_local",
+    }
+
+    await child_executor.shutdown()
+    manager._runner_stack.pop()
+    manager._set_active_frame(parent_frame)
+
+    assert project.current_workflow == "parent"
+    assert set(project.mcp.list_sessions().keys()) == {"parent_local"}
+
+    await parent_executor.shutdown()
+    manager._runner_stack.pop()
+    manager._set_active_frame(None)
+
+    assert project.mcp.list_sessions() == {}
+
+    await project.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_manage_mcp_without_executor_owned_node_config() -> None:
+    settings = vocode_settings.Settings(
         mcp=vocode_settings.MCPSettings(
             sources={
                 "wf_local": vocode_settings.MCPStdioSourceSettings(
@@ -3751,7 +3934,7 @@ async def test_runner_stop_and_resume_reuses_workflow_scoped_mcp_session() -> No
                     scope=vocode_settings.MCPSourceScope.workflow,
                 )
             }
-        ),
+        )
     )
     project = StubProject(settings=settings)
     project.mcp = MCPService(settings.mcp)
@@ -3770,21 +3953,6 @@ async def test_runner_stop_and_resume_reuses_workflow_scoped_mcp_session() -> No
         project=project,
         initial_message=state.Message(role=models.Role.USER, text="start"),
     )
-
-    agen = runner.run()
-    while True:
-        event = await agen.__anext__()
-        if event.step is not None:
-            break
-
-    session_before_stop = project.mcp.get_session("wf_local")
-    assert session_before_stop is not None
-
-    stop_event = await agen.athrow(RunnerStopped())
-
-    assert stop_event.stats is not None
-    assert stop_event.stats.status == state.RunnerStatus.STOPPED
-    assert project.mcp.get_session("wf_local") is session_before_stop
 
     await drive_runner(
         runner.run(),
@@ -3796,71 +3964,4 @@ async def test_runner_stop_and_resume_reuses_workflow_scoped_mcp_session() -> No
     )
 
     assert runner.status == state.RunnerStatus.FINISHED
-    assert project.mcp.get_session("wf_local") is None
-
-
-@pytest.mark.asyncio
-async def test_runner_refreshes_mcp_tools_once_when_workflow_starts() -> None:
-    settings = vocode_settings.Settings(
-        workflows={
-            "wf-runner-mcp": vocode_settings.WorkflowConfig(
-                mcp=vocode_settings.MCPWorkflowSettings(
-                    tools=[vocode_settings.MCPToolSelector(source="wf_local", tool="*")]
-                )
-            )
-        },
-        mcp=vocode_settings.MCPSettings(
-            sources={
-                "wf_local": vocode_settings.MCPStdioSourceSettings(
-                    command=sys.executable,
-                    args=["-c", _RUNNER_MCP_SERVER],
-                    scope=vocode_settings.MCPSourceScope.workflow,
-                )
-            }
-        ),
-    )
-    project = StubProject(settings=settings)
-    project.mcp = MCPService(settings.mcp)
-
-    refresh_calls: list[str] = []
-    original_refresh_tools = project.mcp.refresh_tools
-
-    async def _refresh_tools(source_name: str):
-        refresh_calls.append(source_name)
-        return await original_refresh_tools(source_name)
-
-    project.mcp.refresh_tools = _refresh_tools  # type: ignore[method-assign]
-
-    registry_refresh_calls = {"count": 0}
-
-    def _refresh_registry() -> None:
-        registry_refresh_calls["count"] += 1
-
-    project.refresh_tools_from_registry = _refresh_registry
-
-    node = models.Node(
-        name="node1",
-        type="fake",
-        outcomes=[],
-        confirmation=models.Confirmation.AUTO,
-    )
-    graph = models.Graph(nodes=[node], edges=[])
-    workflow = DummyWorkflow(name="wf-runner-mcp", graph=graph)
-
-    runner = Runner(
-        workflow=workflow,
-        project=project,
-        initial_message=state.Message(role=models.Role.USER, text="start"),
-    )
-
-    await drive_runner(
-        runner.run(),
-        lambda _event: RunEventResp(
-            resp_type=RunEventResponseType.NOOP,
-            message=None,
-        ),
-        ignore_non_step=False,
-    )
-
-    assert refresh_calls == ["wf_local"]
-    assert registry_refresh_calls["count"] == 2
+    assert project.mcp.list_sessions() == {}

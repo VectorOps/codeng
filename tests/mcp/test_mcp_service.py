@@ -6,11 +6,11 @@ import sys
 import pytest
 from aiohttp import web
 
+from vocode import ui_events
 from vocode.auth import ProjectCredentialManager
 from vocode.mcp import client as mcp_client
 from vocode.mcp.registry import MCPRegistry
 from vocode.mcp import service as mcp_service
-from vocode.mcp import tool_materialization as mcp_tool_materialization
 from vocode.mcp.service import MCPService
 from vocode.mcp.service import MCPServiceError
 from vocode.mcp import transports as mcp_transports
@@ -21,9 +21,6 @@ from vocode.settings import MCPRootEntry
 from vocode.settings import MCPRootSettings
 from vocode.settings import MCPSettings
 from vocode.settings import MCPStdioSourceSettings
-from vocode.settings import MCPToolSelector
-from vocode.settings import MCPWorkflowSettings
-from vocode.settings import WorkflowConfig
 
 
 _SERVICE_HANDSHAKE_SERVER = """
@@ -487,21 +484,6 @@ async def test_service_rejects_when_mcp_disabled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_start_and_finish_workflow_manage_workflow_scoped_sessions() -> (
-    None
-):
-    service = MCPService(_make_settings())
-
-    await service.start_workflow("wf")
-
-    assert set(service.list_sessions().keys()) == {"local"}
-
-    await service.finish_workflow("wf")
-
-    assert service.list_sessions() == {}
-
-
-@pytest.mark.asyncio
 async def test_service_reconciles_workflow_scoped_sessions_differentially() -> None:
     settings = MCPSettings(
         sources={
@@ -516,38 +498,34 @@ async def test_service_reconciles_workflow_scoped_sessions_differentially() -> N
         }
     )
     service = MCPService(settings)
-    workflow_a = WorkflowConfig(
-        mcp=MCPWorkflowSettings(
-            tools=[MCPToolSelector(source="local_a", tool="*")],
-        )
-    )
-    workflow_b = WorkflowConfig(
-        mcp=MCPWorkflowSettings(
-            tools=[MCPToolSelector(source="local_b", tool="*")],
-        )
-    )
-
-    change_a = await service.start_workflow("wf-a", workflow_a)
+    change_a = await service.apply_workflow_requirements("run-a", ["local_a"])
 
     assert change_a.started_sources == ["local_a"]
     assert change_a.stopped_sources == []
     session_a = service.get_session("local_a")
     assert session_a is not None
 
-    paused = await service.finish_workflow("wf-a", True)
+    paused = await service.apply_workflow_requirements("run-a", ["local_a"])
 
     assert paused.started_sources == []
     assert paused.stopped_sources == []
     assert service.get_session("local_a") is session_a
 
-    change_b = await service.start_workflow("wf-b", workflow_b)
+    change_b = await service.apply_workflow_requirements("run-b", ["local_b"])
 
     assert change_b.started_sources == ["local_b"]
-    assert change_b.stopped_sources == ["local_a"]
+    assert change_b.stopped_sources == []
+    assert service.get_session("local_a") is session_a
+    assert service.get_session("local_b") is not None
+
+    cleared_a = await service.clear_workflow_requirements("run-a")
+
+    assert cleared_a.started_sources == []
+    assert cleared_a.stopped_sources == ["local_a"]
     assert service.get_session("local_a") is None
     assert service.get_session("local_b") is not None
 
-    finished = await service.finish_workflow("wf-b")
+    finished = await service.clear_workflow_requirements("run-b")
 
     assert finished.started_sources == []
     assert finished.stopped_sources == ["local_b"]
@@ -565,160 +543,53 @@ async def test_service_ignores_stale_workflow_finish_for_different_run_id() -> N
         }
     )
     service = MCPService(settings)
-    workflow = WorkflowConfig(
-        mcp=MCPWorkflowSettings(
-            tools=[MCPToolSelector(source="local", tool="*")],
-        )
-    )
+    await service.apply_workflow_requirements("run-1", ["local"])
+    await service.apply_workflow_requirements("run-2", ["local"])
 
-    await service.start_workflow("wf", workflow, workflow_run_id="run-1")
-    await service.start_workflow("wf", workflow, workflow_run_id="run-2")
-
-    stale_finish = await service.finish_workflow(
-        "wf",
-        workflow_run_id="run-1",
-    )
+    stale_finish = await service.clear_workflow_requirements("run-1")
 
     assert stale_finish.started_sources == []
     assert stale_finish.stopped_sources == []
     assert set(service.list_sessions().keys()) == {"local"}
 
-    current_finish = await service.finish_workflow(
-        "wf",
-        workflow_run_id="run-2",
-    )
+    current_finish = await service.clear_workflow_requirements("run-2")
 
     assert current_finish.started_sources == []
     assert current_finish.stopped_sources == ["local"]
     assert service.list_sessions() == {}
 
 
-def test_service_build_project_tools_materializes_helpers_and_filtered_adapters() -> (
-    None
-):
+@pytest.mark.asyncio
+async def test_service_tracks_workflow_source_references_by_run_id() -> None:
     settings = MCPSettings(
-        discovery={"enabled": True},
         sources={
             "local": MCPStdioSourceSettings(
                 command=sys.executable,
                 args=["-c", _SERVICE_HANDSHAKE_SERVER],
-            )
-        },
+            ),
+        }
     )
     service = MCPService(settings)
-    workflow = WorkflowConfig(
-        mcp=MCPWorkflowSettings(
-            tools=[MCPToolSelector(source="local", tool="*")],
-            disabled_tools=[MCPToolSelector(source="local", tool="search")],
-        )
-    )
-    service._active_workflow = workflow
-    service.cache_tool_descriptors(
-        "local",
-        [
-            {"name": "search", "description": "Search docs"},
-            {"name": "fetch", "description": "Fetch docs"},
-        ],
-    )
 
-    class _PromptResourceSession:
-        def __init__(self) -> None:
-            self.state = type(
-                "_State",
-                (),
-                {
-                    "initialized": True,
-                    "phase": "operating",
-                    "negotiation": type(
-                        "_Negotiation",
-                        (),
-                        {
-                            "server_capabilities": type(
-                                "_Capabilities",
-                                (),
-                                {"prompts": True, "resources": True},
-                            )()
-                        },
-                    )(),
-                },
-            )()
-            self.source = type("_Source", (), {"scope": "workflow"})()
+    first = await service.apply_workflow_requirements("run-1", ["local"])
 
-    class _Project:
-        def __init__(self) -> None:
-            self.mcp = service
+    assert first.started_sources == ["local"]
+    assert set(service.list_sessions().keys()) == {"local"}
 
-    service._sessions["local"] = _PromptResourceSession()  # type: ignore[assignment]
+    second = await service.apply_workflow_requirements("run-2", ["local"])
 
-    tools = service.build_project_tools(_Project(), {"mcp__local__blocked"})
+    assert second.started_sources == []
+    assert set(service.list_sessions().keys()) == {"local"}
 
-    assert "mcp_discovery" in tools
-    assert "mcp_get_prompt" in tools
-    assert "mcp_read_resource" in tools
-    assert "mcp__local__search" not in tools
-    assert "mcp__local__fetch" in tools
+    cleared_first = await service.clear_workflow_requirements("run-1")
 
+    assert cleared_first.stopped_sources == []
+    assert set(service.list_sessions().keys()) == {"local"}
 
-def test_tool_materialization_helper_matches_service_build_project_tools() -> None:
-    settings = MCPSettings(
-        discovery={"enabled": True},
-        sources={
-            "local": MCPStdioSourceSettings(
-                command=sys.executable,
-                args=["-c", _SERVICE_HANDSHAKE_SERVER],
-            )
-        },
-    )
-    service = MCPService(settings)
-    workflow = WorkflowConfig(
-        mcp=MCPWorkflowSettings(
-            tools=[MCPToolSelector(source="local", tool="*")],
-        )
-    )
-    service._active_workflow = workflow
-    service.cache_tool_descriptors(
-        "local",
-        [{"name": "fetch", "description": "Fetch docs"}],
-    )
+    cleared_second = await service.clear_workflow_requirements("run-2")
 
-    class _PromptResourceSession:
-        def __init__(self) -> None:
-            self.state = type(
-                "_State",
-                (),
-                {
-                    "initialized": True,
-                    "phase": "operating",
-                    "negotiation": type(
-                        "_Negotiation",
-                        (),
-                        {
-                            "server_capabilities": type(
-                                "_Capabilities",
-                                (),
-                                {"prompts": False, "resources": False},
-                            )()
-                        },
-                    )(),
-                },
-            )()
-            self.source = type("_Source", (), {"scope": "workflow"})()
-
-    class _Project:
-        def __init__(self) -> None:
-            self.mcp = service
-
-    service._sessions["local"] = _PromptResourceSession()  # type: ignore[assignment]
-    project = _Project()
-
-    tools_from_service = service.build_project_tools(project, set())
-    tools_from_helper = mcp_tool_materialization.build_project_tools(
-        service,
-        project,
-        set(),
-    )
-
-    assert set(tools_from_service.keys()) == set(tools_from_helper.keys())
+    assert cleared_second.stopped_sources == ["local"]
+    assert service.list_sessions() == {}
 
 
 def test_service_caches_and_clears_tool_descriptors_per_source() -> None:
@@ -1060,6 +931,40 @@ async def test_service_does_not_retain_failed_session_start() -> None:
 
 
 @pytest.mark.asyncio
+async def test_service_notifies_on_session_start_failure() -> None:
+    settings = MCPSettings(
+        sources={
+            "broken": MCPStdioSourceSettings(
+                command=sys.executable,
+                args=["-c", _BROKEN_SERVICE_SERVER],
+            )
+        }
+    )
+    events: list[ui_events.ProjectUIEvent] = []
+
+    class _EventProject:
+        async def publish_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
+            events.append(event)
+
+    service = MCPService(
+        settings,
+        project=_EventProject(),
+    )
+
+    with pytest.raises(MCPServiceError, match="failed to start mcp source broken"):
+        await service.start_session("broken")
+
+    assert len(events) == 1
+    assert events[0].severity == ui_events.UIEventSeverity.ERROR
+    assert events[0].title == "MCP source start failed"
+    assert events[0].source == "broken"
+    assert (
+        events[0].message
+        == "MCP source 'broken' failed to start: unexpected notification received before initialize response"
+    )
+
+
+@pytest.mark.asyncio
 async def test_service_refreshes_tools_after_list_changed_notification() -> None:
     settings = MCPSettings(
         sources={
@@ -1126,7 +1031,9 @@ async def test_service_notification_refresh_invokes_tool_cache_update_callback()
 
 
 @pytest.mark.asyncio
-async def test_service_recalculates_roots_for_active_project_scoped_session() -> None:
+async def test_service_keeps_project_scoped_session_while_workflow_refs_change() -> (
+    None
+):
     settings = MCPSettings(
         sources={
             "local": MCPStdioSourceSettings(
@@ -1143,38 +1050,17 @@ async def test_service_recalculates_roots_for_active_project_scoped_session() ->
 
     assert any('"capabilities": {}' in line for line in lines)
 
-    await service.start_workflow(
-        "wf",
-        WorkflowConfig(
-            mcp=MCPWorkflowSettings(
-                roots=MCPRootSettings(
-                    entries=[MCPRootEntry(uri="file:///workflow", name="workflow")]
-                )
-            )
-        ),
-    )
-    restarted_session = await asyncio.wait_for(
-        _wait_for_restarted_session(service, "local", session),
-        timeout=1.0,
-    )
-    lines = await asyncio.wait_for(
-        _wait_for_stderr_lines(restarted_session, 2),
-        timeout=1.0,
-    )
+    change = await service.apply_workflow_requirements("run-1", [])
 
-    assert any('"roots": {"listChanged": true}' in line for line in lines)
-    assert any("file:///workflow" in line for line in lines)
+    assert change.started_sources == []
+    assert change.stopped_sources == []
+    assert service.get_session("local") is session
 
-    await service.finish_workflow("wf")
-    final_session = await asyncio.wait_for(
-        _wait_for_restarted_session(service, "local", restarted_session),
-        timeout=1.0,
-    )
-    lines = await asyncio.wait_for(
-        _wait_for_stderr_lines(final_session, 1), timeout=1.0
-    )
+    cleared = await service.clear_workflow_requirements("run-1")
 
-    assert any('"capabilities": {}' in line for line in lines)
+    assert cleared.started_sources == []
+    assert cleared.stopped_sources == []
+    assert service.get_session("local") is session
 
     await service.close_all()
 
