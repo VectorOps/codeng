@@ -13,6 +13,10 @@ from vocode.webclient.backends import base as backend_base
 _DEFAULT_MAX_CONTENT_BYTES = 2_000_000
 
 
+def _strip_content_type_params(content_type: str) -> str:
+    return content_type.split(";", 1)[0].strip().lower()
+
+
 def _build_timeout(settings: models.WebClientSettings) -> aiohttp.ClientTimeout:
     return aiohttp.ClientTimeout(
         total=settings.timeout_s,
@@ -71,6 +75,70 @@ def _build_headers(
     return headers
 
 
+def _find_header_value(headers: Dict[str, str], name: str) -> Optional[str]:
+    target = name.lower()
+    for key, value in headers.items():
+        if key.lower() == target:
+            return value
+    return None
+
+
+def _validate_method(
+    request: models.WebClientRequest, settings: models.WebClientSettings
+) -> None:
+    if request.method.value not in settings.allowed_methods:
+        raise errors.WebClientValidationError("HTTP method is not allowed")
+
+
+def _validate_request_body(
+    request: models.WebClientRequest,
+    settings: models.WebClientSettings,
+) -> None:
+    if request.body is None:
+        return
+    content_type = request.body.content_type.strip()
+    if settings.require_explicit_content_type_for_body and not content_type:
+        raise errors.WebClientValidationError(
+            "request body content_type must not be empty"
+        )
+    header_content_type = _find_header_value(request.headers, "Content-Type")
+    if header_content_type is not None:
+        if header_content_type.strip().lower() != content_type.lower():
+            raise errors.WebClientValidationError(
+                "Content-Type header must match request body content_type"
+            )
+    if (
+        settings.allowed_request_content_types
+        and _strip_content_type_params(content_type)
+        not in settings.allowed_request_content_types
+    ):
+        raise errors.WebClientValidationError(
+            "request body content type is not allowed"
+        )
+    if isinstance(request.body, models.WebClientRequestBodyBinary):
+        if not settings.allow_binary_request_bodies:
+            raise errors.WebClientValidationError(
+                "binary request bodies are not allowed"
+            )
+        body_bytes = request.body.decoded_bytes()
+    else:
+        body_bytes = request.body.text.encode(request.body.encoding)
+    if len(body_bytes) > settings.max_request_body_bytes:
+        raise errors.WebClientValidationError(
+            "request body exceeds max_request_body_bytes"
+        )
+
+
+def _serialize_request_body(
+    request: models.WebClientRequest,
+) -> Optional[bytes]:
+    if request.body is None:
+        return None
+    if isinstance(request.body, models.WebClientRequestBodyBinary):
+        return request.body.decoded_bytes()
+    return request.body.text.encode(request.body.encoding)
+
+
 async def _read_body_with_limit(
     response: aiohttp.ClientResponse,
     max_content_bytes: int,
@@ -95,21 +163,25 @@ class HTTPWebClientBackend(base.BaseWebClientBackend):
         request: models.WebClientRequest,
         settings: models.WebClientSettings,
     ) -> models.WebClientRawContent:
-        if request.method != "GET":
-            raise errors.WebClientValidationError("only GET requests are supported")
-
         parsed_url = parse.urlparse(request.url)
+        _validate_method(request, settings)
         _validate_scheme(parsed_url, settings)
         _validate_host_access(request.url, parsed_url, settings)
+        _validate_request_body(request, settings)
 
         timeout = _build_timeout(settings)
         headers = _build_headers(request, settings)
+        body = _serialize_request_body(request)
+        if request.body is not None:
+            headers["Content-Type"] = request.body.content_type
 
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
+                async with session.request(
+                    request.method.value,
                     request.url,
                     headers=headers,
+                    data=body,
                     allow_redirects=settings.follow_redirects,
                     max_redirects=settings.max_redirects,
                 ) as response:
