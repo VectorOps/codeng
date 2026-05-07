@@ -15,6 +15,8 @@ from vocode.mcp.protocol import MCPJSONRPCResponse
 from vocode.mcp.transports import MCPHTTPTransport
 from vocode.mcp.transports import MCPStdioTransport
 from vocode.mcp.transports import MCPTransportError
+from vocode.mcp.transports import iter_sse_frames
+from vocode.mcp.transports import iter_sse_lines
 
 
 _ECHO_SERVER = """
@@ -222,7 +224,7 @@ async def test_http_transport_posts_jsonrpc_and_injects_headers(
     assert observed["authorization"] == "Bearer secret-token"
     assert observed["protocol_version"] == "2025-03-26"
     assert observed["custom"] == "yes"
-    assert observed["accept"] == "application/json"
+    assert observed["accept"] == "application/json, text/event-stream"
     assert observed["payload"] == {
         "jsonrpc": "2.0",
         "id": 1,
@@ -269,10 +271,101 @@ async def test_http_transport_overrides_accept_header_with_json_only(
     response = await transport.request(MCPJSONRPCRequest(id=1, method="initialize"))
 
     assert isinstance(response, MCPJSONRPCResponse)
-    assert observed["accept"] == "application/json"
+    assert observed["accept"] == "application/json, text/event-stream"
 
     await transport.close()
     await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_iter_sse_frames_parses_multiline_frames() -> None:
+    async def _lines():
+        for line in [
+            ": keepalive",
+            "event: message",
+            "id: evt-1",
+            "retry: 1000",
+            "data: hello",
+            "data: world",
+            "",
+        ]:
+            yield line
+
+    frames = [frame async for frame in iter_sse_frames(_lines())]
+
+    assert len(frames) == 1
+    assert frames[0].event == "message"
+    assert frames[0].id == "evt-1"
+    assert frames[0].retry == 1000
+    assert frames[0].data == "hello\nworld"
+
+
+@pytest.mark.asyncio
+async def test_iter_sse_lines_parses_large_chunked_payload() -> None:
+    large_data = "x" * 200_000
+    encoded = f"data: {large_data}\n\n".encode("utf-8")
+
+    async def _chunks():
+        yield encoded[:65536]
+        yield encoded[65536:131072]
+        yield encoded[131072:]
+
+    lines = [line async for line in iter_sse_lines(_chunks())]
+
+    assert lines == [f"data: {large_data}", ""]
+
+
+@pytest.mark.asyncio
+async def test_http_transport_parses_sse_request_response_and_queues_messages(
+    unused_tcp_port,
+) -> None:
+    async def handler(request: web.Request) -> web.StreamResponse:
+        payload = await request.json()
+        response = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream"},
+        )
+        await response.prepare(request)
+        await response.write(
+            b'data: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n'
+        )
+        await response.write(
+            (
+                "data: "
+                + json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": payload["id"],
+                        "result": {"ok": True},
+                    }
+                )
+                + "\n\n"
+            ).encode("utf-8")
+        )
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/mcp", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", unused_tcp_port)
+    await site.start()
+
+    transport = MCPHTTPTransport(f"http://127.0.0.1:{unused_tcp_port}/mcp")
+    await transport.start()
+
+    try:
+        response = await transport.request(MCPJSONRPCRequest(id=1, method="tools/list"))
+        queued = await transport.receive()
+
+        assert isinstance(response, MCPJSONRPCResponse)
+        assert response.result == {"ok": True}
+        assert isinstance(queued, MCPJSONRPCNotification)
+        assert queued.method == "notifications/tools/list_changed"
+    finally:
+        await transport.close()
+        await runner.cleanup()
 
 
 @pytest.mark.asyncio
