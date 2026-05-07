@@ -963,7 +963,7 @@ class TUIState:
             return
 
         if message.role is vocode_models.Role.USER:
-            self._handle_user_message_step(step)
+            self._handle_user_message_step(step, display=display)
             return
 
         self._upsert_step_output_component(
@@ -973,7 +973,11 @@ class TUIState:
             component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
         )
 
-    def _handle_user_message_step(self, step: vocode_state.Step) -> None:
+    def _handle_user_message_step(
+        self,
+        step: vocode_state.Step,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
+    ) -> None:
         message = step.message
         if message is None:
             return
@@ -998,25 +1002,40 @@ class TUIState:
             prefixed = "\n".join(lines)
 
         step_id = str(step.id)
+        collapse_lines = 10
+        collapsed = False
+        if display is not None:
+            if display.collapse_lines is not None:
+                collapse_lines = display.collapse_lines
+            if display.collapse is not None:
+                collapsed = display.collapse
         try:
             existing = typing.cast(
                 tui_rich_text_component.RichTextComponent,
                 self._terminal.get_component(step_id),
             )
             existing.text = prefixed
+            existing.compact_lines = collapse_lines
+            existing.set_collapsed(collapsed)
             existing.component_style = tui_styles.INPUT_MESSAGE_COMPONENT_STYLE
         except KeyError:
             component = tui_rich_text_component.RichTextComponent(
                 prefixed,
                 id=step_id,
                 markup=False,
+                compact_lines=collapse_lines,
                 component_style=tui_styles.INPUT_MESSAGE_COMPONENT_STYLE,
             )
+            component.set_collapsed(collapsed)
             self._step_component_ids.add(step_id)
             self._terminal.insert_component(-2, component)
 
-    def _handle_input_message_step(self, step: vocode_state.Step) -> None:
-        self._handle_user_message_step(step)
+    def _handle_input_message_step(
+        self,
+        step: vocode_state.Step,
+        display: manager_proto.RunnerReqDisplayOpts | None = None,
+    ) -> None:
+        self._handle_user_message_step(step, display=display)
 
     def _handle_prompt_step(
         self,
@@ -1136,6 +1155,9 @@ class TUIState:
                 return
         if step.type == vocode_state.StepType.OUTPUT_MESSAGE:
             self._handle_output_message_step(step, display=display)
+            return
+        if step.type is vocode_state.StepType.INPUT_MESSAGE:
+            self._handle_input_message_step(step, display=display)
             return
         if step.type in (
             vocode_state.StepType.PROMPT,
