@@ -60,12 +60,12 @@ class ProgressComponent(renderable_component.RenderableComponentBase):
         terminal = self.terminal
         if terminal is None:
             return ""
-        uni = terminal.unicode
-        frame = uni.spinner_frame(
+        unicode_manager = terminal.unicode
+        frame = unicode_manager.spinner_frame(
             self._frame_index,
             tui_unicode.SpinnerVariant.DOTS,
         )
-        frames = uni.spinner_frames(tui_unicode.SpinnerVariant.DOTS)
+        frames = unicode_manager.spinner_frames(tui_unicode.SpinnerVariant.DOTS)
         self._frame_index = (self._frame_index + 1) % len(frames)
         return frame.strip()
 

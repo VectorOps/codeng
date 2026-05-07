@@ -5,7 +5,7 @@ from typing import AsyncIterator, Optional
 from aiohttp import web
 from pydantic import Field
 
-from vocode import models, state
+from vocode import input_manager, models, state
 from vocode.http import server as http_server
 from vocode.runner import base as runner_base
 
@@ -24,6 +24,10 @@ class HTTPInputNode(models.Node):
     message: Optional[str] = Field(
         default=None,
         description="Optional status message emitted while waiting for HTTP input.",
+    )
+    accepted_input_type: Optional[str] = Field(
+        default=None,
+        description="Optional input type accepted by this node. Defaults to HTTP input.",
     )
     content_type: Optional[str] = Field(
         default=None,
@@ -76,6 +80,7 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
             accepted = await self.project.input_manager.publish(
                 message,
                 queue=True,
+                input_type=input_manager.INPUT_TYPE_HTTP,
             )
             if not accepted:
                 return web.json_response({"error": "rejected"}, status=409)
@@ -117,7 +122,10 @@ class HTTPInputExecutor(runner_base.BaseExecutor):
         yield waiting_step
 
         message = await self.project.input_manager.wait_for_input(
-            self.config.only_new_input
+            self.config.only_new_input,
+            input_type=input_manager.normalize_input_type(
+                self.config.accepted_input_type or input_manager.INPUT_TYPE_HTTP
+            ),
         )
         history.upsert_message(inp.run, message)
         output_step = history.upsert_step(

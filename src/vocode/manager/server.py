@@ -6,6 +6,7 @@ from typing import Optional, cast
 import time
 import uuid
 
+from vocode import input_manager
 from vocode import settings as vocode_settings
 from vocode import models
 from vocode import state
@@ -143,7 +144,9 @@ class UIServer:
             manager_proto.InputPromptPacket(title=title, subtitle=subtitle)
         )
         try:
-            message = await self._manager.project.input_manager.wait_for_input()
+            message = await self._manager.project.input_manager.wait_for_input(
+                input_type=input_manager.INPUT_TYPE_INTERACTIVE,
+            )
         except asyncio.CancelledError:
             await self.send_packet(manager_proto.InputPromptPacket())
             raise
@@ -785,6 +788,7 @@ class UIServer:
             accepted = await self._manager.project.input_manager.publish(
                 message,
                 queue=False,
+                input_type=input_manager.INPUT_TYPE_INTERACTIVE,
             )
             if accepted:
                 prompt_packet = manager_proto.InputPromptPacket()
@@ -794,6 +798,7 @@ class UIServer:
         accepted = await self._manager.project.input_manager.publish(
             message,
             queue=False,
+            input_type=input_manager.INPUT_TYPE_INTERACTIVE,
         )
         if accepted:
             prompt_packet = manager_proto.InputPromptPacket()

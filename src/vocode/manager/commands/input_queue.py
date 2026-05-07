@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from vocode import models
+from vocode import input_manager as vocode_input_manager, models
 from vocode import state as vocode_state
 
 from . import output as command_output
@@ -56,16 +56,34 @@ async def _queue(server, args: list[str]) -> None:
             return
         snapshot = await input_manager.snapshot()
         lines = [
-            command_output.heading("Input queue:"),
+            command_output.heading("Input queues:"),
             f"  Pending waiters: {len(snapshot.waiters)}",
             f"  Queued messages: {len(snapshot.queued_messages)}",
         ]
-        if snapshot.queued_messages:
-            queued_messages = list(snapshot.queued_messages)
-            for index, message in enumerate(queued_messages[:MAX_LIST_ITEMS], start=1):
-                lines.append(f"\n[{index:>2}] {message.role.value}")
-                lines.append(f"      {_format_queue_text(message.text)}")
-            remaining = len(queued_messages) - MAX_LIST_ITEMS
+        if snapshot.queued_messages_by_type:
+            global_index = 1
+            displayed = 0
+            for input_type in vocode_input_manager.ordered_input_types(
+                snapshot.queued_messages_by_type.keys()
+            ):
+                queued_messages = list(snapshot.queued_messages_by_type[input_type])
+                if not queued_messages:
+                    continue
+                waiter_count = len(snapshot.waiters_by_type.get(input_type, ()))
+                lines.append(
+                    f"\nType: {input_type}"
+                    f" ({len(queued_messages)} queued, {waiter_count} waiter(s))"
+                )
+                for message in queued_messages:
+                    if displayed >= MAX_LIST_ITEMS:
+                        break
+                    lines.append(f"[{global_index:>2}] {message.role.value}")
+                    lines.append(f"      {_format_queue_text(message.text)}")
+                    global_index += 1
+                    displayed += 1
+                if displayed >= MAX_LIST_ITEMS:
+                    break
+            remaining = len(snapshot.queued_messages) - displayed
             if remaining > 0:
                 lines.append(f"\n... and {remaining} more")
         await command_output.send_rich(server, "\n".join(lines))
@@ -77,11 +95,19 @@ async def _queue(server, args: list[str]) -> None:
             return
         text = " ".join(args[1:])
         message = vocode_state.Message(role=models.Role.USER, text=text)
-        await input_manager.publish(message, queue=True)
+        await input_manager.publish(
+            message,
+            queue=True,
+            input_type=vocode_input_manager.INPUT_TYPE_INTERACTIVE,
+        )
         snapshot = await input_manager.snapshot()
         await command_output.send_success(
             server,
-            f"Queued input message. Queue size: {len(snapshot.queued_messages)}",
+            (
+                "Queued input message in "
+                f"{vocode_input_manager.INPUT_TYPE_INTERACTIVE}. "
+                f"Queue size: {len(snapshot.queued_messages)}"
+            ),
         )
         return
 
@@ -134,7 +160,7 @@ async def _queue(server, args: list[str]) -> None:
         count = await input_manager.clear_queue()
         await command_output.send_success(
             server,
-            f"Cleared {count} queued input message(s).",
+            f"Cleared {count} queued input message(s) across all queues.",
         )
         return
 

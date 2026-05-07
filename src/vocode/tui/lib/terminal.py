@@ -333,8 +333,12 @@ class Terminal:
                     elapsed = now - last
                     if elapsed < interval:
                         await asyncio.sleep(interval - elapsed)
-            await self.render()
-            self._last_auto_render = time.monotonic()
+            try:
+                await self.render()
+            except Exception:
+                logger.exception("Terminal auto-render failed")
+            else:
+                self._last_auto_render = time.monotonic()
         finally:
             self._auto_render_task = None
 
