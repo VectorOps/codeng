@@ -200,11 +200,11 @@ def render_status_icon(
     if status is None:
         return ""
 
-    uni = terminal.unicode
+    unicode_manager = terminal.unicode
     if status is vocode_state.ToolCallReqStatus.EXECUTING:
         if not animate_running:
-            return uni.glyph("hourglass_with_flowing_sand")
-        return uni.spinner_frame(
+            return unicode_manager.glyph("hourglass_with_flowing_sand")
+        return unicode_manager.spinner_frame(
             frame_index,
             tui_unicode.SpinnerVariant.BRAILLE,
         )
@@ -212,7 +212,7 @@ def render_status_icon(
     icon_name = _STATUS_ICON_NAME.get(status)
     if icon_name is None:
         return ""
-    return uni.glyph(icon_name)
+    return unicode_manager.glyph(icon_name)
 
 
 def format_status_text(

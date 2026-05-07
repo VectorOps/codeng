@@ -165,12 +165,14 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         if status is vocode_state.RunnerStatus.RUNNING:
             terminal = self.terminal
             if terminal is not None:
-                uni = terminal.unicode
-                frame = uni.spinner_frame(
+                unicode_manager = terminal.unicode
+                frame = unicode_manager.spinner_frame(
                     self._frame_index,
                     tui_unicode.SpinnerVariant.BRAILLE,
                 )
-                frames = uni.spinner_frames(tui_unicode.SpinnerVariant.BRAILLE)
+                frames = unicode_manager.spinner_frames(
+                    tui_unicode.SpinnerVariant.BRAILLE
+                )
                 self._frame_index = (self._frame_index + 1) % len(frames)
                 frame_text = frame.strip()
         else:
