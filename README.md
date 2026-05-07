@@ -2,22 +2,14 @@
 
 > WIP: this project is under active development and the public surface is still evolving.
 
-VectorOps Code is a configurable, graph-driven workflow runner for coding and automation tasks.
-It helps teams turn AI from an ad-hoc assistant into a repeatable way of working.
-
-Instead of manually stitching together prompts, repository context, tools, and external services for every task, you can define how work should flow and run it through one system.
-
-It is built for hands-on developer use, but it also supports a more operational model where outside systems can send work into a self-hosted runtime.
-
-The Python import package lives under `vocode`, while the distributable package name in `pyproject.toml` is `vopscode`.
+VectorOps Code is a configurable, graph-driven coding harness.
 
 ## Features
 
-- Build custom workflows for coding, review, planning, requirements discovery, patching, and validation.
+- Build custom workflows for coding, review, planning, requirements discovery, patching or validation.
 - Run those workflows from a developer-friendly TUI or receive work from external callers through self-hosted HTTP entry points.
 - Give agents practical capabilities such as shell execution, patch application, repository discovery, web fetch, and delegated sub-tasks.
-- Connect to LLM providers through VectorOps Connect instead of hardwiring provider logic into every workflow.
-- Add repository-aware context and knowledge-backed tools through KnowLT.
+- Add repository-aware context and knowledge-backed tools through VectorOps Know.
 - Extend the system with MCP sources and tools when you need external capabilities.
 
 ## Quick start
@@ -41,7 +33,7 @@ src/vocode/config_templates/
 3. Launch the TUI against a project path:
 
 ```bash
-uv run python -m vocode.tui.app .
+uv run python -m vocode.tui.app <project path>
 ```
 
 The current codebase exposes the TUI entry point as a module invocation rather than a console script.
