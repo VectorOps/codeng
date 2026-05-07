@@ -123,18 +123,6 @@ class Project:
                 if t.tool_name not in disabled_tool_names:
                     self.tools[t.tool_name] = convert_know_tool(self, t)
 
-        if self.mcp is not None:
-            workflow = None
-            if self.settings is not None and self.current_workflow is not None:
-                workflow = self.settings.workflows.get(self.current_workflow)
-            self.tools.update(
-                self.mcp.build_project_tools(
-                    self,
-                    disabled_tool_names,
-                    workflow=workflow,
-                )
-            )
-
     # LLM usage totals
     def add_llm_usage(
         self, prompt_delta: int, completion_delta: int, cost_delta: float
@@ -152,20 +140,7 @@ class Project:
     ) -> None:
         self.current_workflow = workflow_name
         self.current_workflow_run_id = workflow_run_id
-        if self.mcp is None:
-            return
-        workflow = None
-        if self.settings is not None:
-            workflow = self.settings.workflows.get(workflow_name)
-        change = await self.mcp.start_workflow(
-            workflow_name,
-            workflow,
-            workflow_run_id=workflow_run_id,
-        )
-        for source_name in change.started_sources:
-            await self.mcp.refresh_tools(source_name)
-        if change.started_sources or change.stopped_sources:
-            self.refresh_tools_from_registry()
+        return None
 
     async def on_workflow_finished(
         self,
@@ -177,21 +152,10 @@ class Project:
             workflow_name,
             workflow_run_id=workflow_run_id,
         )
-        if self.mcp is None:
-            if should_clear_current_workflow:
-                self.current_workflow = None
-                self.current_workflow_run_id = None
-            return
-        change = await self.mcp.finish_workflow(
-            workflow_name,
-            keep_mcp_sessions,
-            workflow_run_id=workflow_run_id,
-        )
         if should_clear_current_workflow:
             self.current_workflow = None
             self.current_workflow_run_id = None
-        if change.started_sources or change.stopped_sources:
-            self.refresh_tools_from_registry()
+        return None
 
     def _should_clear_current_workflow(
         self,
@@ -261,21 +225,12 @@ class Project:
 
         if self.mcp is None:
             mcp_settings = self.settings.mcp if self.settings is not None else None
-            has_workflow_roots = False
-            has_workflow_roots_list_changed = False
-            if self.settings is not None:
-                for workflow in self.settings.workflows.values():
-                    if workflow.mcp is None or workflow.mcp.roots is None:
-                        continue
-                    has_workflow_roots = True
-                    if workflow.mcp.roots.list_changed:
-                        has_workflow_roots_list_changed = True
             self.mcp = MCPService(
                 mcp_settings,
                 credentials=self.credentials,
                 project_root_uri=self.base_path.resolve().as_uri(),
-                has_workflow_roots=has_workflow_roots,
-                has_workflow_roots_list_changed=has_workflow_roots_list_changed,
+                has_workflow_roots=False,
+                has_workflow_roots_list_changed=False,
                 tool_cache_update_callback=self.refresh_tools_from_registry,
             )
         if self.settings and self.settings.mcp and self.settings.mcp.enabled:

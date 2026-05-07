@@ -1,0 +1,2 @@
+class MCPServiceError(Exception):
+    pass

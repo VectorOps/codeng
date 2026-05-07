@@ -301,10 +301,10 @@ For the first implementation, reuse `TextMessagePacket` unless a stronger UX req
 
 Developer instructions:
 
-- [ ] Remove `mcp` from `WorkflowConfig`.
-- [ ] Add a new LLM-node-local MCP settings model.
-- [ ] Add `mcp: Optional[...] = None` to `LLMNode`.
-- [ ] Remove or rewrite tests that currently expect workflow-level MCP config.
+- [x] Remove `mcp` from `WorkflowConfig`.
+- [x] Add a new LLM-node-local MCP settings model.
+- [x] Add `mcp: Optional[...] = None` to `LLMNode`.
+- [x] Remove or rewrite tests that currently expect workflow-level MCP config.
 
 Verification:
 
@@ -315,10 +315,10 @@ Verification:
 
 Developer instructions:
 
-- [ ] Read `LLMNode.mcp` directly inside `LLMExecutor.init()`.
-- [ ] Start the required MCP sources there through the MCP service.
-- [ ] Refresh tool cache for sources newly started for that workflow run.
-- [ ] Build the node-local MCP tool set there without adding any new runner event.
+- [x] Read `LLMNode.mcp` directly inside `LLMExecutor.init()`.
+- [x] Start the required MCP sources there through the MCP service.
+- [x] Refresh tool cache for sources newly started for that workflow run.
+- [x] Build the node-local MCP tool set there without adding any new runner event.
 
 Completion indicator:
 

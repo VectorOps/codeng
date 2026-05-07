@@ -65,7 +65,15 @@ class WorkflowConfig(vars_mod.BaseVarModel):
     nodes: List[vocode_models.Node] = Field(default_factory=list)
     edges: List[vocode_models.Edge] = Field(default_factory=list)
     agents: Optional[List[str]] = None
-    mcp: Optional["MCPWorkflowSettings"] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_workflow_mcp(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "mcp" in value:
+            raise ValueError(
+                "workflow-level mcp config is no longer supported; move it to llm nodes"
+            )
+        return value
 
     @field_validator("nodes", mode="before")
     @classmethod
