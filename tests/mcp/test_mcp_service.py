@@ -11,7 +11,6 @@ from vocode.auth import ProjectCredentialManager
 from vocode.mcp import client as mcp_client
 from vocode.mcp.registry import MCPRegistry
 from vocode.mcp import service as mcp_service
-from vocode.mcp import tool_materialization as mcp_tool_materialization
 from vocode.mcp.service import MCPService
 from vocode.mcp.service import MCPServiceError
 from vocode.mcp import transports as mcp_transports
@@ -22,7 +21,6 @@ from vocode.settings import MCPRootEntry
 from vocode.settings import MCPRootSettings
 from vocode.settings import MCPSettings
 from vocode.settings import MCPStdioSourceSettings
-from vocode.settings import MCPToolSelector
 
 
 _SERVICE_HANDSHAKE_SERVER = """

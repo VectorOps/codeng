@@ -9,7 +9,6 @@ import uuid
 from pydantic import BaseModel, Field, model_validator
 from vocode import state
 from vocode import ui_events
-from vocode.runner import proto as runner_proto
 
 
 class RunnerReqDisplayOpts(BaseModel):
