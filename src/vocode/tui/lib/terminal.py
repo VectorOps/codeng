@@ -258,9 +258,11 @@ class Terminal:
             return
 
         batched: typing.List[rich_segment.Segment] = []
-        for line in lines:
+        last_index = len(lines) - 1
+        for index, line in enumerate(lines):
             batched.extend(line)
-            batched.append(rich_segment.Segment.line())
+            if index != last_index:
+                batched.append(rich_segment.Segment.line())
 
         if batched:
             self._console.print(rich_segment.Segments(batched), end="")
@@ -656,9 +658,13 @@ class Terminal:
             tui_controls.CustomControl.cursor_column_1(),
         )
 
-        if row != self._cursor_line:
+        lines_up = 0
+        if self._cursor_line > 0:
+            lines_up = self._cursor_line - row - 1
+
+        if lines_up > 0:
             self._console.control(
-                tui_controls.CustomControl.cursor_previous_line(self._cursor_line - row)
+                tui_controls.CustomControl.cursor_previous_line(lines_up)
             )
 
         if self._settings.incremental_mode is IncrementalRenderMode.CLEAR_TO_BOTTOM:
