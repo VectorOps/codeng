@@ -559,21 +559,16 @@ class Runner:
         return input_manager.INPUT_TYPE_INTERACTIVE
 
     async def _init_executors(self) -> None:
-        await self.project.on_workflow_started(
-            self.workflow.name,
-            workflow_run_id=str(self.execution.id),
-        )
+        await self.project.on_workflow_started(self.workflow.name)
         for executor in self._executors.values():
+            executor.bind_run_context(str(self.execution.id), self.workflow.name)
             await executor.init()
 
-    async def _shutdown_executors(self, keep_mcp_sessions: bool = False) -> None:
+    async def _shutdown_executors(self) -> None:
         for executor in self._executors.values():
             await executor.shutdown()
-        await self.project.on_workflow_finished(
-            self.workflow.name,
-            keep_mcp_sessions,
-            workflow_run_id=str(self.execution.id),
-        )
+            executor.clear_run_context()
+        await self.project.on_workflow_finished(self.workflow.name)
 
     # Main runner loop
     async def run(self) -> AsyncIterator[RunEventReq]:
@@ -1237,9 +1232,7 @@ class Runner:
             return
         finally:
             await self.project.input_manager.reset()
-            await self._shutdown_executors(
-                self.status == state.RunnerStatus.STOPPED,
-            )
+            await self._shutdown_executors()
 
     def set_status(
         self,

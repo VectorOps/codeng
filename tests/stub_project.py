@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional
+from collections.abc import Callable
 
 from vocode import state, settings as vocode_settings
 from vocode.auth import ProjectCredentialManager
@@ -21,7 +22,6 @@ class StubProject:
         self.llm_usage = state.LLMUsageStats()
         self.settings = settings or vocode_settings.Settings()
         self.current_workflow = None
-        self.current_workflow_run_id = None
         self.last_root_workflow = None
         self.tools = {}
         self.history = HistoryManager()
@@ -30,6 +30,7 @@ class StubProject:
         self.state_manager = persistence_state_manager.NullWorkflowStateManager()
         self.project_state = ProjectState()
         self.mcp: MCPService | None = None
+        self.mcp_notification_callback: Callable[[str], None] | None = None
         self.processes: ProcessManager | None = process_manager
         self.shells: ShellManager | None = None
         if self.processes is not None:
@@ -61,21 +62,16 @@ class StubProject:
     async def on_workflow_started(
         self,
         workflow_name: str,
-        workflow_run_id: Optional[str] = None,
     ) -> None:
         self.current_workflow = workflow_name
-        self.current_workflow_run_id = workflow_run_id
         return None
 
     async def on_workflow_finished(
         self,
         workflow_name: str,
-        keep_mcp_sessions: bool = False,
-        workflow_run_id: Optional[str] = None,
     ) -> None:
-        if self.current_workflow_run_id == workflow_run_id:
+        if self.current_workflow == workflow_name:
             self.current_workflow = None
-            self.current_workflow_run_id = None
         return None
 
     async def start(self) -> None:

@@ -440,14 +440,6 @@ class MCPDiscoverySettings(vars_mod.BaseVarModel):
     min_score: float = Field(default=0.1, ge=0.0)
 
 
-class MCPWorkflowSettings(vars_mod.BaseVarModel):
-    enabled: bool = True
-    tools: List[MCPToolSelector] = Field(default_factory=list)
-    disabled_tools: List[MCPToolSelector] = Field(default_factory=list)
-    hide_listed_tools: bool = False
-    roots: Optional[MCPRootSettings] = None
-
-
 class MCPSettings(vars_mod.BaseVarModel):
     enabled: bool = True
     sources: Dict[str, MCPSourceSettings] = Field(default_factory=dict)

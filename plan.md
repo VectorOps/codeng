@@ -330,9 +330,9 @@ Completion indicator:
 
 Developer instructions:
 
-- [ ] Replace workflow-name-based active state with workflow-execution-id-based references.
-- [ ] Add apply and clear methods for workflow-instance source requirements.
-- [ ] Reconcile start and shutdown based on active references.
+- [x] Replace workflow-name-based active state with workflow-execution-id-based references.
+- [x] Add apply and clear methods for workflow-instance source requirements.
+- [x] Reconcile start and shutdown based on active references.
 - [ ] Keep project-scoped sessions unchanged.
 
 Verification:
@@ -344,11 +344,11 @@ Verification:
 
 Developer instructions:
 
-- [ ] Replace workflow-based enablement helpers with node-based helpers.
+- [x] Replace workflow-based enablement helpers with node-based helpers.
 - [ ] Build the effective MCP tool set for the current LLM node only.
 - [ ] Auto-inject matched concrete tools in inject mode.
-- [ ] Inject only `mcp_discovery` in discovery mode.
-- [ ] Keep prompt/resource helper behavior aligned with node-local MCP selection.
+- [x] Inject only `mcp_discovery` in discovery mode.
+- [x] Keep prompt/resource helper behavior aligned with node-local MCP selection.
 
 Completion indicator:
 
@@ -360,7 +360,7 @@ Completion indicator:
 
 Developer instructions:
 
-- [ ] Keep global static tools in `project.tools`.
+- [x] Keep global static tools in `project.tools`.
 - [ ] Stop materializing node-specific MCP adapters into the global registry.
 - [ ] Let the LLM executor compose node-local MCP tools when building connect tool specs.
 
@@ -402,9 +402,36 @@ Completion indicator:
 
 Developer instructions:
 
-- [ ] Run `uv run black` on changed files.
+- [x] Run `uv run black` on changed files.
 - [ ] Run targeted pytest modules first.
 - [ ] If green, run broader MCP, manager, and LLM executor test groups.
+
+## Progress notes
+
+Completed implementation work so far:
+
+- `WorkflowConfig` now rejects workflow-level `mcp` config.
+- `LLMNode` owns `mcp` settings through `LLMNodeMCPSettings`.
+- `LLMExecutor.init()` resolves node-local MCP source requirements and starts workflow-scoped sources through `apply_workflow_requirements(...)`.
+- `LLMExecutor.init()` starts direct/project-scoped MCP sessions as needed and refreshes tool caches.
+- `LLMExecutor` builds node-local MCP tools through `MCPService.build_node_tools(...)`.
+- Node-local MCP helper tools now carry selector context in their `ToolSpec.config` and use that context at runtime.
+- `mcp_discovery`, `mcp_get_prompt`, and `mcp_read_resource` now honor node-local MCP selectors when invoked from node-local tool injection.
+- Active MCP root resolution no longer depends on workflow-level MCP root config.
+
+Targeted verification completed so far:
+
+- `uv run pytest tests/executors/test_llm.py`
+- `uv run pytest tests/tools/test_mcp_prompt_resource_tools.py`
+- `uv run pytest tests/mcp/test_mcp_service.py`
+- `uv run pytest tests/mcp/test_mcp_settings.py tests/mcp/test_mcp_runtime_models.py`
+
+Known remaining work:
+
+- Remove remaining legacy workflow-oriented MCP registry/tool-resolution APIs and compatibility paths.
+- Stop carrying node-scoped MCP adapters through any remaining global project-level paths.
+- Surface MCP startup/connect failures to the TUI.
+- Rewrite stale workflow-level MCP tests at the end of the transition.
 
 Suggested test commands:
 

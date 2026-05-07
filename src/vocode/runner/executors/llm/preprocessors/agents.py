@@ -1,8 +1,9 @@
-from typing import Any, List
+from typing import Any, List, Optional
 
 from vocode import models as models_mod
 from vocode.project import Project
 from vocode.state import Message
+from vocode.tools.base import ToolReq
 from vocode.runner.executors.llm.preprocessors import base as pre_base
 
 
@@ -29,7 +30,12 @@ def _agents_preprocessor(
     if settings is None:
         return messages
 
-    parent_name = project.current_workflow
+    parent_name: Optional[str] = None
+    current_req = getattr(project, "current_tool_req", None)
+    if isinstance(current_req, ToolReq):
+        parent_name = current_req.execution.workflow_name
+    if parent_name is None:
+        parent_name = project.current_workflow
     if parent_name is None:
         return messages
 

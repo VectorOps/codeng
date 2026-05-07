@@ -220,7 +220,8 @@ class FakeMCPService:
         self.refreshed_sources: List[str] = []
         self.sessions: dict[str, object] = {}
         self.cached_tools: dict[str, dict[str, Any]] = {}
-        self.workflow_sources_by_run: dict[str, set[str]] = {}
+        self.workflow_sources_by_owner: dict[tuple[str, str], set[str]] = {}
+        self.workflow_owners_by_source: dict[str, set[tuple[str, str]]] = {}
 
     def get_session(self, source_name: str) -> Optional[object]:
         return self.sessions.get(source_name)
@@ -270,19 +271,32 @@ class FakeMCPService:
         workflow_execution_id: str,
         source_names: list[str],
     ):
+        return await self.apply_node_requirements(
+            workflow_execution_id,
+            "__workflow__",
+            source_names,
+        )
+
+    async def apply_node_requirements(
+        self,
+        workflow_execution_id: str,
+        owner_id: str,
+        source_names: list[str],
+    ):
         self.applied_workflow_requirements.append(
             (workflow_execution_id, list(source_names))
         )
-        current_sources = self.workflow_sources_by_run.setdefault(
-            workflow_execution_id,
-            set(),
-        )
+        owner_key = (workflow_execution_id, owner_id)
+        current_sources = self.workflow_sources_by_owner.setdefault(owner_key, set())
         started_sources: List[str] = []
         for source_name in source_names:
             if source_name in current_sources:
                 continue
+            owners = self.workflow_owners_by_source.setdefault(source_name, set())
+            should_start = not owners
+            owners.add(owner_key)
             current_sources.add(source_name)
-            if source_name not in self.sessions:
+            if should_start:
                 await self.start_session(source_name)
                 started_sources.append(source_name)
         return MCPWorkflowSessionChange(
@@ -291,14 +305,28 @@ class FakeMCPService:
         )
 
     async def clear_workflow_requirements(self, workflow_execution_id: str):
+        return await self.clear_node_requirements(
+            workflow_execution_id,
+            "__workflow__",
+        )
+
+    async def clear_node_requirements(
+        self,
+        workflow_execution_id: str,
+        owner_id: str,
+    ):
         self.cleared_workflow_requirements.append(workflow_execution_id)
-        source_names = self.workflow_sources_by_run.pop(workflow_execution_id, set())
+        owner_key = (workflow_execution_id, owner_id)
+        source_names = self.workflow_sources_by_owner.pop(owner_key, set())
         stopped_sources: List[str] = []
         for source_name in source_names:
-            if any(
-                source_name in names for names in self.workflow_sources_by_run.values()
-            ):
+            owners = self.workflow_owners_by_source.get(source_name)
+            if owners is None:
                 continue
+            owners.discard(owner_key)
+            if owners:
+                continue
+            self.workflow_owners_by_source.pop(source_name, None)
             await self.close_session(source_name)
             stopped_sources.append(source_name)
         return MCPWorkflowSessionChange(
@@ -332,6 +360,7 @@ async def test_llm_executor_with_connect_mock_response(
         system="You are a test assistant.",
     )
     executor = LLMExecutor(config=node, project=project)
+    executor.bind_run_context("run-1", "wf")
 
     run, execution = _build_execution_with_input("node-1", "Hey, I'm a mock request")
     inp = ExecutorInput(execution=execution, run=run)
@@ -377,8 +406,6 @@ async def test_llm_executor_init_starts_node_mcp_sources_and_refreshes_cache() -
         )
     )
     project.mcp = FakeMCPService()  # type: ignore[assignment]
-    project.current_workflow_run_id = "run-1"
-
     node = LLMNode(
         name="node-mcp-init",
         type="llm",
@@ -388,6 +415,7 @@ async def test_llm_executor_init_starts_node_mcp_sources_and_refreshes_cache() -
         ),
     )
     executor = LLMExecutor(config=node, project=project)
+    executor.bind_run_context("run-1", "wf")
 
     await executor.init()
 
@@ -398,6 +426,60 @@ async def test_llm_executor_init_starts_node_mcp_sources_and_refreshes_cache() -
     await executor.shutdown()
 
     assert project.mcp.cleared_workflow_requirements == ["run-1"]
+    assert project.mcp.closed_sources == ["local"]
+
+
+@pytest.mark.asyncio
+async def test_llm_executors_share_workflow_scoped_mcp_session_per_run() -> None:
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            mcp=vocode_settings.MCPSettings(
+                sources={
+                    "local": vocode_settings.MCPStdioSourceSettings(
+                        command="uvx",
+                    )
+                }
+            )
+        )
+    )
+    project.mcp = FakeMCPService()  # type: ignore[assignment]
+    first_node = LLMNode(
+        name="node-mcp-shared-a",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="local", tool="*")]
+        ),
+    )
+    second_node = LLMNode(
+        name="node-mcp-shared-b",
+        type="llm",
+        model="gpt-3.5-turbo",
+        mcp=LLMNodeMCPSettings(
+            tools=[vocode_settings.MCPToolSelector(source="local", tool="*")]
+        ),
+    )
+
+    first_executor = LLMExecutor(config=first_node, project=project)
+    second_executor = LLMExecutor(config=second_node, project=project)
+    first_executor.bind_run_context("run-1", "wf")
+    second_executor.bind_run_context("run-1", "wf")
+
+    await first_executor.init()
+    await second_executor.init()
+
+    assert project.mcp.started_sources == ["local"]
+    assert project.mcp.applied_workflow_requirements == [
+        ("run-1", ["local"]),
+        ("run-1", ["local"]),
+    ]
+
+    await first_executor.shutdown()
+
+    assert project.mcp.closed_sources == []
+
+    await second_executor.shutdown()
+
     assert project.mcp.closed_sources == ["local"]
 
 
@@ -415,7 +497,6 @@ async def test_llm_executor_init_adds_node_local_mcp_tools() -> None:
         )
     )
     project.mcp = FakeMCPService()  # type: ignore[assignment]
-    project.current_workflow_run_id = "run-1"
     project.mcp.sessions["local"] = object()
     project.mcp.cached_tools["local"] = {
         "echo": mcp_models.MCPToolDescriptor(
@@ -436,6 +517,7 @@ async def test_llm_executor_init_adds_node_local_mcp_tools() -> None:
         ),
     )
     executor = LLMExecutor(config=node, project=project)
+    executor.bind_run_context("run-1", "wf")
 
     await executor.init()
 

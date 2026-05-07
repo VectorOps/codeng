@@ -4,7 +4,6 @@ from typing import Dict, Optional
 
 from vocode import settings as vocode_settings
 from vocode.mcp import models as mcp_models
-from vocode.mcp import tool_resolution
 
 
 class MCPRegistry:
@@ -32,40 +31,11 @@ class MCPRegistry:
             names.append(name)
         return names
 
-    def resolve_workflow_sources(
-        self,
-        workflow: Optional[vocode_settings.WorkflowConfig],
-    ) -> Dict[str, mcp_models.MCPSourceDescriptor]:
-        if self._settings is None:
-            return {}
-        if workflow is None:
-            return self._filter_sources_by_name(
-                self.list_source_names(scope="workflow"),
-            )
-        return self._filter_sources_by_name(
-            tool_resolution.resolve_workflow_source_names(self._settings, workflow)
-        )
-
     def get_source(self, name: str) -> Optional[mcp_models.MCPSourceDescriptor]:
         return self._sources.get(name)
 
-    def is_workflow_tool_enabled(
-        self,
-        workflow: Optional[vocode_settings.WorkflowConfig],
-        source_name: str,
-        tool_name: str,
-    ) -> bool:
-        if workflow is None or workflow.mcp is None or not workflow.mcp.enabled:
-            return False
-        return tool_resolution.is_workflow_tool_enabled(
-            workflow.mcp,
-            source_name,
-            tool_name,
-        )
-
     def resolve_effective_roots(
         self,
-        workflow: Optional[vocode_settings.WorkflowConfig],
         source_name: str,
         *,
         project_root_uri: Optional[str] = None,
@@ -85,17 +55,10 @@ class MCPRegistry:
             roots = self._apply_root_settings(roots, self._settings.roots)
         if source_settings.roots is not None:
             roots = self._apply_root_settings(roots, source_settings.roots)
-        if (
-            workflow is not None
-            and workflow.mcp is not None
-            and workflow.mcp.roots is not None
-        ):
-            roots = self._apply_root_settings(roots, workflow.mcp.roots)
         return roots
 
     def resolve_root_list_changed(
         self,
-        workflow: Optional[vocode_settings.WorkflowConfig],
         source_name: str,
     ) -> bool:
         if self._settings is None:
@@ -114,28 +77,7 @@ class MCPRegistry:
                 list_changed,
                 source_settings.roots,
             )
-        if (
-            workflow is not None
-            and workflow.mcp is not None
-            and workflow.mcp.roots is not None
-        ):
-            list_changed = self._apply_root_list_changed(
-                list_changed,
-                workflow.mcp.roots,
-            )
         return list_changed
-
-    def resolve_workflow_tools(
-        self,
-        workflow: Optional[vocode_settings.WorkflowConfig],
-        source_name: str,
-        tool_names: list[str],
-    ) -> list[str]:
-        return tool_resolution.resolve_workflow_tools(
-            workflow,
-            source_name,
-            tool_names,
-        )
 
     def _convert_root_settings(
         self,

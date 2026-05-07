@@ -3,10 +3,10 @@ import pytest
 from vocode import settings as vocode_settings
 from vocode.mcp import naming as mcp_naming
 from vocode.mcp.service import MCPService
+from vocode.mcp.tools import MCPDiscoveryTool
+from vocode.mcp.tools import MCPToolAdapter
 from vocode.state import WorkflowExecution
 from vocode.tools.base import ToolReq
-from vocode.tools.mcp_discovery_tool import MCPDiscoveryTool
-from vocode.tools.mcp_tool import MCPToolAdapter
 
 
 class _ProjectStub:
@@ -17,16 +17,28 @@ class _ProjectStub:
         self.mcp = None
 
 
+def _make_discovery_spec(
+    selectors: list[vocode_settings.MCPToolSelector],
+    disabled_selectors: list[vocode_settings.MCPToolSelector] | None = None,
+) -> vocode_settings.ToolSpec:
+    return vocode_settings.ToolSpec(
+        name="mcp_discovery",
+        config={
+            "mcp_selectors": [
+                selector.model_dump(mode="json") for selector in selectors
+            ],
+            "mcp_disabled_selectors": [
+                selector.model_dump(mode="json")
+                for selector in (disabled_selectors or [])
+            ],
+            "mcp_hide_listed_tools": False,
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
     settings = vocode_settings.Settings(
-        workflows={
-            "wf": vocode_settings.WorkflowConfig(
-                mcp=vocode_settings.MCPWorkflowSettings(
-                    tools=[vocode_settings.MCPToolSelector(source="local", tool="*")],
-                )
-            )
-        },
         mcp=vocode_settings.MCPSettings(
             sources={
                 "local": vocode_settings.MCPStdioSourceSettings(
@@ -37,7 +49,6 @@ async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
         ),
     )
     project = _ProjectStub(settings=settings)
-    project.current_workflow = "wf"
     project.mcp = MCPService(settings.mcp)
     project.mcp.cache_tool_descriptors(
         "local",
@@ -59,7 +70,9 @@ async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
     result = await tool.run(
         ToolReq(
             execution=WorkflowExecution(workflow_name="wf"),
-            spec=vocode_settings.ToolSpec(name="mcp_discovery"),
+            spec=_make_discovery_spec(
+                [vocode_settings.MCPToolSelector(source="local", tool="*")]
+            ),
         ),
         {},
     )
@@ -111,20 +124,8 @@ async def test_mcp_discovery_tool_lists_hidden_and_visible_tools() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_discovery_tool_filters_by_source_and_workflow_selection() -> None:
+async def test_mcp_discovery_tool_filters_by_source_and_node_selection() -> None:
     settings = vocode_settings.Settings(
-        workflows={
-            "wf": vocode_settings.WorkflowConfig(
-                mcp=vocode_settings.MCPWorkflowSettings(
-                    tools=[
-                        vocode_settings.MCPToolSelector(
-                            source="local",
-                            tool="search docs",
-                        )
-                    ],
-                )
-            )
-        },
         mcp=vocode_settings.MCPSettings(
             sources={
                 "local": vocode_settings.MCPStdioSourceSettings(
@@ -139,7 +140,6 @@ async def test_mcp_discovery_tool_filters_by_source_and_workflow_selection() -> 
         ),
     )
     project = _ProjectStub(settings=settings)
-    project.current_workflow = "wf"
     project.mcp = MCPService(settings.mcp)
     project.mcp.cache_tool_descriptors(
         "local",
@@ -157,7 +157,14 @@ async def test_mcp_discovery_tool_filters_by_source_and_workflow_selection() -> 
     result = await tool.run(
         ToolReq(
             execution=WorkflowExecution(workflow_name="wf"),
-            spec=vocode_settings.ToolSpec(name="mcp_discovery"),
+            spec=_make_discovery_spec(
+                [
+                    vocode_settings.MCPToolSelector(
+                        source="local",
+                        tool="search docs",
+                    )
+                ]
+            ),
         ),
         {"source": "local"},
     )
@@ -193,13 +200,6 @@ async def test_mcp_discovery_tool_filters_by_source_and_workflow_selection() -> 
 @pytest.mark.asyncio
 async def test_mcp_discovery_tool_ranks_query_matches_and_limits_results() -> None:
     settings = vocode_settings.Settings(
-        workflows={
-            "wf": vocode_settings.WorkflowConfig(
-                mcp=vocode_settings.MCPWorkflowSettings(
-                    tools=[vocode_settings.MCPToolSelector(source="local", tool="*")],
-                )
-            )
-        },
         mcp=vocode_settings.MCPSettings(
             discovery=vocode_settings.MCPDiscoverySettings(max_results=1),
             sources={
@@ -211,7 +211,6 @@ async def test_mcp_discovery_tool_ranks_query_matches_and_limits_results() -> No
         ),
     )
     project = _ProjectStub(settings=settings)
-    project.current_workflow = "wf"
     project.mcp = MCPService(settings.mcp)
     project.mcp.cache_tool_descriptors(
         "local",
@@ -235,7 +234,9 @@ async def test_mcp_discovery_tool_ranks_query_matches_and_limits_results() -> No
     result = await tool.run(
         ToolReq(
             execution=WorkflowExecution(workflow_name="wf"),
-            spec=vocode_settings.ToolSpec(name="mcp_discovery"),
+            spec=_make_discovery_spec(
+                [vocode_settings.MCPToolSelector(source="local", tool="*")]
+            ),
         ),
         {"query": "search code symbols"},
     )
@@ -262,15 +263,6 @@ async def test_mcp_discovery_tool_openapi_spec() -> None:
 @pytest.mark.asyncio
 async def test_mcp_discovery_tool_returns_normalized_internal_names() -> None:
     settings = vocode_settings.Settings(
-        workflows={
-            "wf": vocode_settings.WorkflowConfig(
-                mcp=vocode_settings.MCPWorkflowSettings(
-                    tools=[
-                        vocode_settings.MCPToolSelector(source="local.dev", tool="*")
-                    ],
-                )
-            )
-        },
         mcp=vocode_settings.MCPSettings(
             sources={
                 "local.dev": vocode_settings.MCPStdioSourceSettings(
@@ -278,10 +270,9 @@ async def test_mcp_discovery_tool_returns_normalized_internal_names() -> None:
                     scope=vocode_settings.MCPSourceScope.project,
                 )
             }
-        ),
+        )
     )
     project = _ProjectStub(settings=settings)
-    project.current_workflow = "wf"
     project.mcp = MCPService(settings.mcp)
     project.mcp.cache_tool_descriptors(
         "local.dev",
@@ -292,7 +283,9 @@ async def test_mcp_discovery_tool_returns_normalized_internal_names() -> None:
     result = await tool.run(
         ToolReq(
             execution=WorkflowExecution(workflow_name="wf"),
-            spec=vocode_settings.ToolSpec(name="mcp_discovery"),
+            spec=_make_discovery_spec(
+                [vocode_settings.MCPToolSelector(source="local.dev", tool="*")]
+            ),
         ),
         {},
     )

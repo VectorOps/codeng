@@ -1,11 +1,11 @@
 import pytest
 
 from vocode import settings as vocode_settings
+from vocode.mcp.tools import MCPGetPromptTool
+from vocode.mcp.tools import MCPReadResourceTool
 from vocode.state import WorkflowExecution
 from vocode.tools.base import ToolReq
 from vocode.tools.base import ToolTextResponse
-from vocode.tools.mcp_get_prompt_tool import MCPGetPromptTool
-from vocode.tools.mcp_read_resource_tool import MCPReadResourceTool
 
 
 class _MCPServiceStub:
