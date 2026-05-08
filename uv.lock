@@ -195,7 +195,7 @@ wheels = [
 [[package]]
 name = "connect"
 version = "0.1.0"
-source = { git = "https://github.com/VectorOps/connect.git#7872d5d0c5e58e91cb577c0ccd37a2faa0da27f6" }
+source = { git = "https://github.com/VectorOps/connect.git?rev=7872d5d0c5e58e91cb577c0ccd37a2faa0da27f6#7872d5d0c5e58e91cb577c0ccd37a2faa0da27f6" }
 dependencies = [
     { name = "aiohttp" },
     { name = "pydantic" },
@@ -1409,8 +1409,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -1833,7 +1833,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = "==3.13.5" },
-    { name = "connect", git = "https://github.com/VectorOps/connect.git" },
+    { name = "connect", git = "https://github.com/VectorOps/connect.git?rev=7872d5d0c5e58e91cb577c0ccd37a2faa0da27f6" },
     { name = "cryptography", specifier = "==46.0.3" },
     { name = "devtools", specifier = "==0.12.2" },
     { name = "gitpython", specifier = "==3.1.46" },
