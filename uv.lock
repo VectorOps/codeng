@@ -195,7 +195,7 @@ wheels = [
 [[package]]
 name = "connect"
 version = "0.1.0"
-source = { git = "https://github.com/VectorOps/connect.git?rev=7872d5d0c5e58e91cb577c0ccd37a2faa0da27f6#7872d5d0c5e58e91cb577c0ccd37a2faa0da27f6" }
+source = { git = "https://github.com/VectorOps/connect.git?rev=da59934aef7947c11f96753149cf25f219e7b8be#da59934aef7947c11f96753149cf25f219e7b8be" }
 dependencies = [
     { name = "aiohttp" },
     { name = "pydantic" },
@@ -1833,7 +1833,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = "==3.13.5" },
-    { name = "connect", git = "https://github.com/VectorOps/connect.git?rev=7872d5d0c5e58e91cb577c0ccd37a2faa0da27f6" },
+    { name = "connect", git = "https://github.com/VectorOps/connect.git?rev=da59934aef7947c11f96753149cf25f219e7b8be" },
     { name = "cryptography", specifier = "==46.0.3" },
     { name = "devtools", specifier = "==0.12.2" },
     { name = "gitpython", specifier = "==3.1.46" },

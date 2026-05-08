@@ -5,7 +5,7 @@ description = "Vectorops Code"
 readme = "readme.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "connect @ git+https://github.com/VectorOps/connect.git@7872d5d0c5e58e91cb577c0ccd37a2faa0da27f6",
+    "connect @ git+https://github.com/VectorOps/connect.git@da59934aef7947c11f96753149cf25f219e7b8be",
     "cryptography==46.0.3",
     "devtools==0.12.2",
     "pydantic==2.12.5",
