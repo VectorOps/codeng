@@ -1318,7 +1318,7 @@ def test_build_summary_generation_prompt_includes_previous_summary_and_transcrip
 
     assert "Keep exact paths." in prompt
     assert "Prioritize these details when present:" in prompt
-    assert "Update the existing summary instead of rewriting history from scratch." in prompt
+    assert "Update the existing summary instead of rewriting from scratch." in prompt
     assert "Previous summary:" in prompt
     assert "Earlier summary" in prompt
     assert "Transcript to compact:" in prompt
