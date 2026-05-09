@@ -49,6 +49,7 @@ class Runner:
         self._tool_orchestrator = runner_tool_orchestrator.ToolCallOrchestrator(
             get_tool_spec_for_request=self._get_tool_spec_for_request,
             is_tool_call_auto_approved=self._is_tool_call_auto_approved,
+            resolve_existing_tool_step=self._find_existing_tool_prompt_step,
             create_tool_prompt_step=self._create_tool_prompt_step,
         )
         self.project.state_manager.track(self.execution)
@@ -229,6 +230,53 @@ class Runner:
                 output_token_limit=usage.output_token_limit,
             )
         return self._persist_step(prompt_step)
+
+    def _find_existing_tool_prompt_step(
+        self,
+        execution: state.NodeExecution,
+        req: state.ToolCallReq,
+    ) -> Optional[state.Step]:
+        for step in self.execution.iter_steps_reversed():
+            if step.execution_id != execution.id:
+                continue
+            if step.type != state.StepType.TOOL_REQUEST:
+                continue
+            message = step.message
+            if message is None:
+                continue
+            if any(tool_req.id == req.id for tool_req in message.tool_call_requests):
+                return step
+        return None
+
+    def _build_rejected_tool_response(
+        self,
+        req: state.ToolCallReq,
+        response_step: Optional[state.Step],
+    ) -> state.ToolCallResp:
+        user_text = ""
+        if response_step is not None and response_step.message is not None:
+            user_text = response_step.message.text.strip()
+        rejection_text = (
+            "The tool call was rejected by the user. "
+            f"User provided reason: {user_text}"
+        )
+        return state.ToolCallResp(
+            id=req.id,
+            status=state.ToolCallStatus.REJECTED,
+            name=req.name,
+            result={"message": rejection_text},
+        )
+
+    def _find_tool_response_step(
+        self,
+        tool_step: state.Step,
+    ) -> Optional[state.Step]:
+        next_step = self.execution.get_next_step(tool_step.id)
+        if next_step is None:
+            return None
+        if next_step.type in (state.StepType.APPROVAL, state.StepType.REJECTION):
+            return next_step
+        return None
 
     def _process_tool_approval_response(
         self,
@@ -859,6 +907,20 @@ class Runner:
 
                     for plan_item in plan:
                         req = plan_item.request
+                        if req.status in (
+                            state.ToolCallReqStatus.PENDING_EXECUTION,
+                            state.ToolCallReqStatus.EXECUTING,
+                        ):
+                            approved.append(plan_item)
+                            continue
+                        if req.status == state.ToolCallReqStatus.REJECTED:
+                            tool_responses.append(
+                                self._build_rejected_tool_response(
+                                    req,
+                                    self._find_tool_response_step(plan_item.tool_step),
+                                )
+                            )
+                            continue
                         while True:
                             persisted_prompt = plan_item.tool_step
                             tool_request_steps[req.id] = persisted_prompt

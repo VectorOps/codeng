@@ -249,7 +249,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             if msg.text:
                 content.append(connect.TextBlock(text=msg.text))
 
-            if msg.tool_call_requests:
+            if msg.tool_call_requests and msg.tool_call_responses:
                 for req in msg.tool_call_requests:
                     annotations: Optional[Dict[str, Any]] = None
                     if req.state is not None and req.state.reasoning_signature:

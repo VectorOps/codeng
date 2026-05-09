@@ -629,6 +629,19 @@ class ParallelTrackingTool:
         return None
 
 
+class GateTool:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def run(self, req: tools_base.ToolReq, args: dict) -> None:
+        _ = req
+        _ = args
+        self.started.set()
+        await self.release.wait()
+        return None
+
+
 class DummyWorkflow:
     def __init__(
         self,
@@ -3278,6 +3291,127 @@ async def test_runner_continue_after_stop_does_not_create_new_steps_for_visible_
     assert set(runner.execution.steps_by_id.keys()) == before_all_step_ids
     assert runner.execution.step_ids == [output_step.id]
     assert events == []
+
+
+@pytest.mark.asyncio
+async def test_runner_continue_resumes_pending_tool_execution_without_new_prompt() -> (
+    None
+):
+    project = StubProject()
+    gate_tool = GateTool()
+    project.tools["test-tool"] = gate_tool
+
+    node = models.Node(
+        name="tool-node",
+        type="tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-tool-continue-pending",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(role=models.Role.USER, text="start"),
+    )
+
+    agen = runner.run()
+
+    while True:
+        event = await agen.__anext__()
+        if (
+            event.step is not None
+            and event.step.type == state.StepType.TOOL_REQUEST
+            and event.step.message is not None
+            and event.step.message.tool_call_requests
+            and event.step.message.tool_call_requests[0].status
+            == state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+        ):
+            break
+
+    approval_event = await agen.asend(
+        RunEventResp(
+            resp_type=RunEventResponseType.APPROVE,
+            message=None,
+        )
+    )
+    while (
+        approval_event.step is None
+        or approval_event.step.type != state.StepType.APPROVAL
+    ):
+        approval_event = await agen.asend(
+            RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        )
+
+    executing_event = await agen.asend(
+        RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+    )
+    while (
+        executing_event.step is None
+        or executing_event.step.type != state.StepType.TOOL_REQUEST
+        or executing_event.step.message is None
+        or not executing_event.step.message.tool_call_requests
+        or executing_event.step.message.tool_call_requests[0].status
+        != state.ToolCallReqStatus.EXECUTING
+    ):
+        executing_event = await agen.asend(
+            RunEventResp(
+                resp_type=RunEventResponseType.NOOP,
+                message=None,
+            )
+        )
+
+    stop_event = await agen.athrow(RunnerStopped())
+    assert stop_event.stats is not None
+    assert stop_event.stats.status == state.RunnerStatus.STOPPED
+
+    gate_tool.release.set()
+
+    resumed_events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    tool_request_events = [
+        event
+        for event in resumed_events
+        if event.step is not None and event.step.type == state.StepType.TOOL_REQUEST
+    ]
+    assert tool_request_events
+    assert not any(
+        event.step is not None
+        and event.step.message is not None
+        and event.step.message.tool_call_requests
+        and event.step.message.tool_call_requests[0].status
+        == state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+        for event in tool_request_events
+    )
+    assert tool_request_events[-1].step is not None
+    assert tool_request_events[-1].step.message is not None
+    assert (
+        tool_request_events[-1].step.message.tool_call_requests[0].status
+        == state.ToolCallReqStatus.COMPLETE
+    )
+    visible_tool_request_steps = [
+        step
+        for step in runner.execution.iter_steps()
+        if step.type == state.StepType.TOOL_REQUEST
+    ]
+    assert len(visible_tool_request_steps) == 1
 
 
 @pytest.mark.asyncio

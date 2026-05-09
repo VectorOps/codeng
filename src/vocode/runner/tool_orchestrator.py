@@ -48,6 +48,9 @@ class ToolCallOrchestrator:
             [state.ToolCallReq], typing.Optional[vocode_settings.ToolSpec]
         ],
         is_tool_call_auto_approved: Callable[[state.ToolCallReq], bool],
+        resolve_existing_tool_step: Callable[
+            [state.NodeExecution, state.ToolCallReq], typing.Optional[state.Step]
+        ],
         create_tool_prompt_step: Callable[
             [
                 state.NodeExecution,
@@ -59,23 +62,34 @@ class ToolCallOrchestrator:
     ) -> None:
         self._get_tool_spec_for_request = get_tool_spec_for_request
         self._is_tool_call_auto_approved = is_tool_call_auto_approved
+        self._resolve_existing_tool_step = resolve_existing_tool_step
         self._create_tool_prompt_step = create_tool_prompt_step
 
     def build_plan(self, req: ToolRoundRequest) -> list[ToolCallPlanItem]:
         items: list[ToolCallPlanItem] = []
         for tool_req in req.tool_calls:
             tool_spec = self._get_tool_spec_for_request(tool_req)
-            auto_approved = self._is_tool_call_auto_approved(tool_req)
-            if auto_approved:
-                tool_req.auto_approved = True
-                tool_req.status = state.ToolCallReqStatus.PENDING_EXECUTION
-            else:
-                tool_req.status = state.ToolCallReqStatus.REQUIRES_CONFIRMATION
-            tool_step = self._create_tool_prompt_step(
+            existing_tool_step = self._resolve_existing_tool_step(
                 req.node_execution,
                 tool_req,
-                req.llm_usage,
             )
+            if tool_req.auto_approved is None:
+                auto_approved = self._is_tool_call_auto_approved(tool_req)
+                tool_req.auto_approved = auto_approved
+            else:
+                auto_approved = tool_req.auto_approved is True
+            if tool_req.status is None:
+                if auto_approved:
+                    tool_req.status = state.ToolCallReqStatus.PENDING_EXECUTION
+                else:
+                    tool_req.status = state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+            tool_step = existing_tool_step
+            if tool_step is None:
+                tool_step = self._create_tool_prompt_step(
+                    req.node_execution,
+                    tool_req,
+                    req.llm_usage,
+                )
             items.append(
                 ToolCallPlanItem(
                     request=tool_req,

@@ -374,6 +374,90 @@ def test_build_connect_messages_uses_active_history_view_after_user_input_edit()
     assert messages[4].content == "new user input"
 
 
+def test_build_connect_messages_omits_unresolved_tool_calls_after_history_edit() -> (
+    None
+):
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    tool_req = state.ToolCallReq(
+        id="call-test-tool",
+        name="test-tool",
+        arguments={"x": 1},
+    )
+    assistant_msg = state.Message(
+        role=models.Role.ASSISTANT,
+        text="call tool",
+        tool_call_requests=[tool_req],
+    )
+    rejection_msg = state.Message(role=models.Role.USER, text="wrong direction")
+    history.upsert_message(run, assistant_msg)
+    history.upsert_message(run, rejection_msg)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_msg.id,
+            is_complete=True,
+        ),
+    )
+    tool_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.TOOL_REQUEST,
+            message_id=assistant_msg.id,
+            is_complete=True,
+        ),
+    )
+    rejection_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            parent_step_id=tool_step.id,
+            type=state.StepType.REJECTION,
+            message_id=rejection_msg.id,
+            is_complete=True,
+        ),
+    )
+
+    history.edit_user_input(run, rejection_step.id, "updated input")
+    active_execution = run.get_last_step().execution
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    _, messages = executor.build_connect_messages(
+        ExecutorInput(execution=active_execution, run=run)
+    )
+
+    assert len(messages) == 2
+    assert isinstance(messages[0], connect.AssistantMessage)
+    assert len(messages[0].content) == 1
+    assert messages[0].content[0].type == "text"
+    assert messages[0].content[0].text == "call tool"
+    assert isinstance(messages[-1], connect.UserMessage)
+    assert messages[-1].content == "updated input"
+
+
 def test_build_step_from_message_reuses_existing_message_id_for_updates() -> None:
     history = HistoryManager()
     cfg = LLMNode(

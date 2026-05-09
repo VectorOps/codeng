@@ -448,6 +448,110 @@ async def test_manager_edit_history_replaces_last_user_input_and_resumes() -> No
 
 
 @pytest.mark.asyncio
+async def test_manager_edit_history_replaces_tool_rejection_message() -> None:
+    history = HistoryManager()
+    node = models.Node(
+        name="node-edit-rejection",
+        type="manager-test",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-manager-edit-rejection",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+
+    project = FakeProject()
+    runner = Runner(
+        workflow=workflow,
+        project=project,  # type: ignore[arg-type]
+        initial_message=state.Message(role=models.Role.USER, text="initial"),
+    )
+
+    execution = runner.execution
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node-edit-rejection",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    assistant_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="call tool",
+        tool_call_requests=[
+            state.ToolCallReq(
+                id="call-test-tool",
+                name="test-tool",
+                arguments={"x": 1},
+            )
+        ],
+    )
+    rejection_message = state.Message(
+        role=models.Role.USER,
+        text="reject this",
+    )
+    history.upsert_message(execution, assistant_message)
+    history.upsert_message(execution, rejection_message)
+
+    assistant_step = history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_message.id,
+            is_complete=True,
+        ),
+    )
+    tool_step = history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.TOOL_REQUEST,
+            message_id=assistant_message.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            parent_step_id=tool_step.id,
+            type=state.StepType.REJECTION,
+            message_id=rejection_message.id,
+            is_complete=True,
+        ),
+    )
+
+    runner.status = state.RunnerStatus.STOPPED
+
+    async def run_event_listener(frame: RunnerFrame, event) -> RunEventResp | None:
+        return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
+
+    manager = BaseManager(project=project, run_event_listener=run_event_listener)  # type: ignore[arg-type]
+    manager._runner_stack.append(
+        RunnerFrame(
+            workflow_name="wf-manager-edit-rejection",
+            runner=runner,
+            initial_message=runner.initial_message,
+            agen=None,
+        )
+    )
+
+    result = await manager.edit_history_with_text("updated input", resume=False)
+
+    assert result.changed is True
+    last_step = runner.execution.get_last_step()
+    assert last_step is not None
+    assert last_step.type == state.StepType.INPUT_MESSAGE
+    assert last_step.message is not None
+    assert last_step.message.text == "updated input"
+    visible_step_types = [step.type for step in runner.execution.iter_steps()]
+    assert state.StepType.TOOL_REQUEST not in visible_step_types
+
+
+@pytest.mark.asyncio
 async def test_manager_edit_history_stops_parent_runner_when_going_up_stack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

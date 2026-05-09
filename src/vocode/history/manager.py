@@ -361,11 +361,21 @@ class HistoryManager:
             thinking_content=message.thinking_content,
         )
         self.upsert_message(execution, replacement_message)
+        parent_step_id = target_step.parent_step_id
+        replacement_type = target_step.type
+        parent_step = target_step.parent
+        if (
+            target_step.type == state.StepType.REJECTION
+            and parent_step is not None
+            and parent_step.type == state.StepType.TOOL_REQUEST
+        ):
+            parent_step_id = parent_step.parent_step_id
+            replacement_type = state.StepType.INPUT_MESSAGE
         replacement_step = state.Step(
             workflow_execution=execution,
             execution_id=target_step.execution_id,
-            parent_step_id=target_step.parent_step_id,
-            type=target_step.type,
+            parent_step_id=parent_step_id,
+            type=replacement_type,
             message_id=replacement_message.id,
             content_type=target_step.content_type,
             output_mode=target_step.output_mode,
@@ -378,7 +388,7 @@ class HistoryManager:
         )
         return self.fork_from_step(
             execution,
-            target_step.parent_step_id,
+            parent_step_id,
             replacement_step,
             base_step_id=target_step.id,
         )

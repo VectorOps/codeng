@@ -215,7 +215,11 @@ class BaseManager:
             for step in runner.execution.iter_steps_reversed():
                 message = step.message
                 if (
-                    step.type == state.StepType.INPUT_MESSAGE
+                    step.type
+                    in (
+                        state.StepType.INPUT_MESSAGE,
+                        state.StepType.REJECTION,
+                    )
                     and message is not None
                     and message.role == models.Role.USER
                 ):
