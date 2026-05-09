@@ -33,13 +33,15 @@ class Project:
         self,
         base_path: Path,
         config_relpath: Path,
-        settings: Optional[Settings],
+        settings: Settings,
     ):
         self.base_path: Path = base_path
         self.config_relpath: Path = config_relpath
-        self.settings: Optional[Settings] = settings
+        self.settings: Settings = settings
         self.tools: Dict[str, "BaseTool"] = {}
-        self.know: KnowProject = KnowProject()
+        self.know: Optional[KnowProject] = (
+            KnowProject() if self.settings.know_enabled else None
+        )
         self.project_state: ProjectState = ProjectState()
         self.input_manager: InputManager = InputManager()
         self.history: HistoryManager = HistoryManager()
@@ -94,6 +96,9 @@ class Project:
         repo: Optional["Repo"] = None,
         files: Optional[List[FileChangeModel]] = None,
     ) -> None:
+        _ = files
+        if self.know is None:
+            return
         await self.know.refresh(repo)
 
     # Tool management
@@ -124,7 +129,7 @@ class Project:
             and (name != "read_files" or not know_enabled)
         }
 
-        if self.settings and self.settings.know_enabled and self.settings.know:
+        if self.know is not None:
             for t in self.know.pm.get_enabled_tools():
                 if t.tool_name not in disabled_tool_names:
                     self.tools[t.tool_name] = convert_know_tool(self, t)
@@ -193,7 +198,7 @@ class Project:
         """
         Start project subsystems that require async initialization (e.g., MCP).
         """
-        if self.settings and self.settings.know_enabled and self.settings.know:
+        if self.know is not None:
             await self.know.start(self.settings.know)
         await self.state_manager.start()
 
@@ -260,7 +265,7 @@ class Project:
         # Discover skills
         self.skills = discover_skills(self.base_path)
 
-        if self.settings and self.settings.know_enabled and self.settings.know:
+        if self.know is not None:
             await self.know.refresh_all()
 
     async def shutdown(self) -> None:
@@ -276,7 +281,7 @@ class Project:
         if self.processes is not None:
             await self.processes.shutdown()
             self.processes = None
-        if self.settings and self.settings.know_enabled and self.settings.know:
+        if self.know is not None:
             await self.know.shutdown()
         await self.state_manager.shutdown()
 

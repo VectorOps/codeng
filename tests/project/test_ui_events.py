@@ -4,11 +4,16 @@ import pytest
 
 from vocode import ui_events
 from vocode.project import Project
+from vocode.settings import Settings
 
 
 @pytest.mark.asyncio
 async def test_publish_ui_event_continues_after_subscriber_error(tmp_path) -> None:
-    project = Project(base_path=tmp_path, config_relpath=tmp_path / "x", settings=None)
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=tmp_path / "x",
+        settings=Settings(),
+    )
     received: list[str] = []
 
     async def failing_handler(_: ui_events.ProjectUIEvent) -> None:

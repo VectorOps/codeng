@@ -32,6 +32,8 @@ def _ensure_know_enabled(server) -> None:
         raise CommandError("Knowledge base (know) is disabled.")
     if settings.know is None:
         raise CommandError("Knowledge base (know) is not configured.")
+    if project.know is None:
+        raise CommandError("Knowledge base (know) is not initialized.")
     try:
         _ = project.know.pm
     except Exception as exc:

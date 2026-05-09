@@ -229,10 +229,9 @@ async def test_project_start_with_know_disabled(tmp_path):
         settings=settings,
     )
 
-    project.know = _DummyKnowProject()
-
     await project.start()
 
+    assert project.know is None
     assert project.processes is not None
     assert project.shells is not None
     assert isinstance(project.tools, dict)
@@ -240,3 +239,18 @@ async def test_project_start_with_know_disabled(tmp_path):
     assert "read_files" in project.tools
 
     await project.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_project_refresh_skips_know_when_disabled(tmp_path):
+    settings = Settings()
+    settings.know_enabled = False
+    project = Project(
+        base_path=tmp_path,
+        config_relpath=Path(".vocode/config-ng.yaml"),
+        settings=settings,
+    )
+
+    await project.refresh()
+
+    assert project.know is None
