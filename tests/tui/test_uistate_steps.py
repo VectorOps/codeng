@@ -11,6 +11,7 @@ from rich import console as rich_console
 from vocode import models, state
 from vocode.history.manager import HistoryManager
 from vocode.manager import proto as manager_proto
+from vocode.runner.executors.llm.compaction import CompactionSummaryState
 from vocode import settings as vocode_settings
 from vocode.tui import styles as tui_styles
 from vocode.tui import uistate as tui_uistate
@@ -374,6 +375,64 @@ async def test_tui_state_renders_rejection_steps() -> None:
     await ui_state.terminal.render()
     output = buffer.getvalue()
     assert "Rejected because of reasons." in output
+
+
+@pytest.mark.asyncio
+async def test_tui_state_renders_context_compaction_as_condensed_event() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    local_execution = execution.model_copy(update={"branch_id": None, "step_ids": []})
+    run.node_executions[local_execution.id] = local_execution
+    local_execution._workflow_execution = run
+    summary_message = state.Message(
+        role=models.Role.SYSTEM,
+        text=(
+            "The conversation history before this point was compacted into the following summary:\n\n"
+            "<summary>\n## Goal\nraw hidden summary\n</summary>"
+        ),
+    )
+    history.upsert_message(run, summary_message)
+    step = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=local_execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary_message.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[uuid4(), uuid4()],
+                tokens_before=120,
+                tokens_after_estimate=45,
+                trigger_threshold_ratio=0.5,
+            ),
+        ),
+    )
+
+    ui_state.handle_step(step)
+
+    await ui_state.terminal.render()
+    output = buffer.getvalue()
+    assert "Context compacted: 2 steps, ~120 -> 45 tokens" in output
+    assert "raw hidden summary" not in output
 
 
 @pytest.mark.asyncio

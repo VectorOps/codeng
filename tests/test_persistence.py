@@ -11,6 +11,8 @@ from vocode import state
 from vocode.history.manager import HistoryManager
 from vocode.persistence import codec as persistence_codec
 from vocode.persistence import state_manager as persistence_state_manager
+from vocode.runner.executors.llm.compaction import CompactionSummaryState
+from vocode.runner.executors.llm.compaction import LLMExecutionCompactionState
 
 
 def _build_sample_execution() -> state.WorkflowExecution:
@@ -215,6 +217,100 @@ def test_codec_roundtrip_restores_visible_step_ids_from_branch_projection():
     assert restored.get_node_execution(branched_execution.id).step_ids == [step3.id]
     history.switch_branch(restored, branch1_id)
     assert restored.step_ids == [step1.id, step2.id]
+
+
+def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            status=state.RunStatus.RUNNING,
+            state=LLMExecutionCompactionState(
+                compaction_count=1,
+                last_compaction_tokens_before=120,
+            ),
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="old user")
+    summary = state.Message(
+        role=models.Role.SYSTEM,
+        text=(
+            "The conversation history before this point was compacted into the following summary:\n\n"
+            "<summary>\n## Goal\nContinue task\n</summary>"
+        ),
+    )
+    recent_user = state.Message(role=models.Role.USER, text="recent user")
+    for message in [old_user, summary, recent_user]:
+        history.upsert_message(run, message)
+
+    old_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    compaction_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[old_step.id],
+                tokens_before=120,
+                tokens_after_estimate=30,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+    execution.state = LLMExecutionCompactionState(
+        latest_compaction_step_id=compaction_step.id,
+        compaction_count=1,
+        last_compaction_tokens_before=120,
+    )
+    history.upsert_node_execution(run, execution)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    payload = run.model_dump(mode="json")
+    restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(run))
+
+    restored_execution = restored.get_node_execution(execution.id)
+    restored_state = LLMExecutionCompactionState.model_validate(
+        payload["node_executions"][str(execution.id)]["state"]
+    )
+    assert restored_state.latest_compaction_step_id == compaction_step.id
+    assert restored_state.compaction_count == 1
+    assert restored_state.last_compaction_tokens_before == 120
+
+    restored_compaction_step = restored.get_step(compaction_step.id)
+    restored_compaction_state = CompactionSummaryState.model_validate(
+        payload["steps_by_id"][str(compaction_step.id)]["state"]
+    )
+    assert restored_compaction_step.type == state.StepType.CONTEXT_COMPACTION
+    assert restored_compaction_state.compacted_step_ids == [old_step.id]
+    assert restored_compaction_state.tokens_before == 120
+    assert restored_compaction_state.tokens_after_estimate == 30
+    assert restored_compaction_state.trigger_threshold_ratio == 0.5
+    assert restored_compaction_step.execution is restored_execution
 
 
 @pytest.mark.asyncio

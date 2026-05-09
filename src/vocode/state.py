@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from datetime import datetime
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, SerializeAsAny, model_validator
 from uuid import UUID, uuid4
 
 from .lib.date import utcnow
@@ -47,6 +47,7 @@ class RunStatus(str, Enum):
 class StepType(str, Enum):
     OUTPUT_MESSAGE = "output_message"
     INPUT_MESSAGE = "input_message"
+    CONTEXT_COMPACTION = "context_compaction"
     APPROVAL = "approval"
     REJECTION = "rejection"
     PROMPT = "prompt"
@@ -105,7 +106,7 @@ class ToolCallReq(BaseModel):
         default=None,
         description="Timestamp when this tool call was handled, if applicable.",
     )
-    state: Optional[BaseModel] = Field(
+    state: Optional[SerializeAsAny[BaseModel]] = Field(
         default=None,
         description="Provider-specific state to preserve across turns (e.g. thought signatures).",
     )
@@ -207,7 +208,7 @@ class NodeExecution(BaseModel):
         description="Step ids visible on the active branch.",
     )
     status: RunStatus = Field(..., description="Node execution status")
-    state: Optional[BaseModel] = Field(
+    state: Optional[SerializeAsAny[BaseModel]] = Field(
         default=None,
         description="Any internal state that is maintained by the corresponding step runner.",
     )
@@ -294,7 +295,7 @@ class Step(BaseModel):
     outcome_name: Optional[str] = Field(
         default=None, description="Outcome name, if any."
     )
-    state: Optional[BaseModel] = Field(
+    state: Optional[SerializeAsAny[BaseModel]] = Field(
         default=None,
         description="Any internal state that is maintained by the corresponding step runner.",
     )
