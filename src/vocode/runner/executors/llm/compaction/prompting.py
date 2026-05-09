@@ -7,21 +7,52 @@ from vocode import state
 from .models import CompactionSettings
 
 DEFAULT_COMPACTION_SYSTEM_PROMPT = (
-    "Produce a structured continuation checkpoint for a long-running workflow. "
-    "Preserve the user's goal, constraints, progress, key decisions, next steps, "
-    "and exact file paths, tool names, identifiers, and error text when relevant."
+    "You are maintaining a continuation checkpoint for a coding workflow. "
+    "Produce a compact but precise summary another LLM can resume from safely. "
+    "Preserve exact file paths, tool names, identifiers, node names, outcome names, "
+    "and error text when relevant. Do not invent progress."
 )
 
 DEFAULT_COMPACTION_INSTRUCTIONS = (
-    "Use the required markdown sections and keep the summary concise, factual, and "
-    "optimized for another LLM continuing the same task."
+    "Return markdown with exactly these sections:\n"
+    "## Goal\n"
+    "## Constraints & Preferences\n"
+    "## Progress\n"
+    "### Done\n"
+    "### In Progress\n"
+    "### Blocked\n"
+    "## Key Decisions\n"
+    "## Next Steps\n"
+    "## Critical Context\n\n"
+    "Rules:\n"
+    "- Prefer concrete facts over abstraction.\n"
+    "- Keep file paths and tool names exact.\n"
+    "- Keep error messages exact or minimally trimmed.\n"
+    "- Move items to Done only if the transcript shows completion.\n"
+    "- Keep Next Steps actionable and short.\n"
+    "- If information is unknown, omit it instead of guessing."
 )
 
 DEFAULT_COMPACTION_UPDATE_INSTRUCTIONS = (
-    "Update the existing summary instead of rewriting history from scratch. Preserve "
-    "earlier facts unless superseded, move progress from in-progress to done when "
-    "appropriate, keep exact file paths, identifiers, tool names, and error text, "
-    "and refresh next steps to match the latest transcript."
+    "Update the existing summary instead of rewriting from scratch.\n"
+    "Rules:\n"
+    "- Preserve prior facts unless the new transcript supersedes them.\n"
+    "- Move completed items from In Progress to Done.\n"
+    "- Remove stale Next Steps that are already complete.\n"
+    "- Keep persistent constraints and preferences unless contradicted.\n"
+    "- Preserve exact paths, identifiers, tool names, and errors."
+)
+
+SUMMARY_PROMPT_FOCUS = (
+    "Prioritize these details when present:\n"
+    "- current user goal\n"
+    "- explicit constraints or preferences\n"
+    "- files read or changed\n"
+    "- tools used and why\n"
+    "- important command or tool outputs\n"
+    "- exact errors and blockers\n"
+    "- decisions already made\n"
+    "- concrete next steps"
 )
 
 
@@ -43,7 +74,7 @@ def build_summary_generation_prompt(
     settings: CompactionSettings,
 ) -> str:
     instructions = resolve_compaction_instructions(settings)
-    parts: List[str] = [instructions]
+    parts: List[str] = [instructions, SUMMARY_PROMPT_FOCUS]
     if previous_summary:
         parts.extend(
             [
@@ -76,26 +107,31 @@ def serialize_messages_to_transcript(messages: List[state.Message]) -> str:
     lines: List[str] = []
     for message in messages:
         role_name = message.role.value.capitalize()
-        if message.text:
-            lines.append(f"[{role_name}]: {_truncate_text(message.text)}")
+        if message.text.strip():
+            lines.append(f"[{role_name}]")
+            lines.append(_truncate_text(message.text.strip(), 600))
         if message.thinking_content:
-            lines.append(
-                f"[{role_name} thinking]: {_truncate_text(message.thinking_content)}"
-            )
+            lines.append(f"[{role_name} thinking]")
+            lines.append(_truncate_text(message.thinking_content.strip(), 300))
         if message.tool_call_requests:
+            lines.append("[Assistant tool calls]")
             tool_lines = []
             for req in message.tool_call_requests:
                 tool_lines.append(
-                    f"{req.name}({json.dumps(req.arguments, sort_keys=True)})"
+                    f"- {req.name}({_truncate_text(json.dumps(req.arguments, sort_keys=True), 300)})"
                 )
-            lines.append("[Assistant tool calls]: " + "; ".join(tool_lines))
+            lines.extend(tool_lines)
+        if message.tool_call_responses:
+            lines.append("[Tool results]")
         for resp in message.tool_call_responses:
             result_text = ""
             if resp.result is not None:
                 result_text = json.dumps(resp.result, sort_keys=True)
             lines.append(
-                f"[Tool result {resp.name}]: {_truncate_text(result_text or '[empty]')}"
+                f"- {resp.name}: {_truncate_text(result_text or '[empty]', 500)}"
             )
+        if lines and lines[-1] != "":
+            lines.append("")
     return "\n".join(lines)
 
 

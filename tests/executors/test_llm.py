@@ -1286,12 +1286,14 @@ def test_compaction_transcript_serializes_tool_calls_and_results() -> None:
 
     transcript = serialize_messages_to_transcript([message])
 
-    assert "[Assistant]: I will inspect the repo" in transcript
-    assert "[Assistant thinking]: Need to inspect llm files" in transcript
-    assert (
-        'read_files({"path": "src/vocode/runner/executors/llm/llm.py"})' in transcript
-    )
-    assert "context overflow" in transcript
+    assert "[Assistant]" in transcript
+    assert "I will inspect the repo" in transcript
+    assert "[Assistant thinking]" in transcript
+    assert "Need to inspect llm files" in transcript
+    assert "[Assistant tool calls]" in transcript
+    assert '- read_files({"path": "src/vocode/runner/executors/llm/llm.py"})' in transcript
+    assert "[Tool results]" in transcript
+    assert '- read_files: {"error": "context overflow"}' in transcript
 
 
 def test_compaction_instruction_builder_appends_custom_instructions() -> None:
@@ -1299,7 +1301,7 @@ def test_compaction_instruction_builder_appends_custom_instructions() -> None:
         "Preserve exact file paths and tool names."
     )
 
-    assert "Use the required markdown sections" in instructions
+    assert "Return markdown with exactly these sections" in instructions
     assert "Preserve exact file paths and tool names." in instructions
 
 
@@ -1315,6 +1317,7 @@ def test_build_summary_generation_prompt_includes_previous_summary_and_transcrip
     )
 
     assert "Keep exact paths." in prompt
+    assert "Prioritize these details when present:" in prompt
     assert "Update the existing summary instead of rewriting history from scratch." in prompt
     assert "Previous summary:" in prompt
     assert "Earlier summary" in prompt
@@ -1330,7 +1333,7 @@ def test_compaction_prompt_resolvers_use_node_overrides() -> None:
 
     assert resolve_compaction_system_prompt(settings) == "Custom compaction system"
     resolved_instructions = resolve_compaction_instructions(settings)
-    assert "Use the required markdown sections" in resolved_instructions
+    assert "Return markdown with exactly these sections" in resolved_instructions
     assert "Keep exact paths." in resolved_instructions
 
 
@@ -1668,7 +1671,7 @@ async def test_llm_executor_repeated_compaction_uses_update_mode_prompt(
 
     assert len(summary_requests) == 1
     summary_prompt = summary_requests[0].messages[0].content
-    assert "Update the existing summary instead of rewriting history from scratch." in summary_prompt
+    assert "Update the existing summary instead of rewriting from scratch." in summary_prompt
     assert "Previous summary:" in summary_prompt
     assert "Earlier summary" in summary_prompt
 
