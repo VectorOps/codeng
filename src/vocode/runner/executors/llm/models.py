@@ -56,11 +56,27 @@ class LLMNode(models.Node):
         description="Pre-execution preprocessors applied to the LLM system prompt",
     )
     max_rounds: int = Field(
-        default=32,
+        default=100,
         ge=0,
         description=(
             "Maximum number of LLM tool-call rounds allowed for this node before failing. "
-            "0 means unlimited; used to prevent infinite tool loops. Defaults to 32."
+            "0 means unlimited; used to prevent infinite tool loops. Defaults to 100."
+        ),
+    )
+    hard_error_retries: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of consecutive non-retryable LLM provider errors allowed to be retried "
+            "before failing. Resets after a successful LLM response. Defaults to 0."
+        ),
+    )
+    max_retries: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "Number of retry attempts for retryable LLM provider errors and timeouts "
+            "before failing. Defaults to 3."
         ),
     )
 

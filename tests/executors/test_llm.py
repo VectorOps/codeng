@@ -103,6 +103,27 @@ class FailingAsyncLLMClient:
         raise self._error
 
 
+class SequenceAsyncLLMClient:
+    def __init__(self, actions: List[Any], requests: List[Any], **kwargs: Any) -> None:
+        self._actions = actions
+        self._requests = requests
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def stream(self, model: str, request: Any, options: Any = None):
+        self._requests.append(request)
+        if not self._actions:
+            raise RuntimeError("missing action")
+        action = self._actions.pop(0)
+        if isinstance(action, Exception):
+            raise action
+        return action
+
+
 def _assistant_response(
     text: str,
     *,
@@ -1807,6 +1828,26 @@ def test_llm_node_defaults_to_function_outcome_strategy() -> None:
     assert node.outcome_strategy == models.OutcomeStrategy.FUNCTION
 
 
+def test_llm_node_defaults_hard_error_retries_to_zero() -> None:
+    node = LLMNode(
+        name="node-default-hard-error-retries",
+        type="llm",
+        model="gpt-3.5-turbo",
+    )
+
+    assert node.hard_error_retries == 0
+
+
+def test_llm_node_defaults_max_retries_to_three() -> None:
+    node = LLMNode(
+        name="node-default-max-retries",
+        type="llm",
+        model="gpt-3.5-turbo",
+    )
+
+    assert node.max_retries == 3
+
+
 def test_llm_build_system_prompt_uses_custom_outcome_instruction() -> None:
     node = LLMNode(
         name="node-custom-outcome-instruction",
@@ -2040,3 +2081,180 @@ async def test_llm_executor_surfaces_structured_connect_error_metadata(
     assert "code=provider_error" in rejection.message.text
     assert "retryable=False" in rejection.message.text
     assert '"type": "invalid_request_error"' in rejection.message.text
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_retries_configured_hard_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"n": 0}
+    error = connect.PermanentProviderError(
+        connect.ErrorInfo(
+            code="provider_error",
+            message="Provider request failed",
+            provider="chatgpt",
+            api_family="chatgpt-responses",
+            status_code=400,
+            retryable=False,
+        )
+    )
+
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
+        call_count["n"] += 1
+        if call_count["n"] <= 2:
+            return FailingAsyncLLMClient(error, **kwargs)
+        return FakeAsyncLLMClient(_stream_with_text("Recovered response"), **kwargs)
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-hard-error-retries",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        hard_error_retries=2,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-hard-error-retries", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert call_count["n"] == 3
+    final_step = steps[-1]
+    assert final_step.type == state.StepType.OUTPUT_MESSAGE
+    assert final_step.message is not None
+    assert final_step.message.text == "Recovered response"
+    assert final_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_respects_configured_max_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"n": 0}
+
+    async def _fast_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
+
+    error = connect.RateLimitError(
+        connect.ErrorInfo(
+            code="rate_limited",
+            message="Provider rate limited",
+            provider="chatgpt",
+            api_family="chatgpt-responses",
+            status_code=429,
+            retryable=True,
+        )
+    )
+
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
+        call_count["n"] += 1
+        return FailingAsyncLLMClient(error, **kwargs)
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-max-retries-setting",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        max_retries=1,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-max-retries-setting", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert call_count["n"] == 2
+    final_step = steps[-1]
+    assert final_step.type == state.StepType.REJECTION
+    assert final_step.message is not None
+    assert "LLM error:" in final_step.message.text
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_hard_error_retry_streak_resets_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: List[Any] = []
+    error = connect.PermanentProviderError(
+        connect.ErrorInfo(
+            code="provider_error",
+            message="Provider request failed",
+            provider="chatgpt",
+            api_family="chatgpt-responses",
+            status_code=400,
+            retryable=False,
+        )
+    )
+    first_success = _assistant_response("Missing outcome")
+    final_success = _assistant_response("Recovered again\nOUTCOME: success")
+    actions: List[Any] = [
+        error,
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(index=0, delta="Missing outcome"),
+                connect.ResponseEndEvent(response=first_success),
+            ],
+            final_response=first_success,
+        ),
+        error,
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(
+                    index=0,
+                    delta="Recovered again\nOUTCOME: success",
+                ),
+                connect.ResponseEndEvent(response=final_success),
+            ],
+            final_response=final_success,
+        ),
+    ]
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: SequenceAsyncLLMClient(actions, requests, **kwargs),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-hard-error-reset",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        outcomes=[
+            models.OutcomeSlot(name="success"),
+            models.OutcomeSlot(name="failure"),
+        ],
+        outcome_strategy=models.OutcomeStrategy.TAG,
+        hard_error_retries=1,
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-hard-error-reset", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    assert len(requests) == 4
+    final_step = steps[-1]
+    assert final_step.type == state.StepType.OUTPUT_MESSAGE
+    assert final_step.message is not None
+    assert final_step.message.text == "Recovered again"
+    assert final_step.outcome_name == "success"
+    assert final_step.is_complete is True

@@ -595,7 +595,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             tools=tools,
         )
 
-        max_retries = 3
+        hard_error_attempt = 0
         while True:
             attempt = 0
             assistant_partial = ""
@@ -721,7 +721,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                     break
                 except asyncio.TimeoutError as e:
                     logger.error("LLM timeout", err=e)
-                    if attempt < max_retries:
+                    if attempt < cfg.max_retries:
                         attempt += 1
                         continue
 
@@ -736,7 +736,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                     return
                 except connect.RateLimitError as e:
                     logger.warning("LLM rate limit retry", exc=e)
-                    if attempt < max_retries:
+                    if attempt < cfg.max_retries:
                         attempt += 1
                         await asyncio.sleep(60)
                         continue
@@ -751,18 +751,19 @@ class LLMExecutor(runner_base.BaseExecutor):
                     yield error_step
                     return
                 except connect.ConnectError as e:
-                    if e.error.retryable and attempt < max_retries:
+                    if e.error.retryable and attempt < cfg.max_retries:
                         attempt += 1
                         await asyncio.sleep(1 * (2 ** (attempt - 1)))
                         logger.warning(
                             "LLM retry",
                             attempt=attempt,
-                            max_retries=max_retries,
+                            max_retries=cfg.max_retries,
                             status_code=e.error.status_code,
                             err=str(e),
                         )
                         continue
 
+                    hard_error_attempt = 0
                     rejection_text = self._format_connect_error_message(e)
                     logger.error(
                         "LLM error",
@@ -772,6 +773,19 @@ class LLMExecutor(runner_base.BaseExecutor):
                         api_family=e.error.api_family,
                         err=e,
                     )
+
+                    if hard_error_attempt < cfg.hard_error_retries:
+                        hard_error_attempt += 1
+                        logger.warning(
+                            "LLM hard error retry",
+                            attempt=hard_error_attempt,
+                            max_retries=cfg.hard_error_retries,
+                            status_code=e.error.status_code,
+                            code=e.error.code,
+                            err=str(e),
+                        )
+                        await asyncio.sleep(1 * (2 ** (hard_error_attempt - 1)))
+                        continue
 
                     error_step = self._build_step_from_message(
                         step,
@@ -797,6 +811,8 @@ class LLMExecutor(runner_base.BaseExecutor):
 
             if final_response is None:
                 raise RuntimeError("LLM response missing final response")
+
+            hard_error_attempt = 0
 
             logger.debug("LLM response", response=final_response)
 
