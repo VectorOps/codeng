@@ -382,3 +382,100 @@ def test_process_patch_errors_when_no_blocks_found():
     assert writes == {}
     assert deletions == []
     assert any("No SEARCH/REPLACE blocks found" in e.msg for e in errors)
+
+
+def test_process_patch_reverse_update_successful_fenced_patch():
+    writes = {}
+
+    def write_fn(path: str, content: str) -> None:
+        writes[path] = content
+
+    def open_fn(path: str) -> str:
+        assert path == "file.txt"
+        return "pre\nnew\npost\n"
+
+    def delete_fn(path: str) -> None:
+        raise AssertionError("delete_fn should not be called for reverse update")
+
+    text = "\n".join(
+        [
+            "```text",
+            "file.txt",
+            "<<<<<<< SEARCH",
+            "old",
+            "=======",
+            "new",
+            ">>>>>>> REPLACE",
+            "````",
+        ]
+    )
+
+    statuses, errors = process_patch(text, open_fn, write_fn, delete_fn, reverse=True)
+
+    assert errors == []
+    assert statuses == {"file.txt": FileApplyStatus.Update}
+    assert writes["file.txt"] == "pre\nold\npost\n"
+
+
+def test_process_patch_reverse_add_deletes_file():
+    deletions = []
+
+    def write_fn(path: str, content: str) -> None:
+        raise AssertionError("write_fn should not be called for reverse add")
+
+    def open_fn(path: str) -> str:
+        raise AssertionError("open_fn should not be called for reverse add")
+
+    def delete_fn(path: str) -> None:
+        deletions.append(path)
+
+    text = "\n".join(
+        [
+            "```text",
+            "new.txt",
+            "<<<<<<< SEARCH",
+            "=======",
+            "Hello",
+            "World",
+            ">>>>>>> REPLACE",
+            "````",
+        ]
+    )
+
+    statuses, errors = process_patch(text, open_fn, write_fn, delete_fn, reverse=True)
+
+    assert errors == []
+    assert statuses == {"new.txt": FileApplyStatus.Delete}
+    assert deletions == ["new.txt"]
+
+
+def test_process_patch_reverse_delete_restores_file():
+    writes = {}
+
+    def write_fn(path: str, content: str) -> None:
+        writes[path] = content
+
+    def open_fn(path: str) -> str:
+        raise AssertionError("open_fn should not be called for reverse delete")
+
+    def delete_fn(path: str) -> None:
+        raise AssertionError("delete_fn should not be called for reverse delete")
+
+    text = "\n".join(
+        [
+            "```text",
+            "dead.txt",
+            "<<<<<<< SEARCH",
+            "some content",
+            "=======",
+            "",
+            ">>>>>>> REPLACE",
+            "````",
+        ]
+    )
+
+    statuses, errors = process_patch(text, open_fn, write_fn, delete_fn, reverse=True)
+
+    assert errors == []
+    assert statuses == {"dead.txt": FileApplyStatus.Create}
+    assert writes["dead.txt"] == "some content"

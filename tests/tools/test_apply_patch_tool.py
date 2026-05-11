@@ -157,3 +157,32 @@ async def test_apply_patch_tool_rejects_knowlt_project_path(tmp_path: Path):
     assert "KnowLT virtual paths are read-only" in (resp.text or "")
     assert not (tmp_path / "repo").exists()
     assert project.refresh_calls == []
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_tool_reverse_success(tmp_path: Path):
+    (tmp_path / "f.txt").write_text("pre\n new\npost\n", encoding="utf-8")
+
+    patch_text = """*** Begin Patch
+*** Update File: f.txt
+ pre
+- old
++ new
+ post
+*** End Patch"""
+
+    project = PatchTestProject(tmp_path)
+    ToolClass = ToolFactory.get("apply_patch")
+    assert ToolClass is not None
+
+    tool = ToolClass(project)  # type: ignore[call-arg]
+    spec = ToolSpec(name="apply_patch", config={"format": "v4a"})
+    execution = vocode_state.WorkflowExecution(workflow_name="test")
+    tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+    resp = await tool.run(tool_req, {"text": patch_text, "reverse": True})
+    await asyncio.sleep(0)
+
+    assert resp is not None
+    assert resp.type.value == "text"
+    assert resp.text and "Applied reverse patch successfully" in resp.text
+    assert (tmp_path / "f.txt").read_text(encoding="utf-8") == "pre\n old\npost\n"

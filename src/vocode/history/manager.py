@@ -6,10 +6,56 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from vocode import models, state
+from vocode.patch import apply_patch, get_supported_formats
 from . import models as history_models
 
 
 class HistoryManager:
+    def reverse_apply_patch_from_step(
+        self,
+        execution: state.WorkflowExecution,
+        step_id: UUID,
+        *,
+        fmt: str,
+        base_path,
+        project: Optional[object] = None,
+    ) -> tuple[str, str, dict[str, str], dict[str, object], list[object]]:
+        step = execution.get_step(step_id)
+        return self.reverse_apply_patch_from_message(
+            execution,
+            step.message_id,
+            fmt=fmt,
+            base_path=base_path,
+            project=project,
+        )
+
+    def reverse_apply_patch_from_message(
+        self,
+        execution: state.WorkflowExecution,
+        message_id: Optional[UUID],
+        *,
+        fmt: str,
+        base_path,
+        project: Optional[object] = None,
+    ) -> tuple[str, str, dict[str, str], dict[str, object], list[object]]:
+        if message_id is None:
+            raise ValueError("Step does not reference a message")
+        key = (fmt or "").lower()
+        supported = set(get_supported_formats())
+        if key not in supported:
+            supported_list = ", ".join(sorted(supported))
+            raise ValueError(
+                f"Unsupported patch format: {fmt}. Supported formats: {supported_list}"
+            )
+        message = execution.get_message(message_id)
+        return apply_patch(
+            key,
+            message.text,
+            base_path,
+            project=project,
+            reverse=True,
+        )
+
     def list_branch_summaries(
         self,
         execution: state.WorkflowExecution,

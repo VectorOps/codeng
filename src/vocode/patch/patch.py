@@ -477,16 +477,41 @@ def apply_commits(
     return errors
 
 
+def _reverse_patch(patch: Patch) -> Patch:
+    reversed_patch = Patch()
+    for path, actions in patch.actions.items():
+        reversed_actions: List[PatchAction] = []
+        for action in actions:
+            reversed_type = action.type
+            if action.type == ActionType.ADD:
+                reversed_type = ActionType.DELETE
+            elif action.type == ActionType.DELETE:
+                reversed_type = ActionType.ADD
+            reversed_actions.append(
+                PatchAction(
+                    type=reversed_type,
+                    search=list(action.replace),
+                    replace=list(action.search),
+                    start_line=action.start_line,
+                )
+            )
+        reversed_patch.actions[path] = reversed_actions
+    return reversed_patch
+
+
 def process_patch(
     text: str,
     open_fn: Callable[[str], str],
     write_fn: Callable[[str, str], None],
     delete_fn: Callable[[str], None],
+    reverse: bool = False,
 ) -> Tuple[Dict[str, FileApplyStatus], List[PatchError]]:
     # 1) Parse
     patch, parse_errors = parse_patch(text)
     if parse_errors:
         return {}, parse_errors
+    if reverse:
+        patch = _reverse_patch(patch)
     # 2) Load files needed:
     #    For paths with UPDATE blocks where the first block is not an ADD.
     to_read: List[str] = []

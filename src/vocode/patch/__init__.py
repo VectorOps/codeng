@@ -30,6 +30,14 @@ _REGISTRY: Dict[str, Dict[str, object]] = {
 }
 
 
+def _invert_status(status: FileApplyStatus) -> FileApplyStatus:
+    if status == FileApplyStatus.Create:
+        return FileApplyStatus.Delete
+    if status == FileApplyStatus.Delete:
+        return FileApplyStatus.Create
+    return status
+
+
 def get_supported_formats() -> Tuple[str, ...]:
     return tuple(_REGISTRY.keys())
 
@@ -40,6 +48,15 @@ def get_system_instruction(fmt: str) -> str:
     if not entry:
         raise ValueError(f"Unsupported patch format: {fmt}")
     return entry["system_prompt"]  # type: ignore[return-value]
+
+
+def get_reverse_system_instruction(fmt: str) -> str:
+    instruction = get_system_instruction(fmt)
+    return (
+        instruction
+        + "\n\n"
+        + "When asked to generate a reverse patch, invert the original file operations: additions become deletions, deletions become additions, and updates swap old/new content."
+    )
 
 
 def _normalize_patch_rel_path(rel: str) -> str:
@@ -174,6 +191,7 @@ def apply_patch(
     base_path: pathlib.Path,
     ops: Optional[PatchFileOps] = None,
     project: Optional[object] = None,
+    reverse: bool = False,
 ) -> Tuple[str, str, Dict[str, str], Dict[str, FileApplyStatus], List[object]]:
     """
     Apply a patch using the specified format ('v4a' or 'patch').
@@ -193,8 +211,15 @@ def apply_patch(
 
     # Process
     statuses, errs = handler(  # type: ignore[misc]
-        text, file_ops.open, file_ops.write, file_ops.delete
+        text,
+        file_ops.open,
+        file_ops.write,
+        file_ops.delete,
+        reverse=reverse,
     )
+
+    if reverse:
+        statuses = {path: _invert_status(status) for path, status in statuses.items()}
 
     # Summarize
     created = sorted([f for f, s in statuses.items() if s == FileApplyStatus.Create])
@@ -269,7 +294,13 @@ def apply_patch(
                 lines.append(f"  Hint: {hint}")
         outcome = "fail"
     else:
-        lines = ["Applied patch successfully."]
+        lines = [
+            (
+                "Applied reverse patch successfully."
+                if reverse
+                else "Applied patch successfully."
+            )
+        ]
         if created:
             lines.append("Added files:")
             for f in created:

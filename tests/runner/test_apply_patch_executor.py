@@ -7,6 +7,7 @@ from knowlt.settings import ProjectSettings as KnowProjectSettings
 from tests.stub_project import StubProject
 from vocode import models, state
 from vocode.history.manager import HistoryManager
+from vocode.patch.models import FileApplyStatus
 from vocode.runner.base import ExecutorFactory, ExecutorInput
 from vocode.runner.executors.apply_patch_node import (
     ApplyPatchExecutor,
@@ -157,3 +158,79 @@ async def test_apply_patch_executor_rejects_knowlt_project_path(tmp_path: Path) 
     assert "KnowLT virtual paths are read-only" in step.message.text
     assert not (tmp_path / "repo").exists()
     assert project.refresh_calls == []
+
+
+def test_history_manager_reverse_apply_patch_from_message(tmp_path: Path) -> None:
+    history = HistoryManager()
+    (tmp_path / "f.txt").write_text("pre\n new\npost\n", encoding="utf-8")
+    patch_text = """*** Begin Patch
+*** Update File: f.txt
+ pre
+- old
++ new
+ post
+*** End Patch"""
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
+    history.upsert_message(run, message)
+
+    summary, outcome_name, changes_map, statuses, errs = (
+        history.reverse_apply_patch_from_message(
+            run,
+            message.id,
+            fmt="v4a",
+            base_path=tmp_path,
+        )
+    )
+
+    assert errs == []
+    assert outcome_name == "success"
+    assert "Applied reverse patch successfully" in summary
+    assert changes_map == {"f.txt": "updated"}
+    assert statuses == {"f.txt": FileApplyStatus.Update}
+    assert (tmp_path / "f.txt").read_text(encoding="utf-8") == "pre\n old\npost\n"
+
+
+def test_history_manager_reverse_apply_patch_from_step(tmp_path: Path) -> None:
+    history = HistoryManager()
+    (tmp_path / "f.txt").write_text("pre\n new\npost\n", encoding="utf-8")
+    patch_text = """*** Begin Patch
+*** Update File: f.txt
+ pre
+- old
++ new
+ post
+*** End Patch"""
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    message = state.Message(role=models.Role.ASSISTANT, text=patch_text)
+    history.upsert_message(run, message)
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(node="apply", status=state.RunStatus.RUNNING),
+    )
+    step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message.id,
+        ),
+    )
+
+    summary, outcome_name, changes_map, _statuses, errs = (
+        history.reverse_apply_patch_from_step(
+            run,
+            step.id,
+            fmt="v4a",
+            base_path=tmp_path,
+        )
+    )
+
+    assert errs == []
+    assert outcome_name == "success"
+    assert "Applied reverse patch successfully" in summary
+    assert changes_map == {"f.txt": "updated"}
+    assert (tmp_path / "f.txt").read_text(encoding="utf-8") == "pre\n old\npost\n"

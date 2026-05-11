@@ -846,9 +846,7 @@ def test_unicode_content_v4a_patch():
 *** End Patch"""
 
     snowman = chr(0x2603)
-    initial = {
-        "src/unicode.py": "header\n" + f"value = '{snowman}'\n" + "footer\n"
-    }
+    initial = {"src/unicode.py": "header\n" + f"value = '{snowman}'\n" + "footer\n"}
 
     statuses, errs, writes, deletes, opened = run_patch(
         patch_text, initial_files=initial
@@ -861,3 +859,62 @@ def test_unicode_content_v4a_patch():
     assert writes["src/unicode.py"] == (
         "header\n" + f"value = '{snowman}{snowman}'\n" + "footer\n"
     )
+
+
+def test_reverse_update_restores_previous_content():
+    patch_text = """*** Begin Patch
+*** Update File: src/foo.py
+ pre
+- old
++ new
+ post
+*** End Patch"""
+    initial = {"src/foo.py": "pre\n new\npost\n"}
+    writes: dict[str, str] = {}
+    deletes: list[str] = []
+    statuses, errs = process_patch(
+        patch_text,
+        lambda p: initial[p],
+        lambda p, c: writes.__setitem__(p, c),
+        lambda p: deletes.append(p),
+        reverse=True,
+    )
+    assert errs == []
+    assert statuses == {"src/foo.py": FileApplyStatus.Update}
+    assert writes["src/foo.py"] == "pre\n old\npost\n"
+
+
+def test_reverse_move_restores_original_path():
+    patch_text = """*** Begin Patch
+*** Update File: src/a.txt
+*** Move to: src/renamed.txt
+ pre
+- old
++ new
+ post
+*** End Patch"""
+    initial_files = {"src/renamed.txt": "pre\n new\npost\n"}
+    writes: dict[str, str] = {}
+    deletes: list[str] = []
+
+    def open_fn(path: str) -> str:
+        return initial_files[path]
+
+    def write_fn(path: str, content: str) -> None:
+        writes[path] = content
+
+    def delete_fn(path: str) -> None:
+        deletes.append(path)
+
+    statuses, errs = process_patch(
+        patch_text,
+        open_fn,
+        write_fn,
+        delete_fn,
+        reverse=True,
+    )
+
+    assert errs == []
+    assert statuses == {"src/renamed.txt": FileApplyStatus.Update}
+    assert writes["src/a.txt"] == "pre\n old\npost\n"
+    assert deletes == ["src/renamed.txt"]

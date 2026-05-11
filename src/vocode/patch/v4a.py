@@ -233,7 +233,11 @@ def render_chunk_block(ch: Chunk) -> str:
     for jj, (lt2, t2) in enumerate(pat_built):
         # Insert zero-delete additions at this position
         for gi, g in enumerate(ch.edits):
-            if g.del_count == 0 and g.start_pat_index == jj and not emitted.get(gi, False):
+            if (
+                g.del_count == 0
+                and g.start_pat_index == jj
+                and not emitted.get(gi, False)
+            ):
                 for a in g.additions:
                     out.append(f"{ADD_PREFIX}{a}")
                 emitted[gi] = True
@@ -243,8 +247,13 @@ def render_chunk_block(ch: Chunk) -> str:
             out.append(f"{DELETE_PREFIX}{t2}")
             # For deletions, emit additions after the last deleted line in the group
             for gi, g in enumerate(ch.edits):
-                if g.del_count > 0 and g.start_pat_index <= jj < g.start_pat_index + g.del_count:
-                    if jj == g.start_pat_index + g.del_count - 1 and not emitted.get(gi, False):
+                if (
+                    g.del_count > 0
+                    and g.start_pat_index <= jj < g.start_pat_index + g.del_count
+                ):
+                    if jj == g.start_pat_index + g.del_count - 1 and not emitted.get(
+                        gi, False
+                    ):
                         for a in g.additions:
                             out.append(f"{ADD_PREFIX}{a}")
                         emitted[gi] = True
@@ -255,6 +264,101 @@ def render_chunk_block(ch: Chunk) -> str:
                 out.append(f"{ADD_PREFIX}{a}")
             emitted[gi] = True
     return "\n".join(out)
+
+
+def _reverse_chunk(chunk: Chunk) -> Chunk:
+    reversed_chunk = Chunk(start_line=chunk.start_line)
+    for item in chunk.items:
+        if item.type == NeedleType.ANCHOR:
+            reversed_chunk.items.append(NeedleItem(NeedleType.ANCHOR, item.text))
+
+    pat_built: List[tuple[NeedleType, str]] = [
+        (item.type, item.text) for item in chunk.items if item.type != NeedleType.ANCHOR
+    ]
+    delete_groups = {
+        edit.start_pat_index: edit for edit in chunk.edits if edit.del_count > 0
+    }
+    insert_groups = {}
+    for edit in chunk.edits:
+        if edit.del_count == 0:
+            insert_groups.setdefault(edit.start_pat_index, []).append(edit)
+
+    rev_pat_index = 0
+    pos = 0
+    while pos <= len(pat_built):
+        for edit in insert_groups.get(pos, []):
+            for line in edit.additions:
+                reversed_chunk.items.append(NeedleItem(NeedleType.DELETE, line))
+                rev_pat_index += 1
+
+        if pos == len(pat_built):
+            break
+
+        delete_group = delete_groups.get(pos)
+        if delete_group is not None:
+            deleted_lines = [
+                pat_built[idx][1]
+                for idx in range(pos, pos + delete_group.del_count)
+                if idx < len(pat_built)
+            ]
+            if delete_group.additions:
+                start_index = rev_pat_index
+                for line in delete_group.additions:
+                    reversed_chunk.items.append(NeedleItem(NeedleType.DELETE, line))
+                    rev_pat_index += 1
+                reversed_chunk.edits.append(
+                    EditGroup(
+                        start_pat_index=start_index,
+                        del_count=len(delete_group.additions),
+                        additions=deleted_lines,
+                    )
+                )
+            else:
+                reversed_chunk.edits.append(
+                    EditGroup(
+                        start_pat_index=rev_pat_index,
+                        del_count=0,
+                        additions=deleted_lines,
+                    )
+                )
+            pos += delete_group.del_count
+            continue
+
+        line_type, line_text = pat_built[pos]
+        if line_type == NeedleType.CONTEXT:
+            reversed_chunk.items.append(NeedleItem(NeedleType.CONTEXT, line_text))
+            rev_pat_index += 1
+        pos += 1
+
+    return reversed_chunk
+
+
+def _reverse_patch(patch: Patch) -> Patch:
+    reversed_patch = Patch()
+    for path, actions in patch.actions.items():
+        reversed_actions: List[PatchAction] = []
+        for action in actions:
+            reversed_type = action.type
+            reversed_move_path = action.move_path
+            if action.type == ActionType.ADD:
+                reversed_type = ActionType.DELETE
+            elif action.type == ActionType.DELETE:
+                reversed_type = ActionType.ADD
+            reversed_path = action.move_path or path
+            if action.type == ActionType.UPDATE and action.move_path is not None:
+                reversed_path = action.move_path
+                reversed_move_path = path
+            reversed_actions.append(
+                PatchAction(
+                    type=reversed_type,
+                    chunks=[_reverse_chunk(chunk) for chunk in action.chunks],
+                    move_path=reversed_move_path,
+                )
+            )
+            reversed_patch.actions.setdefault(reversed_path, []).append(
+                reversed_actions[-1]
+            )
+    return reversed_patch
 
 
 def _is_relative_path(p: str) -> bool:
@@ -683,7 +787,9 @@ def build_commits(
         if has_create:
             create_action = next(a for a in actions if a.type == ActionType.ADD)
             if has_update:
-                add_error(f"Cannot mix Update and Add sections for {path}", filename=path)
+                add_error(
+                    f"Cannot mix Update and Add sections for {path}", filename=path
+                )
                 continue
             if has_delete:
                 delete_action = next(a for a in actions if a.type == ActionType.DELETE)
@@ -693,9 +799,13 @@ def build_commits(
             effective_actions[path] = create_action
         elif has_delete:
             if has_update:
-                add_error(f"Cannot mix Delete and Update sections for {path}", filename=path)
+                add_error(
+                    f"Cannot mix Delete and Update sections for {path}", filename=path
+                )
                 continue
-            effective_actions[path] = next(a for a in actions if a.type == ActionType.DELETE)
+            effective_actions[path] = next(
+                a for a in actions if a.type == ActionType.DELETE
+            )
         elif has_update:
             update_actions = [a for a in actions if a.type == ActionType.UPDATE]
             merged_chunks = []
@@ -761,7 +871,9 @@ def build_commits(
 
         # Candidate starts: consider all feasible positions, honoring a minimum start index
         start_min = max(0, start_min)
-        candidate_starts: List[int] = list(range(start_min, max(start_min, n_lines - pat_len + 1)))
+        candidate_starts: List[int] = list(
+            range(start_min, max(start_min, n_lines - pat_len + 1))
+        )
 
         anchor_idxs: List[int] = []
         for it in items:
@@ -950,7 +1062,9 @@ def build_commits(
         last_end_idx: Optional[int] = None
         for ch in action.chunks:
             # First, attempt a global search (for order/overlap diagnostics).
-            start_idx, end_idx, replacement, hint = find_chunk_linear(lines, ch, start_min=0)
+            start_idx, end_idx, replacement, hint = find_chunk_linear(
+                lines, ch, start_min=0
+            )
             if start_idx is None or end_idx is None or replacement is None:
                 add_error(
                     f"Failed to locate change block in {path}",
@@ -1104,15 +1218,13 @@ def process_patch(
     open_fn: Callable[[str], str],
     write_fn: Callable[[str, str], None],
     delete_fn: Callable[[str], None],
+    reverse: bool = False,
 ) -> Tuple[Dict[str, FileApplyStatus], List[PatchError]]:
     patch, errors = parse_v4a_patch(text)
     if errors:
         # Enrich specific parse-time errors with a fenced source snippet of the target file.
         for e in errors:
-            if (
-                e.msg.startswith("Invalid patch line in ")
-                and e.filename is not None
-            ):
+            if e.msg.startswith("Invalid patch line in ") and e.filename is not None:
                 try:
                     src = open_fn(e.filename)
                     fence = "```"
@@ -1122,6 +1234,9 @@ def process_patch(
                     # If we cannot read the file, leave the original hint as-is.
                     pass
         return {}, errors
+
+    if reverse:
+        patch = _reverse_patch(patch)
 
     # Load files needed for application (Update only). Add/Delete do not require reading here.
     paths = [

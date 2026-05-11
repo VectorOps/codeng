@@ -4,7 +4,12 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from vocode.logger import logger
 from vocode.tools import base as tools_base
 from vocode.settings import ToolSpec
-from vocode.patch import apply_patch, get_supported_formats, get_system_instruction
+from vocode.patch import (
+    apply_patch,
+    get_reverse_system_instruction,
+    get_supported_formats,
+    get_system_instruction,
+)
 
 if TYPE_CHECKING:
     from vocode.project import Project
@@ -25,12 +30,16 @@ class ApplyPatchTool(tools_base.BaseTool):
 
         # Read patch content from args
         text: Optional[str] = None
+        reverse = False
         if isinstance(args, str):
             text = args
         elif isinstance(args, dict):
             arg_text = args.get("text")
             if isinstance(arg_text, str):
                 text = arg_text
+            arg_reverse = args.get("reverse")
+            if isinstance(arg_reverse, bool):
+                reverse = arg_reverse
 
         if not text or not text.strip():
             raise ValueError("ApplyPatchTool requires 'text' (patch content)")
@@ -52,7 +61,11 @@ class ApplyPatchTool(tools_base.BaseTool):
         # Apply the patch using helper; schedule a refresh if changes occurred
         try:
             summary, _outcome, changes_map, _statuses, _errs = apply_patch(
-                fmt, text, base_path, project=self.prj
+                fmt,
+                text,
+                base_path,
+                project=self.prj,
+                reverse=reverse,
             )
             # Build refresh payload if project exposes refresh API
             try:
@@ -96,11 +109,15 @@ class ApplyPatchTool(tools_base.BaseTool):
 
         if fmt in get_supported_formats():
             instruction = get_system_instruction(fmt)
+            reverse_instruction = get_reverse_system_instruction(fmt)
             description = (
                 description
                 + "\n\n"
                 + "Patch content must follow these format-specific instructions:\n"
                 + instruction
+                + "\n\n"
+                + "For reverse application, use these instructions:\n"
+                + reverse_instruction
             )
 
         return {
@@ -112,6 +129,10 @@ class ApplyPatchTool(tools_base.BaseTool):
                     "text": {
                         "type": "string",
                         "description": "Patch content to apply.",
+                    },
+                    "reverse": {
+                        "type": "boolean",
+                        "description": "If true, apply the reverse of the supplied patch.",
                     },
                 },
                 "required": ["text"],
