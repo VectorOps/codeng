@@ -183,6 +183,7 @@ class ToolSpec(vars_mod.BaseVarModel):
 class LoggingSettings(vars_mod.BaseVarModel):
     # Default level for our primary loggers (vocode, knowlt) if not overridden.
     default_level: LogLevel = LogLevel.info
+    startup_timing: bool = False
     # Mapping of logger name -> level override (e.g., {"asyncio": "debug"})
     enabled_loggers: Dict[str, LogLevel] = Field(
         default_factory=lambda: {

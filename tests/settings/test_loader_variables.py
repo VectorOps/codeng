@@ -198,3 +198,14 @@ internal_http:
 
     choices = settings.list_variable_value_choices("HOST", needle="rem")
     assert [c.value for c in choices] == ["remote"]
+
+
+def test_loads_startup_timing_logging_setting(tmp_path: Path) -> None:
+    cfg = """
+logging:
+  startup_timing: true
+"""
+    settings = load_settings(str(_write_tmp(tmp_path, cfg)))
+
+    assert settings.logging is not None
+    assert settings.logging.startup_timing is True

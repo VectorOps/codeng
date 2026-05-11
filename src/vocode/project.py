@@ -23,6 +23,7 @@ from .history.manager import HistoryManager
 from .auth import ProjectCredentialManager
 from . import ui_events
 from .logger import logger
+from .startup_timing import StartupTimer
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.http import server as http_server
 from vocode.mcp.service import MCPService, MCPServiceError
@@ -198,12 +199,23 @@ class Project:
         """
         Start project subsystems that require async initialization (e.g., MCP).
         """
+        startup_timer = StartupTimer(
+            enabled=bool(
+                self.settings
+                and self.settings.logging is not None
+                and self.settings.logging.startup_timing
+            ),
+            event="project startup timing",
+        )
         if self.know is not None:
             await self.know.start(self.settings.know)
+            startup_timer.mark("know.start")
         await self.state_manager.start()
+        startup_timer.mark("state_manager.start")
 
         if self.settings and self.settings.internal_http is not None:
             http_server.configure_internal_http(self.settings.internal_http)
+            startup_timer.mark("internal_http.configure")
 
         # Initialize process manager (idempotent)
         if self.processes is None:
@@ -228,6 +240,7 @@ class Project:
                 default_cwd=self.base_path,
                 env_policy=env_policy,
             )
+        startup_timer.mark("process_manager.init")
 
         # Initialize shell manager (idempotent, depends on process manager)
         if self.processes is not None and self.shells is None:
@@ -241,9 +254,11 @@ class Project:
                 settings=shell_settings,
                 default_cwd=self.base_path,
             )
+        startup_timer.mark("shell_manager.init")
 
         # Register tools
         self.refresh_tools_from_registry()
+        startup_timer.mark("tools.refresh")
 
         if self.mcp is None:
             mcp_settings = self.settings.mcp if self.settings is not None else None
@@ -254,6 +269,7 @@ class Project:
                 project_root_uri=self.base_path.resolve().as_uri(),
                 tool_cache_update_callback=self.refresh_tools_from_registry,
             )
+        startup_timer.mark("mcp.service_init")
         if self.settings and self.settings.mcp and self.settings.mcp.enabled:
             for name, source in self.settings.mcp.sources.items():
                 if source.scope.value == "project" and source.kind == "stdio":
@@ -261,12 +277,17 @@ class Project:
                         await self.mcp.start_session(name)
                     except MCPServiceError:
                         continue
+            startup_timer.mark("mcp.project_sessions")
 
         # Discover skills
         self.skills = discover_skills(self.base_path)
+        startup_timer.mark("skills.discover")
 
         if self.know is not None:
             await self.know.refresh_all()
+            startup_timer.mark("know.refresh_all")
+
+        startup_timer.mark("project.start.complete")
 
     async def shutdown(self) -> None:
         """Gracefully shut down project components."""
@@ -316,10 +337,12 @@ def init_project(
     2) Otherwise, if use_scm is True, detecting a Git repository root and using it as the base; create .vocode/config.yaml there if missing.
     3) Otherwise, creating .vocode/config.yaml at the provided start directory.
     """
+    startup_timer = StartupTimer(event="project init timing")
     start_path = Path(base_path)
     # If a file path is provided, start from its parent; otherwise the directory itself.
     start_dir = start_path if start_path.is_dir() else start_path.parent
     start_dir = start_dir.resolve()
+    startup_timer.mark("resolve_start_dir")
 
     rel = Path(config_relpath)
     base = None
@@ -332,16 +355,19 @@ def init_project(
     if found_base is not None:
         base = found_base
         config_path = base / rel
+        startup_timer.mark("find_existing_config")
     else:
         # 2) Try SCM (git) if enabled
         if use_scm:
             repo_root = GitSCM().find_repo(start_dir)
+            startup_timer.mark("git.find_repo")
             if repo_root is not None:
                 base = Path(repo_root)
                 config_path = base / rel
                 if not config_path.exists():
                     config_path.parent.mkdir(parents=True, exist_ok=True)
                     write_default_config(config_path)
+                    startup_timer.mark("write_default_config.scm")
 
         # 3) Fall back to the start directory
         if base is None:
@@ -350,9 +376,16 @@ def init_project(
             config_path.parent.mkdir(parents=True, exist_ok=True)
             if not config_path.exists():
                 write_default_config(config_path)
+                startup_timer.mark("write_default_config.local")
 
     # Load merged settings (supports include + YAML/JSON5)
     settings = load_settings(str(config_path))
+    if settings.logging is not None:
+        startup_timer = StartupTimer(
+            enabled=settings.logging.startup_timing,
+            event="project init timing",
+        )
+    startup_timer.mark("settings.load")
 
     if settings.know_enabled:
         if settings.know:
@@ -375,11 +408,13 @@ def init_project(
             know_settings.repository_connection = str(know_data_path / "know-ng.duckdb")
 
         settings.know = know_settings
+        startup_timer.mark("know.settings_prepare")
 
     proj = Project(
         base_path=base,
         config_relpath=rel,
         settings=settings,
     )
+    startup_timer.mark("project.constructed")
 
     return proj
