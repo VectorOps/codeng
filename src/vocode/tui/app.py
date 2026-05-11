@@ -14,6 +14,7 @@ from vocode.manager import proto as manager_proto
 from vocode.manager import server as manager_server
 from vocode import project as vocode_project
 from vocode.tui import tcf as tui_tcf
+from vocode.tui import history as tui_history
 from vocode.tui import uistate as tui_uistate
 from vocode.tui.screens import log_view as tui_log_view
 
@@ -67,6 +68,10 @@ class App:
             tui_options = project.settings.tui
         if "tui_options" in init_params and tui_options is not None:
             state_kwargs["tui_options"] = tui_options
+        if "history_path" in init_params:
+            state_kwargs["history_path"] = (
+                project.base_path / ".vocode" / "data" / tui_history.HISTORY_FILE_NAME
+            )
         state_kwargs["persist_history"] = True
         self._state = tui_uistate.TUIState(**state_kwargs)
 

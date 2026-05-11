@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from vocode import state, settings as vocode_settings
 from vocode.auth import ProjectCredentialManager
@@ -17,7 +18,9 @@ class StubProject:
         self,
         process_manager: ProcessManager | None = None,
         settings: vocode_settings.Settings | None = None,
+        base_path: Path | None = None,
     ) -> None:
+        self.base_path = base_path or Path.cwd()
         self.llm_usage = state.LLMUsageStats()
         self.settings = settings or vocode_settings.Settings()
         self.current_workflow = None

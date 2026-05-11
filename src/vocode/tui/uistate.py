@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
+from pathlib import Path
 import typing
 from rich import console as rich_console
 from rich import control as rich_control
@@ -88,6 +89,7 @@ class TUIState:
         on_stop: typing.Callable[[], typing.Awaitable[None]] | None = None,
         on_eof: typing.Callable[[], typing.Awaitable[None]] | None = None,
         tui_options: vocode_settings.TUIOptions | None = None,
+        history_path: Path | None = None,
         persist_history: bool = False,
     ) -> None:
         self._on_input = on_input
@@ -139,6 +141,7 @@ class TUIState:
             history_limit = tui_options.history_limit
         self._history_manager = tui_history.HistoryManager(
             max_entries=history_limit,
+            history_path=history_path,
             persist_history=persist_history,
         )
         self._input_keymap = self._create_input_keymap()
@@ -1116,9 +1119,7 @@ class TUIState:
             token_text = str(compaction_state.tokens_before)
             if compaction_state.tokens_after_estimate is not None:
                 token_text += f" -> {compaction_state.tokens_after_estimate}"
-            text = (
-                f"Context compacted: {summarized_count} steps, ~{token_text} tokens"
-            )
+            text = f"Context compacted: {summarized_count} steps, ~{token_text} tokens"
         self._upsert_markdown_component(
             step,
             text,

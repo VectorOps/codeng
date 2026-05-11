@@ -338,7 +338,7 @@ async def test_state_manager_flushes_to_expected_session_layout(tmp_path):
 
 @pytest.mark.asyncio
 async def test_state_manager_session_dir_sequence_number_increments(tmp_path):
-    sessions_root = tmp_path / ".vocode" / "sessions"
+    sessions_root = tmp_path / ".vocode" / "data" / "sessions"
     sessions_root.mkdir(parents=True, exist_ok=True)
     date_prefix = datetime.datetime.now().strftime("%Y_%m_%d")
     (sessions_root / f"{date_prefix}_1_aaa").mkdir(parents=True, exist_ok=True)
@@ -359,7 +359,7 @@ async def test_state_manager_session_dir_sequence_number_increments(tmp_path):
 async def test_state_manager_prunes_old_sessions_when_over_max_total_log_bytes(
     tmp_path,
 ):
-    sessions_root = tmp_path / ".vocode" / "sessions"
+    sessions_root = tmp_path / ".vocode" / "data" / "sessions"
     old_dir = sessions_root / "2000_01_01_old"
     old_dir.mkdir(parents=True, exist_ok=True)
     old_file = old_dir / "old.bin"

@@ -56,7 +56,7 @@ class WorkflowStateManager:
 
     @property
     def sessions_root(self) -> Path:
-        return self._base_path / ".vocode" / "sessions"
+        return self._base_path / ".vocode" / "data" / "sessions"
 
     @property
     def session_dir(self) -> Path:
@@ -166,7 +166,9 @@ class WorkflowStateManager:
         if self._task is not None and not self._task.done():
             return
         if self._session_dir_name is None:
-            self._session_dir_name = await asyncio.to_thread(self._compute_session_dir_name)
+            self._session_dir_name = await asyncio.to_thread(
+                self._compute_session_dir_name
+            )
         self.session_dir.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(self._enforce_retention)
         self._task = asyncio.create_task(self._loop())

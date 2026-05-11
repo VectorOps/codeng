@@ -9,6 +9,7 @@ from vocode import models
 from vocode import project as vocode_project
 from vocode.manager import proto as manager_proto
 from vocode.tui.app import App
+from vocode.tui import history as tui_history
 from vocode.tui import uistate as tui_uistate
 from tests.stub_project import StubProject
 
@@ -231,3 +232,51 @@ async def test_tui_app_eof_request_cancels_recv_task(
     await asyncio.sleep(0)
 
     assert app._recv_task.cancelled() or app._recv_task.done()
+
+
+def test_tui_app_passes_project_history_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeTUIState:
+        def __init__(
+            self,
+            on_input,
+            on_autocomplete_request=None,
+            on_stop=None,
+            on_eof=None,
+            history_path: Path | None = None,
+            persist_history=False,
+        ) -> None:
+            self._history_path = history_path
+            self._persist_history = persist_history
+
+        def add_markdown(self, markdown: str) -> None:
+            return None
+
+        def set_input_panel_title(
+            self,
+            title: str | None,
+            subtitle: str | None = None,
+        ) -> None:
+            return None
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(tui_uistate, "TUIState", FakeTUIState)
+
+    monkeypatch.setattr(
+        vocode_project.Project,
+        "from_base_path",
+        classmethod(lambda cls, path: StubProject(base_path=tmp_path)),
+    )
+
+    app = App(project_path=tmp_path)
+
+    assert app._state._persist_history is True
+    assert app._state._history_path == (
+        tmp_path / ".vocode" / "data" / tui_history.HISTORY_FILE_NAME
+    )

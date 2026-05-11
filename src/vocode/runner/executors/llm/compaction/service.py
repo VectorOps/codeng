@@ -20,9 +20,7 @@ from .prompting import resolve_compaction_system_prompt
 from .prompting import serialize_messages_to_transcript
 
 
-VALID_PRIMARY_BOUNDARY_STEP_TYPES = (
-    state.StepType.INPUT_MESSAGE,
-)
+VALID_PRIMARY_BOUNDARY_STEP_TYPES = (state.StepType.INPUT_MESSAGE,)
 
 VALID_FALLBACK_BOUNDARY_STEP_TYPES = (
     state.StepType.OUTPUT_MESSAGE,
@@ -235,6 +233,14 @@ async def maybe_compact_execution_history(
         ),
     )
     history.upsert_message(workflow_execution, summary_message)
+    final_token_estimate = estimate_context_tokens(
+        [(summary_message, None)] + prompt_messages[summarize_count:]
+    )
+    logger.info(
+        "Context compaction completed",
+        source_tokens=preparation.estimated_context_tokens,
+        final_tokens=final_token_estimate,
+    )
 
     compaction_count = 0
     if execution.state is not None:
@@ -251,9 +257,7 @@ async def maybe_compact_execution_history(
         state=CompactionSummaryState(
             compacted_step_ids=compacted_step_ids,
             tokens_before=preparation.estimated_context_tokens,
-            tokens_after_estimate=estimate_context_tokens(
-                prompt_messages[summarize_count:]
-            ),
+            tokens_after_estimate=final_token_estimate,
             trigger_threshold_ratio=(preparation.settings.trigger_threshold_ratio),
         ),
         is_complete=True,
@@ -278,7 +282,9 @@ def select_compaction_cut_index(
     if input_token_limit is None or input_token_limit <= 0:
         return max(1, len(prompt_messages) - 1)
 
-    keep_recent_budget = max(1, int(float(input_token_limit) * settings.keep_recent_ratio))
+    keep_recent_budget = max(
+        1, int(float(input_token_limit) * settings.keep_recent_ratio)
+    )
     accumulated_tokens = 0
 
     for index in range(len(prompt_messages) - 1, -1, -1):
@@ -328,7 +334,11 @@ def _adjust_cut_index_for_tool_round(
             return adjusted_index
         if step.type != state.StepType.OUTPUT_MESSAGE:
             return adjusted_index
-        if message.tool_call_responses and not message.tool_call_requests and not message.text:
+        if (
+            message.tool_call_responses
+            and not message.tool_call_requests
+            and not message.text
+        ):
             adjusted_index -= 1
             continue
         return adjusted_index

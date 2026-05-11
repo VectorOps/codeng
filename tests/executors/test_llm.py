@@ -1,8 +1,8 @@
-from typing import Any, List, Optional
-
 import asyncio
 import connect
+import logging
 import pytest
+from typing import Any, List, Optional
 
 from vocode import state, models, settings as vocode_settings
 from vocode.history.manager import HistoryManager
@@ -1087,6 +1087,7 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
 @pytest.mark.asyncio
 async def test_llm_executor_persists_compaction_step_before_request(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     captured_requests: List[Any] = []
     response = _assistant_response("after compaction")
@@ -1168,9 +1169,10 @@ async def test_llm_executor_persists_compaction_step_before_request(
         ),
     )
 
-    steps: List[state.Step] = []
-    async for step in executor.run(ExecutorInput(execution=execution, run=run)):
-        steps.append(step)
+    with caplog.at_level(logging.INFO, logger="vocode"):
+        steps: List[state.Step] = []
+        async for step in executor.run(ExecutorInput(execution=execution, run=run)):
+            steps.append(step)
 
     compaction_steps = [
         step
@@ -1188,6 +1190,17 @@ async def test_llm_executor_persists_compaction_step_before_request(
     assert isinstance(execution.state, LLMExecutionCompactionState)
     assert execution.state.latest_compaction_step_id == compaction_step.id
     assert execution.state.compaction_count == 1
+    compaction_logs = [
+        record
+        for record in caplog.records
+        if "Context compaction completed" in record.getMessage()
+    ]
+    assert len(compaction_logs) == 1
+    log_message = compaction_logs[0].getMessage()
+    assert "source_tokens" in log_message
+    assert "18" in log_message
+    assert "final_tokens" in log_message
+    assert "255" in log_message
 
     assert len(captured_requests) == 2
     summary_request = captured_requests[0]
@@ -1291,7 +1304,9 @@ def test_compaction_transcript_serializes_tool_calls_and_results() -> None:
     assert "[Assistant thinking]" in transcript
     assert "Need to inspect llm files" in transcript
     assert "[Assistant tool calls]" in transcript
-    assert '- read_files({"path": "src/vocode/runner/executors/llm/llm.py"})' in transcript
+    assert (
+        '- read_files({"path": "src/vocode/runner/executors/llm/llm.py"})' in transcript
+    )
     assert "[Tool results]" in transcript
     assert '- read_files: {"error": "context overflow"}' in transcript
 
@@ -1671,7 +1686,10 @@ async def test_llm_executor_repeated_compaction_uses_update_mode_prompt(
 
     assert len(summary_requests) == 1
     summary_prompt = summary_requests[0].messages[0].content
-    assert "Update the existing summary instead of rewriting from scratch." in summary_prompt
+    assert (
+        "Update the existing summary instead of rewriting from scratch."
+        in summary_prompt
+    )
     assert "Previous summary:" in summary_prompt
     assert "Earlier summary" in summary_prompt
 
