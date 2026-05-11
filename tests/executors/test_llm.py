@@ -1,8 +1,8 @@
-from typing import Any, List, Optional
-
 import asyncio
 import connect
+import logging
 import pytest
+from typing import Any, List, Optional
 
 from vocode import state, models, settings as vocode_settings
 from vocode.history.manager import HistoryManager
@@ -12,7 +12,17 @@ from vocode.mcp.service import MCPWorkflowSessionChange
 from vocode.mcp import tool_materialization as mcp_tool_materialization
 from vocode.manager.base import Workflow
 from vocode.runner.runner import Runner
+from vocode.runner.executors.llm.compaction import build_compaction_instructions
+from vocode.runner.executors.llm.compaction import CompactionSettings
+from vocode.runner.executors.llm.compaction import CompactionSummaryState
+from vocode.runner.executors.llm.compaction import LLMExecutionCompactionState
+from vocode.runner.executors.llm.compaction import build_summary_generation_prompt
+from vocode.runner.executors.llm.compaction import resolve_compaction_instructions
+from vocode.runner.executors.llm.compaction import resolve_compaction_system_prompt
+from vocode.runner.executors.llm.compaction import serialize_messages_to_transcript
+from vocode.runner.executors.llm.compaction.service import select_compaction_cut_index
 from vocode.runner.executors.llm.llm import LLMExecutor
+from vocode.runner.executors.llm.compaction import should_trigger_compaction
 from vocode.runner.executors.llm.models import LLMNodeMCPSettings
 from vocode.runner.executors.llm.models import LLMNode
 from vocode.runner.executors.llm import helpers as llm_helpers
@@ -67,6 +77,16 @@ class FakeAsyncLLMClient:
     def stream(self, model: str, request: Any, options: Any = None):
         return self._stream_handle
 
+    async def generate(
+        self,
+        model: str,
+        request: Any,
+        provider: Optional[str] = None,
+        options: Any = None,
+    ) -> connect.AssistantMessage:
+        _ = model, request, provider, options
+        return await self._stream_handle.final_response()
+
 
 class RecordingAsyncLLMClient(FakeAsyncLLMClient):
     def __init__(
@@ -87,6 +107,49 @@ class RecordingAsyncLLMClient(FakeAsyncLLMClient):
         if not self._stream_handles:
             raise RuntimeError("missing stream handle")
         return self._stream_handles.pop(0)
+
+    async def generate(
+        self,
+        model: str,
+        request: Any,
+        provider: Optional[str] = None,
+        options: Any = None,
+    ) -> connect.AssistantMessage:
+        _ = model, provider, options
+        self._requests.append(request)
+        if not self._stream_handles:
+            raise RuntimeError("missing stream handle")
+        return await self._stream_handles[0].final_response()
+
+
+class SummaryThenStreamAsyncLLMClient(FakeAsyncLLMClient):
+    def __init__(
+        self,
+        summary_response: connect.AssistantMessage,
+        stream_handle: FakeStreamHandle,
+        summary_requests: List[Any],
+        stream_requests: List[Any],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(stream_handle, **kwargs)
+        self._summary_response = summary_response
+        self._summary_requests = summary_requests
+        self._stream_requests = stream_requests
+
+    async def generate(
+        self,
+        model: str,
+        request: Any,
+        provider: Optional[str] = None,
+        options: Any = None,
+    ) -> connect.AssistantMessage:
+        _ = model, provider, options
+        self._summary_requests.append(request)
+        return self._summary_response
+
+    def stream(self, model: str, request: Any, options: Any = None):
+        self._stream_requests.append(request)
+        return super().stream(model, request, options)
 
 
 class FailingAsyncLLMClient:
@@ -122,6 +185,22 @@ class SequenceAsyncLLMClient:
         if isinstance(action, Exception):
             raise action
         return action
+
+    async def generate(
+        self,
+        model: str,
+        request: Any,
+        provider: Optional[str] = None,
+        options: Any = None,
+    ) -> connect.AssistantMessage:
+        _ = model, provider, options
+        self._requests.append(request)
+        if not self._actions:
+            raise RuntimeError("missing action")
+        action = self._actions.pop(0)
+        if isinstance(action, Exception):
+            raise action
+        return await action.final_response()
 
 
 def _assistant_response(
@@ -787,6 +866,832 @@ async def test_llm_executor_emits_preview_usage_before_request(
         pass
 
     assert call_count["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_preview_usage_estimates_prompt_from_visible_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"n": 0}
+
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
+        call_count["n"] += 1
+        return FakeAsyncLLMClient(_stream_with_text("preview response"), **kwargs)
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-preview-estimate",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-preview-estimate",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    first_user = state.Message(role=models.Role.USER, text="12345678")
+    assistant = state.Message(role=models.Role.ASSISTANT, text="done")
+    trailing_user = state.Message(role=models.Role.USER, text="1234")
+    for message in [first_user, assistant, trailing_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=first_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant.id,
+            llm_usage=state.LLMUsageStats(prompt_tokens=10, completion_tokens=3),
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=trailing_user.id,
+            is_complete=True,
+        ),
+    )
+
+    agen = executor.run(ExecutorInput(execution=execution, run=run))
+    first_step = await agen.__anext__()
+
+    assert call_count["n"] == 0
+    assert first_step.llm_usage is not None
+    assert first_step.llm_usage.prompt_tokens == 14
+    assert first_step.llm_usage.completion_tokens == 0
+
+    async for _ in agen:
+        pass
+
+
+def test_should_trigger_compaction_uses_percentage_threshold() -> None:
+    settings = node = LLMNode(
+        name="node-compaction-threshold",
+        type="llm",
+        model="gpt-3.5-turbo",
+    ).compaction
+
+    assert should_trigger_compaction(settings, 1000, 499) is False
+    assert should_trigger_compaction(settings, 1000, 500) is True
+    assert should_trigger_compaction(settings, None, 900) is False
+
+
+def test_should_trigger_compaction_respects_disabled_setting() -> None:
+    settings = LLMNode(
+        name="node-compaction-disabled",
+        type="llm",
+        model="gpt-3.5-turbo",
+    ).compaction.model_copy(update={"enabled": False})
+
+    assert should_trigger_compaction(settings, 1000, 1000) is False
+
+
+def test_llm_executor_prepare_compaction_reports_threshold_state() -> None:
+    project = StubProject()
+    node = LLMNode(
+        name="node-prepare-compaction",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        extra={"model_max_tokens": 20},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-prepare-compaction",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    user_message = state.Message(role=models.Role.USER, text="x" * 60)
+    history.upsert_message(run, user_message)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=user_message.id,
+            is_complete=True,
+        ),
+    )
+
+    result = executor._prepare_compaction(ExecutorInput(execution=execution, run=run))
+
+    assert result.prompt_messages_count == 1
+    assert result.estimated_context_tokens == 15
+    assert result.input_token_limit == 20
+    assert result.should_compact is True
+
+
+def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
+    project = StubProject()
+    node = LLMNode(
+        name="node-prepare-compaction-boundary",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        extra={"model_max_tokens": 100},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-prepare-compaction-boundary",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 200)
+    summary = state.Message(role=models.Role.SYSTEM, text="summary")
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    for message in [old_user, summary, recent_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    result = executor._prepare_compaction(ExecutorInput(execution=execution, run=run))
+
+    assert result.prompt_messages_count == 2
+    assert result.estimated_context_tokens == 3
+    assert result.should_compact is False
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_persists_compaction_step_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    captured_requests: List[Any] = []
+    response = _assistant_response("after compaction")
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: RecordingAsyncLLMClient(
+            [
+                FakeStreamHandle(
+                    [
+                        connect.TextDeltaEvent(index=0, delta="after compaction"),
+                        connect.ResponseEndEvent(response=response),
+                    ],
+                    final_response=response,
+                )
+            ],
+            captured_requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-persist-compaction",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        extra={"model_max_tokens": 8},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-persist-compaction",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    recent_assistant = state.Message(role=models.Role.ASSISTANT, text="tail-2")
+    for message in [old_user, recent_user, recent_assistant]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=recent_assistant.id,
+            is_complete=True,
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="vocode"):
+        steps: List[state.Step] = []
+        async for step in executor.run(ExecutorInput(execution=execution, run=run)):
+            steps.append(step)
+
+    compaction_steps = [
+        step
+        for step in execution.iter_steps()
+        if step.type == state.StepType.CONTEXT_COMPACTION
+    ]
+    assert len(compaction_steps) == 1
+    compaction_step = compaction_steps[0]
+    assert compaction_step.message is not None
+    assert (
+        "The conversation history before this point was compacted"
+        in compaction_step.message.text
+    )
+    assert execution.state is not None
+    assert isinstance(execution.state, LLMExecutionCompactionState)
+    assert execution.state.latest_compaction_step_id == compaction_step.id
+    assert execution.state.compaction_count == 1
+    compaction_logs = [
+        record
+        for record in caplog.records
+        if "Context compaction completed" in record.getMessage()
+    ]
+    assert len(compaction_logs) == 1
+    log_message = compaction_logs[0].getMessage()
+    assert "source_tokens" in log_message
+    assert "18" in log_message
+    assert "final_tokens" in log_message
+    assert "255" in log_message
+
+    assert len(captured_requests) == 2
+    summary_request = captured_requests[0]
+    assert "Transcript to compact:" in summary_request.messages[0].content
+    request = captured_requests[1]
+    assert request.system_prompt is not None
+    assert "<summary>" in request.system_prompt
+    assert len(request.messages) == 2
+    assert isinstance(request.messages[0], connect.UserMessage)
+    assert request.messages[0].content == "tail"
+    assert isinstance(request.messages[1], connect.AssistantMessage)
+    assert request.messages[1].content[0].text == "tail-2"
+
+
+def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() -> None:
+    project = StubProject()
+    node = LLMNode(
+        name="node-build-after-compaction",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-build-after-compaction",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+            state=LLMExecutionCompactionState(compaction_count=1),
+        ),
+    )
+
+    summary = state.Message(role=models.Role.SYSTEM, text="persisted summary")
+    recent_user = state.Message(role=models.Role.USER, text="recent user")
+    for message in [summary, recent_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    system_prompt, messages = executor.build_connect_messages(
+        ExecutorInput(execution=execution, run=run)
+    )
+
+    assert system_prompt is not None
+    assert "persisted summary" in system_prompt
+    assert len(messages) == 1
+    assert isinstance(messages[0], connect.UserMessage)
+    assert messages[0].content == "recent user"
+
+
+def test_compaction_transcript_serializes_tool_calls_and_results() -> None:
+    message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="I will inspect the repo",
+        thinking_content="Need to inspect llm files",
+        tool_call_requests=[
+            state.ToolCallReq(
+                id="call-1",
+                name="read_files",
+                arguments={"path": "src/vocode/runner/executors/llm/llm.py"},
+            )
+        ],
+        tool_call_responses=[
+            state.ToolCallResp(
+                id="call-1",
+                name="read_files",
+                status=state.ToolCallStatus.COMPLETED,
+                result={"error": "context overflow"},
+            )
+        ],
+    )
+
+    transcript = serialize_messages_to_transcript([message])
+
+    assert "[Assistant]" in transcript
+    assert "I will inspect the repo" in transcript
+    assert "[Assistant thinking]" in transcript
+    assert "Need to inspect llm files" in transcript
+    assert "[Assistant tool calls]" in transcript
+    assert (
+        '- read_files({"path": "src/vocode/runner/executors/llm/llm.py"})' in transcript
+    )
+    assert "[Tool results]" in transcript
+    assert '- read_files: {"error": "context overflow"}' in transcript
+
+
+def test_compaction_instruction_builder_appends_custom_instructions() -> None:
+    instructions = build_compaction_instructions(
+        "Preserve exact file paths and tool names."
+    )
+
+    assert "Return markdown with exactly these sections" in instructions
+    assert "Preserve exact file paths and tool names." in instructions
+
+
+def test_build_summary_generation_prompt_includes_previous_summary_and_transcript() -> (
+    None
+):
+    settings = CompactionSettings(prompt_instructions="Keep exact paths.")
+
+    prompt = build_summary_generation_prompt(
+        "## Goal\nEarlier summary",
+        "[User]: inspect src/app.py",
+        settings,
+    )
+
+    assert "Keep exact paths." in prompt
+    assert "Prioritize these details when present:" in prompt
+    assert "Update the existing summary instead of rewriting from scratch." in prompt
+    assert "Previous summary:" in prompt
+    assert "Earlier summary" in prompt
+    assert "Transcript to compact:" in prompt
+    assert "src/app.py" in prompt
+
+
+def test_compaction_prompt_resolvers_use_node_overrides() -> None:
+    settings = CompactionSettings(
+        prompt_system="Custom compaction system",
+        prompt_instructions="Keep exact paths.",
+    )
+
+    assert resolve_compaction_system_prompt(settings) == "Custom compaction system"
+    resolved_instructions = resolve_compaction_instructions(settings)
+    assert "Return markdown with exactly these sections" in resolved_instructions
+    assert "Keep exact paths." in resolved_instructions
+
+
+def test_select_compaction_cut_index_prefers_user_boundary() -> None:
+    execution_id = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    ).id
+    prompt_messages = [
+        (state.Message(role=models.Role.USER, text="a" * 8), None),
+        (
+            state.Message(role=models.Role.ASSISTANT, text="b" * 8),
+            state.Step(execution_id=execution_id, type=state.StepType.OUTPUT_MESSAGE),
+        ),
+        (
+            state.Message(role=models.Role.USER, text="c" * 8),
+            state.Step(execution_id=execution_id, type=state.StepType.INPUT_MESSAGE),
+        ),
+        (
+            state.Message(role=models.Role.ASSISTANT, text="d" * 8),
+            state.Step(execution_id=execution_id, type=state.StepType.OUTPUT_MESSAGE),
+        ),
+    ]
+
+    cut_index = select_compaction_cut_index(
+        prompt_messages,
+        CompactionSettings(keep_recent_ratio=0.25),
+        8,
+    )
+
+    assert cut_index == 2
+
+
+def test_select_compaction_cut_index_falls_back_to_assistant_boundary() -> None:
+    execution_id = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    ).id
+    prompt_messages = [
+        (
+            state.Message(role=models.Role.ASSISTANT, text="a" * 8),
+            state.Step(execution_id=execution_id, type=state.StepType.OUTPUT_MESSAGE),
+        ),
+        (
+            state.Message(role=models.Role.ASSISTANT, text="b" * 8),
+            state.Step(execution_id=execution_id, type=state.StepType.OUTPUT_MESSAGE),
+        ),
+    ]
+
+    cut_index = select_compaction_cut_index(
+        prompt_messages,
+        CompactionSettings(keep_recent_ratio=0.25),
+        8,
+    )
+
+    assert cut_index == 1
+
+
+def test_select_compaction_cut_index_keeps_tool_result_with_preceding_request() -> None:
+    execution_id = state.NodeExecution(
+        node="node",
+        status=state.RunStatus.RUNNING,
+    ).id
+    prompt_messages = [
+        (
+            state.Message(
+                role=models.Role.ASSISTANT,
+                text="call tool",
+                tool_call_requests=[
+                    state.ToolCallReq(
+                        id="call-1",
+                        name="read_files",
+                        arguments={"path": "a.py"},
+                    )
+                ],
+            ),
+            state.Step(execution_id=execution_id, type=state.StepType.OUTPUT_MESSAGE),
+        ),
+        (
+            state.Message(
+                role=models.Role.ASSISTANT,
+                text="",
+                tool_call_responses=[
+                    state.ToolCallResp(
+                        id="call-1",
+                        name="read_files",
+                        status=state.ToolCallStatus.COMPLETED,
+                        result={"ok": True},
+                    )
+                ],
+            ),
+            state.Step(execution_id=execution_id, type=state.StepType.OUTPUT_MESSAGE),
+        ),
+    ]
+
+    cut_index = select_compaction_cut_index(
+        prompt_messages,
+        CompactionSettings(keep_recent_ratio=0.25),
+        8,
+    )
+
+    assert cut_index == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_compaction_summary_uses_structured_sections_and_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary_requests: List[Any] = []
+    stream_requests: List[Any] = []
+    summary_response = _assistant_response(
+        "## Goal\nContinue task\n\n## Constraints & Preferences\n- Keep exact paths.\n\n## Progress\n### Done\n- Read src/vocode/runner/executors/llm/llm.py\n### In Progress\n- Compact context\n### Blocked\n- context overflow\n\n## Key Decisions\n- Use compaction\n\n## Next Steps\n- Continue from tail\n\n## Critical Context\n- Tool: read_files"
+    )
+    response = _assistant_response("after compaction")
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: SummaryThenStreamAsyncLLMClient(
+            summary_response,
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="after compaction"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            summary_requests,
+            stream_requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-structured-compaction",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 20},
+        compaction=LLMNode(
+            name="nested-unused",
+            type="llm",
+            model="gpt-3.5-turbo",
+        ).compaction.model_copy(
+            update={
+                "prompt_system": "Custom compaction system",
+                "prompt_instructions": "Keep exact tool names.",
+            }
+        ),
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-structured-compaction",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    assistant = state.Message(
+        role=models.Role.ASSISTANT,
+        text="Calling read_files on src/vocode/runner/executors/llm/llm.py",
+        tool_call_requests=[
+            state.ToolCallReq(
+                id="call-1",
+                name="read_files",
+                arguments={"path": "src/vocode/runner/executors/llm/llm.py"},
+            )
+        ],
+        tool_call_responses=[
+            state.ToolCallResp(
+                id="call-1",
+                name="read_files",
+                status=state.ToolCallStatus.COMPLETED,
+                result={"error": "context overflow"},
+            )
+        ],
+    )
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    for message in [assistant, recent_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    async for _ in executor.run(ExecutorInput(execution=execution, run=run)):
+        pass
+
+    assert len(summary_requests) == 1
+    assert "Transcript to compact:" in summary_requests[0].messages[0].content
+    assert "read_files" in summary_requests[0].messages[0].content
+
+    compaction_step = next(
+        step
+        for step in execution.iter_steps()
+        if step.type == state.StepType.CONTEXT_COMPACTION
+    )
+
+    assert compaction_step.message is not None
+    assert "## Goal" in compaction_step.message.text
+    assert "## Constraints & Preferences" in compaction_step.message.text
+    assert "## Progress" in compaction_step.message.text
+    assert "## Key Decisions" in compaction_step.message.text
+    assert "## Next Steps" in compaction_step.message.text
+    assert "## Critical Context" in compaction_step.message.text
+    assert "read_files" in compaction_step.message.text
+    assert "<compaction_prompt_system>" in compaction_step.message.text
+    assert "Custom compaction system" in compaction_step.message.text
+    assert "<compaction_prompt_instructions>" in compaction_step.message.text
+    assert "Keep exact tool names." in compaction_step.message.text
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_repeated_compaction_uses_update_mode_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary_requests: List[Any] = []
+    stream_requests: List[Any] = []
+    summary_response = _assistant_response(
+        "## Goal\nUpdated task\n\n## Constraints & Preferences\n- Keep exact paths.\n\n## Progress\n### Done\n- Preserved prior summary\n### In Progress\n- Continue task\n### Blocked\n- None\n\n## Key Decisions\n- Keep prior facts\n\n## Next Steps\n- Continue\n\n## Critical Context\n- Tool: read_files"
+    )
+    response = _assistant_response("after repeated compaction")
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: SummaryThenStreamAsyncLLMClient(
+            summary_response,
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="after repeated compaction"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            summary_requests,
+            stream_requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-repeated-compaction",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 20},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-repeated-compaction",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    prior_summary = state.Message(
+        role=models.Role.SYSTEM,
+        text=(
+            "The conversation history before this point was compacted into the following summary:\n\n"
+            "<summary>\n## Goal\nEarlier summary\n</summary>"
+        ),
+    )
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    for message in [prior_summary, old_user, recent_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=prior_summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[],
+                tokens_before=10,
+                tokens_after_estimate=5,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    async for _ in executor.run(ExecutorInput(execution=execution, run=run)):
+        pass
+
+    assert len(summary_requests) == 1
+    summary_prompt = summary_requests[0].messages[0].content
+    assert (
+        "Update the existing summary instead of rewriting from scratch."
+        in summary_prompt
+    )
+    assert "Previous summary:" in summary_prompt
+    assert "Earlier summary" in summary_prompt
 
 
 @pytest.mark.asyncio
@@ -2258,3 +3163,108 @@ async def test_llm_executor_hard_error_retry_streak_resets_after_success(
     assert final_step.message.text == "Recovered again"
     assert final_step.outcome_name == "success"
     assert final_step.is_complete is True
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_retries_once_after_context_length_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: List[Any] = []
+    overflow_error = connect.ContextLengthError(
+        connect.ErrorInfo(
+            code="context_length_exceeded",
+            message="Context window exceeded",
+            provider="openai",
+            api_family="openai-responses",
+            status_code=400,
+            retryable=False,
+        )
+    )
+    summary_response = _assistant_response(
+        "## Goal\nCompact context\n\n## Constraints & Preferences\n- Keep exact paths.\n\n## Progress\n### Done\n- Built compact summary\n### In Progress\n- Retry request\n### Blocked\n- None\n\n## Key Decisions\n- Compact on overflow\n\n## Next Steps\n- Retry\n\n## Critical Context\n- tail"
+    )
+    response = _assistant_response("Recovered after compaction")
+    actions: List[Any] = [
+        FakeStreamHandle(
+            [connect.ResponseEndEvent(response=summary_response)],
+            final_response=summary_response,
+        ),
+        overflow_error,
+        FakeStreamHandle(
+            [connect.ResponseEndEvent(response=summary_response)],
+            final_response=summary_response,
+        ),
+        FakeStreamHandle(
+            [
+                connect.TextDeltaEvent(index=0, delta="Recovered after compaction"),
+                connect.ResponseEndEvent(response=response),
+            ],
+            final_response=response,
+        ),
+    ]
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: SequenceAsyncLLMClient(actions, requests, **kwargs),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-context-overflow-retry",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 8},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-context-overflow-retry",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    history.upsert_message(run, old_user)
+    history.upsert_message(run, recent_user)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    steps: List[state.Step] = []
+    async for step in executor.run(ExecutorInput(execution=execution, run=run)):
+        steps.append(step)
+
+    assert len(requests) == 4
+    assert any(
+        step.type == state.StepType.CONTEXT_COMPACTION
+        for step in execution.iter_steps()
+    )
+    final_step = steps[-1]
+    assert final_step.type == state.StepType.OUTPUT_MESSAGE
+    assert final_step.message is not None
+    assert final_step.message.text == "Recovered after compaction"

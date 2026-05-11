@@ -4,6 +4,9 @@ import connect
 from vocode import models, state
 from vocode.history.manager import HistoryManager
 from vocode.runner.base import ExecutorInput
+from vocode.runner.executors.llm.compaction import CompactionSettings
+from vocode.runner.executors.llm.compaction import CompactionSummaryState
+from vocode.runner.executors.llm.compaction import LLMExecutionCompactionState
 from vocode.runner.executors.llm.llm import (
     LLMExecutor,
     LLMStepState,
@@ -573,3 +576,226 @@ async def test_run_streaming_reuses_same_message_id_across_intermediate_updates(
     assert len(run.messages_by_id) == 2
     message = run.get_message(steps[1].message_id)
     assert message.text == "Why do"
+
+
+def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    assert cfg.compaction == CompactionSettings()
+    assert state.StepType.CONTEXT_COMPACTION == "context_compaction"
+
+    execution_state = LLMExecutionCompactionState(compaction_count=1)
+    step_state = CompactionSummaryState(
+        compacted_step_ids=[],
+        tokens_before=1200,
+        tokens_after_estimate=400,
+        trigger_threshold_ratio=0.5,
+    )
+
+    execution = state.NodeExecution(
+        node="llm-node",
+        input_message_ids=[],
+        status=state.RunStatus.RUNNING,
+        state=execution_state,
+    )
+    step = state.Step(
+        execution_id=execution.id,
+        type=state.StepType.CONTEXT_COMPACTION,
+        state=step_state,
+    )
+
+    payload = state.WorkflowExecution(
+        workflow_name="wf",
+        node_executions={execution.id: execution},
+        steps_by_id={step.id: step},
+    ).model_dump(mode="json")
+
+    assert payload["node_executions"][str(execution.id)]["state"] == {
+        "latest_compaction_step_id": None,
+        "compaction_count": 1,
+        "last_compaction_tokens_before": None,
+    }
+    assert payload["steps_by_id"][str(step.id)]["type"] == "context_compaction"
+    assert payload["steps_by_id"][str(step.id)]["state"] == {
+        "compacted_step_ids": [],
+        "tokens_before": 1200,
+        "tokens_after_estimate": 400,
+        "trigger_threshold_ratio": 0.5,
+        "summary_version": "v1",
+    }
+
+
+def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+        system="base system",
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="old user")
+    old_assistant = state.Message(role=models.Role.ASSISTANT, text="old assistant")
+    summary = state.Message(role=models.Role.SYSTEM, text="summary checkpoint")
+    recent_user = state.Message(role=models.Role.USER, text="recent user")
+    recent_assistant = state.Message(
+        role=models.Role.ASSISTANT, text="recent assistant"
+    )
+    for msg in [old_user, old_assistant, summary, recent_user, recent_assistant]:
+        history.upsert_message(run, msg)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=old_assistant.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=recent_assistant.id,
+            is_complete=True,
+        ),
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+
+    system_prompt, messages = executor.build_connect_messages(
+        ExecutorInput(execution=execution, run=run)
+    )
+
+    assert system_prompt == "base system\n\nsummary checkpoint"
+    assert len(messages) == 2
+    assert isinstance(messages[0], connect.UserMessage)
+    assert messages[0].content == "recent user"
+    assert isinstance(messages[1], connect.AssistantMessage)
+    assert messages[1].content[0].text == "recent assistant"
+
+
+def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    first_summary = state.Message(role=models.Role.SYSTEM, text="first summary")
+    middle_user = state.Message(role=models.Role.USER, text="middle user")
+    second_summary = state.Message(role=models.Role.SYSTEM, text="second summary")
+    final_user = state.Message(role=models.Role.USER, text="final user")
+    for msg in [first_summary, middle_user, second_summary, final_user]:
+        history.upsert_message(run, msg)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=first_summary.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=middle_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=second_summary.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=final_user.id,
+            is_complete=True,
+        ),
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+
+    system_prompt, messages = executor.build_connect_messages(
+        ExecutorInput(execution=execution, run=run)
+    )
+
+    assert system_prompt == "second summary"
+    assert len(messages) == 1
+    assert isinstance(messages[0], connect.UserMessage)
+    assert messages[0].content == "final user"

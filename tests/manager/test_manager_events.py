@@ -12,6 +12,7 @@ from vocode.input_manager import InputManager
 from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
+from vocode.runner.executors.llm.compaction import CompactionSummaryState
 from vocode.runner.proto import (
     RunEventReq,
     RunEventReqKind,
@@ -90,6 +91,41 @@ class ManagerRejectOnceExecutor(BaseExecutor):
                 execution_id=inp.execution.id,
                 type=state.StepType.OUTPUT_MESSAGE,
                 message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
+@ExecutorFactory.register("manager-compaction")
+class ManagerCompactionExecutor(BaseExecutor):
+    type = "manager-compaction"
+
+    def __init__(self, config: models.Node, project) -> None:
+        super().__init__(config, project)
+
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        summary_message = state.Message(
+            role=models.Role.SYSTEM,
+            text=(
+                "The conversation history before this point was compacted into the following summary:\n\n"
+                "<summary>\n## Goal\nContinue\n</summary>"
+            ),
+        )
+        history.upsert_message(inp.run, summary_message)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                execution_id=inp.execution.id,
+                type=state.StepType.CONTEXT_COMPACTION,
+                message_id=summary_message.id,
+                state=CompactionSummaryState(
+                    compacted_step_ids=[],
+                    tokens_before=120,
+                    tokens_after_estimate=45,
+                    trigger_threshold_ratio=0.5,
+                ),
                 is_complete=True,
             ),
         )
@@ -248,6 +284,52 @@ async def test_manager_status_events_are_stored_and_not_forwarded() -> None:
     assert frame.last_stats is not None
     assert frame.last_stats.status == state.RunnerStatus.FINISHED
     assert frame.last_stats.current_node_name == "node-status"
+
+
+@pytest.mark.asyncio
+async def test_manager_forwards_context_compaction_steps_as_normal_step_events() -> None:
+    node = models.Node(
+        name="node-compaction",
+        type="manager-compaction",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-manager-compaction", graph=graph)
+
+    project = FakeProject()
+    runner = Runner(
+        workflow=workflow,
+        project=project,  # type: ignore[arg-type]
+        initial_message=state.Message(role=models.Role.USER, text="hello"),
+    )
+
+    seen_steps: list[state.Step] = []
+
+    async def run_event_listener(frame: RunnerFrame, event) -> RunEventResp | None:
+        if event.kind == RunEventReqKind.STATUS:
+            return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
+        assert event.step is not None
+        seen_steps.append(event.step)
+        return RunEventResp(resp_type=RunEventResponseType.NOOP, message=None)
+
+    manager = BaseManager(project=project, run_event_listener=run_event_listener)  # type: ignore[arg-type]
+    frame = RunnerFrame(
+        workflow_name="wf-manager-compaction",
+        runner=runner,
+        initial_message=state.Message(role=models.Role.USER, text="hello"),
+        agen=runner.run(),
+    )
+    manager._runner_stack.append(frame)
+
+    await manager._run_runner_task()
+
+    compaction_steps = [
+        step for step in seen_steps if step.type == state.StepType.CONTEXT_COMPACTION
+    ]
+    assert len(compaction_steps) == 1
+    assert compaction_steps[0].message is not None
+    assert "compacted into the following summary" in compaction_steps[0].message.text
 
 
 @pytest.mark.asyncio

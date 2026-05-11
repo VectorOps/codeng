@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
+from pathlib import Path
 import typing
 from rich import console as rich_console
 from rich import control as rich_control
@@ -35,6 +36,7 @@ from vocode.tui import command_manager as tui_command_manager
 from vocode.tui.lib.input import base as input_base
 from vocode.tui.lib.input import handler as input_handler_mod
 from vocode.tui.screens import keybindings_view as keybindings_view_screen
+from vocode.runner.executors.llm.compaction import CompactionSummaryState
 
 
 AUTOCOMPLETE_DEBOUNCE_MS: typing.Final[int] = 100
@@ -87,6 +89,7 @@ class TUIState:
         on_stop: typing.Callable[[], typing.Awaitable[None]] | None = None,
         on_eof: typing.Callable[[], typing.Awaitable[None]] | None = None,
         tui_options: vocode_settings.TUIOptions | None = None,
+        history_path: Path | None = None,
         persist_history: bool = False,
     ) -> None:
         self._on_input = on_input
@@ -138,6 +141,7 @@ class TUIState:
             history_limit = tui_options.history_limit
         self._history_manager = tui_history.HistoryManager(
             max_entries=history_limit,
+            history_path=history_path,
             persist_history=persist_history,
         )
         self._input_keymap = self._create_input_keymap()
@@ -151,6 +155,7 @@ class TUIState:
         ] = {
             vocode_state.StepType.OUTPUT_MESSAGE: self._handle_output_message_step,
             vocode_state.StepType.INPUT_MESSAGE: self._handle_input_message_step,
+            vocode_state.StepType.CONTEXT_COMPACTION: self._handle_context_compaction_step,
             vocode_state.StepType.REJECTION: self._handle_rejection_step,
             vocode_state.StepType.PROMPT: self._handle_prompt_step,
             vocode_state.StepType.PROMPT_CONFIRM: self._handle_prompt_step,
@@ -1097,6 +1102,24 @@ class TUIState:
             if raw:
                 text = raw
         step_id = str(step.id)
+        self._upsert_markdown_component(
+            step,
+            text,
+            component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
+        )
+
+    def _handle_context_compaction_step(self, step: vocode_state.Step) -> None:
+        if step.state is None:
+            text = "Context compacted."
+        else:
+            compaction_state = CompactionSummaryState.model_validate(
+                step.state.model_dump(mode="python")
+            )
+            summarized_count = len(compaction_state.compacted_step_ids)
+            token_text = str(compaction_state.tokens_before)
+            if compaction_state.tokens_after_estimate is not None:
+                token_text += f" -> {compaction_state.tokens_after_estimate}"
+            text = f"Context compacted: {summarized_count} steps, ~{token_text} tokens"
         self._upsert_markdown_component(
             step,
             text,

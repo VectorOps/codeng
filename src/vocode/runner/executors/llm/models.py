@@ -6,6 +6,7 @@ from pydantic import Field
 from vocode import models
 from vocode import settings
 from vocode import vars as vars_mod
+from .compaction.models import CompactionSettings
 
 
 class LLMNodeMCPSettings(vars_mod.BaseVarModel):
@@ -20,6 +21,7 @@ class LLMNode(models.Node):
     type: str = "llm"
 
     model: str
+    compaction: CompactionSettings = Field(default_factory=CompactionSettings)
     system: Optional[str] = None
     system_append: Optional[str] = Field(
         default=None,

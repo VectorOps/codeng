@@ -9,6 +9,11 @@ from pydantic import BaseModel, Field
 from vocode import state, models
 from vocode.logger import logger
 from . import helpers as llm_helpers
+from .compaction import collect_prompt_messages
+from .compaction import CompactionPreparationResult
+from .compaction import estimate_context_tokens
+from .compaction import maybe_compact_execution_history
+from .compaction import should_trigger_compaction
 from .preprocessors import base as pre_base
 from ... import base as runner_base
 
@@ -16,6 +21,7 @@ from ... import base as runner_base
 INCLUDED_STEP_TYPES: Final = (
     state.StepType.OUTPUT_MESSAGE,
     state.StepType.INPUT_MESSAGE,
+    state.StepType.CONTEXT_COMPACTION,
 )
 
 
@@ -180,8 +186,28 @@ class LLMExecutor(runner_base.BaseExecutor):
         self,
         inp: runner_base.ExecutorInput,
     ) -> List[tuple[state.Message, Optional[state.Step]]]:
-        execution = inp.execution
-        return list(runner_base.iter_execution_messages(execution))
+        return collect_prompt_messages(inp.execution)
+
+    def _prepare_compaction(
+        self,
+        inp: runner_base.ExecutorInput,
+    ) -> CompactionPreparationResult:
+        prompt_messages = self._iter_prompt_messages(inp)
+        input_token_limit = llm_helpers.resolve_model_token_limit(self.config)
+        estimated_context_tokens = estimate_context_tokens(prompt_messages)
+        return CompactionPreparationResult(
+            prompt_messages_count=len(prompt_messages),
+            estimated_context_tokens=estimated_context_tokens,
+            input_token_limit=input_token_limit,
+            should_compact=should_trigger_compaction(
+                self.config.compaction,
+                input_token_limit,
+                estimated_context_tokens,
+            ),
+            settings=self.config.compaction,
+            current_model=self.config.model,
+            provider_options=dict(self.config.extra or {}),
+        )
 
     def build_connect_messages(
         self,
@@ -217,15 +243,19 @@ class LLMExecutor(runner_base.BaseExecutor):
             processed_messages = collected_messages
 
         connect_messages: List[connect.Message] = []
-        final_system_prompt: Optional[str] = None
+        system_prompt_parts: List[str] = []
 
         for msg in processed_messages:
             if msg.role == models.Role.SYSTEM:
-                if final_system_prompt is None:
-                    final_system_prompt = msg.text
+                if msg.text:
+                    system_prompt_parts.append(msg.text)
                 continue
             step = message_steps.get(str(msg.id))
             connect_messages.extend(self._build_connect_messages_for_message(msg, step))
+
+        final_system_prompt: Optional[str] = None
+        if system_prompt_parts:
+            final_system_prompt = "\n\n".join(system_prompt_parts)
 
         if not connect_messages:
             for msg in inp.execution.input_messages:
@@ -484,13 +514,42 @@ class LLMExecutor(runner_base.BaseExecutor):
                 parts.append(f"raw={raw_text}")
         return "\n".join(parts)
 
+    async def _handle_context_overflow_retry(
+        self,
+        inp: runner_base.ExecutorInput,
+        overflow_compaction_attempted: bool,
+    ) -> tuple[bool, Optional[tuple[Optional[str], List[connect.Message]]]]:
+        if overflow_compaction_attempted or not self.config.compaction.enabled:
+            return False, None
+        forced_compaction = self._prepare_compaction(inp).model_copy(
+            update={"should_compact": True}
+        )
+        compaction_step = await maybe_compact_execution_history(
+            self.project.history,
+            self.project.credentials,
+            inp.execution,
+            forced_compaction,
+        )
+        if compaction_step is None:
+            return False, None
+        return True, self.build_connect_messages(inp)
+
     def _build_preview_usage(
         self,
         inp: runner_base.ExecutorInput,
     ) -> state.LLMUsageStats:
         prior_usage = inp.run.last_step_llm_usage
+        prompt_messages = self._iter_prompt_messages(inp)
+        estimated_prompt_tokens = (
+            prior_usage.prompt_tokens if prior_usage is not None else 0
+        )
+        if any(
+            step is not None and step.llm_usage is not None
+            for _, step in prompt_messages
+        ):
+            estimated_prompt_tokens = estimate_context_tokens(prompt_messages)
         return state.LLMUsageStats(
-            prompt_tokens=(prior_usage.prompt_tokens if prior_usage is not None else 0),
+            prompt_tokens=estimated_prompt_tokens,
             completion_tokens=(
                 prior_usage.completion_tokens if prior_usage is not None else 0
             ),
@@ -540,6 +599,22 @@ class LLMExecutor(runner_base.BaseExecutor):
                 is_complete=True,
             )
             return
+
+        compaction_prep = self._prepare_compaction(inp)
+        logger.debug(
+            "LLM compaction preparation",
+            prompt_messages_count=compaction_prep.prompt_messages_count,
+            estimated_context_tokens=compaction_prep.estimated_context_tokens,
+            input_token_limit=compaction_prep.input_token_limit,
+            should_compact=compaction_prep.should_compact,
+        )
+        if compaction_prep.should_compact:
+            await maybe_compact_execution_history(
+                self.project.history,
+                self.project.credentials,
+                inp.execution,
+                compaction_prep,
+            )
 
         system_prompt, connect_messages = self.build_connect_messages(inp)
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
@@ -596,6 +671,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         )
 
         hard_error_attempt = 0
+        overflow_compaction_attempted = False
         while True:
             attempt = 0
             assistant_partial = ""
@@ -719,6 +795,39 @@ class LLMExecutor(runner_base.BaseExecutor):
                             )
 
                     break
+                except connect.ContextLengthError as e:
+                    retried, rebuilt_prompt = await self._handle_context_overflow_retry(
+                        inp,
+                        overflow_compaction_attempted,
+                    )
+                    if rebuilt_prompt is not None:
+                        overflow_compaction_attempted = retried
+                        system_prompt, connect_messages = rebuilt_prompt
+                        logger.warning(
+                            "LLM overflow retry after compaction",
+                            status_code=e.error.status_code,
+                            code=e.error.code,
+                        )
+                        continue
+
+                    rejection_text = self._format_connect_error_message(e)
+                    logger.error(
+                        "LLM context length error",
+                        status_code=e.error.status_code,
+                        code=e.error.code,
+                        provider=e.error.provider,
+                        api_family=e.error.api_family,
+                        err=e,
+                    )
+                    error_step = self._build_step_from_message(
+                        step,
+                        role=models.Role.SYSTEM,
+                        step_type=state.StepType.REJECTION,
+                        text=rejection_text,
+                        is_complete=True,
+                    )
+                    yield error_step
+                    return
                 except asyncio.TimeoutError as e:
                     logger.error("LLM timeout", err=e)
                     if attempt < cfg.max_retries:
