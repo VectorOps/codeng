@@ -93,3 +93,31 @@ workflows:
           - name: done
     edges:
       - llm.done -> llm
+  # Test compact
+  compact-chat:
+    description: "Chat workflow for exercising context compaction aggressively during repository Q&A."
+    nodes:
+      - name: prompt
+        type: input
+        message: Enter your request
+        confirmation: auto
+        hide_final_output: true
+        outcomes:
+          - name: done
+      - name: llm
+        type: llm
+        model: ${LLM_ARCHITECT_MODEL}
+        reset_policy: keep
+        compaction:
+          enabled: true
+          trigger_threshold_ratio: 0.01
+          keep_recent_ratio: 0.35
+        tools:
+          - summarize_files
+          - read_files
+          - list_files
+        outcomes:
+          - name: done
+    edges:
+      - prompt.done -> llm
+      - llm.done -> prompt
