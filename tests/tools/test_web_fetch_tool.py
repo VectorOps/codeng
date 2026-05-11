@@ -96,6 +96,22 @@ async def test_web_fetch_tool_uses_registered_tool_class() -> None:
     assert tool_cls is WebFetchTool
 
 
+@pytest.mark.asyncio
+async def test_web_fetch_tool_openapi_spec_documents_header_support() -> None:
+    project = StubProject()
+    tool = WebFetchTool(project)
+
+    spec = await tool.openapi_spec(ToolSpec(name="web_fetch"))
+
+    assert spec["name"] == "web_fetch"
+    assert "headers" in spec["parameters"]["properties"]
+    assert spec["parameters"]["properties"]["headers"] == {
+        "type": "object",
+        "description": "Optional HTTP request headers as a string-to-string map.",
+        "additionalProperties": {"type": "string"},
+    }
+
+
 def test_web_fetch_tool_policy_defaults_to_empty() -> None:
     project = StubProject()
     policy = _build_tool_policy(project)

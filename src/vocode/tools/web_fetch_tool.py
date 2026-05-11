@@ -147,7 +147,9 @@ class WebFetchTool(tools_base.BaseTool):
                     },
                     "headers": {
                         "type": "object",
-                        "description": "Optional request headers.",
+                        "description": (
+                            "Optional HTTP request headers as a string-to-string map."
+                        ),
                         "additionalProperties": {"type": "string"},
                     },
                     "timeout_s": {
