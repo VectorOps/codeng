@@ -985,8 +985,8 @@ class Runner:
 
                         exec_results = await self._tool_orchestrator.execute_plan(
                             approved,
-                            lambda approved_reqs: self._execute_approved_tool_calls(
-                                approved_reqs,
+                            lambda approved_req: self._execute_tool_call(
+                                approved_req,
                                 current_execution,
                             ),
                         )

@@ -629,6 +629,22 @@ class ParallelTrackingTool:
         return None
 
 
+class SequentialTrackingTool:
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+        self.calls: list[str] = []
+
+    async def run(self, req: tools_base.ToolReq, args: dict) -> None:
+        _ = req
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        self.calls.append(str(args.get("x")))
+        await asyncio.sleep(0.02)
+        self.active -= 1
+        return None
+
+
 class GateTool:
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -2442,6 +2458,62 @@ async def test_runner_executes_autoapproved_tool_calls_in_parallel() -> None:
     assert runner.status == state.RunnerStatus.FINISHED
     assert sorted(tracking_tool.calls) == ["1", "2"]
     assert tracking_tool.max_active >= 2
+
+
+@pytest.mark.asyncio
+async def test_runner_executes_non_parallel_tool_calls_sequentially() -> None:
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            tools=[
+                vocode_settings.ToolSpec(
+                    name="test-tool-a",
+                    enabled=True,
+                    auto_approve=True,
+                    config={"parallel": False},
+                ),
+                vocode_settings.ToolSpec(
+                    name="test-tool-b",
+                    enabled=True,
+                    auto_approve=True,
+                    config={"parallel": False},
+                ),
+            ]
+        )
+    )
+    tracking_tool = SequentialTrackingTool()
+    project.tools["test-tool-a"] = tracking_tool
+    project.tools["test-tool-b"] = tracking_tool
+
+    node = models.Node(
+        name="tool-node",
+        type="multi-tool-prompt",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-tool-sequential", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=False,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert tracking_tool.calls == ["1", "2"]
+    assert tracking_tool.max_active == 1
 
 
 @pytest.mark.asyncio

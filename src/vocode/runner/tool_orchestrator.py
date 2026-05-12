@@ -1,6 +1,7 @@
 import typing
 from enum import Enum
 from collections.abc import Awaitable, Callable
+import asyncio
 
 from pydantic import BaseModel, Field
 
@@ -144,8 +145,8 @@ class ToolCallOrchestrator:
     async def execute_plan(
         self,
         items: list[ToolCallPlanItem],
-        execute_approved_tool_calls: Callable[
-            [list[state.ToolCallReq]], Awaitable[list[runner_proto.ToolExecResult]]
+        execute_tool_call: Callable[
+            [state.ToolCallReq], Awaitable[runner_proto.ToolExecResult]
         ],
     ) -> list[runner_proto.ToolExecResult]:
         if not items:
@@ -157,19 +158,42 @@ class ToolCallOrchestrator:
             if current_mode is None:
                 current_mode = item.execution_mode
             if item.execution_mode != current_mode:
-                batch = await execute_approved_tool_calls(
-                    [group_item.request for group_item in group]
+                batch = await self._execute_group(
+                    group,
+                    current_mode,
+                    execute_tool_call,
                 )
                 results.extend(batch)
                 group = []
                 current_mode = item.execution_mode
             group.append(item)
         if group:
-            batch = await execute_approved_tool_calls(
-                [group_item.request for group_item in group]
+            batch = await self._execute_group(
+                group,
+                current_mode,
+                execute_tool_call,
             )
             results.extend(batch)
         return results
+
+    async def _execute_group(
+        self,
+        items: list[ToolCallPlanItem],
+        mode: typing.Optional[ToolCallExecutionMode],
+        execute_tool_call: Callable[
+            [state.ToolCallReq], Awaitable[runner_proto.ToolExecResult]
+        ],
+    ) -> list[runner_proto.ToolExecResult]:
+        if not items:
+            return []
+        if mode == ToolCallExecutionMode.SEQUENTIAL:
+            results: list[runner_proto.ToolExecResult] = []
+            for item in items:
+                results.append(await execute_tool_call(item.request))
+            return results
+        return list(
+            await asyncio.gather(*(execute_tool_call(item.request) for item in items))
+        )
 
     def mark_complete(self, items: list[ToolCallPlanItem]) -> list[state.Step]:
         steps: list[state.Step] = []
