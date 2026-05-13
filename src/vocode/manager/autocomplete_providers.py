@@ -2,6 +2,8 @@ from __future__ import annotations
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from vocode.logger import logger
@@ -16,6 +18,18 @@ if TYPE_CHECKING:
 
 MIN_FILE_AUTOCOMPLETE_LEN = 2
 MAX_VAR_AUTOCOMPLETE_ITEMS = 10
+FILESYSTEM_AUTOCOMPLETE_LIMIT = 5
+FILESYSTEM_AUTOCOMPLETE_SKIP_DIRS = {
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".svn",
+    "__pycache__",
+    "node_modules",
+    "venv",
+}
 
 
 def _clamp_cursor(text: str, cursor: int) -> int:
@@ -41,6 +55,116 @@ def _filter_noop(text: str, items: list[AutocompleteItem]) -> list[AutocompleteI
     return list(items)
 
 
+def _score_filesystem_candidate(candidate: str, needle: str) -> Optional[int]:
+    candidate_key = candidate.casefold()
+    needle_key = needle.casefold()
+    if candidate_key.startswith(needle_key):
+        return 0
+
+    candidate_name = candidate.rstrip("/").rsplit("/", 1)[-1].casefold()
+    needle_name = needle_key.rsplit("/", 1)[-1]
+    if needle_name and candidate_name.startswith(needle_name):
+        return 1
+    if needle_key in candidate_key:
+        return 2
+    if needle_name and needle_name in candidate_name:
+        return 3
+    return None
+
+
+def _filesystem_autocomplete_items(
+    base_path: Path,
+    needle: str,
+    start: int,
+    word: str,
+) -> list[AutocompleteItem]:
+    normalized_needle = needle.replace("\\", "/").lstrip("./")
+    if not normalized_needle:
+        return []
+
+    matches: list[tuple[int, str]] = []
+    for root, dirnames, filenames in os.walk(base_path):
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if dirname not in FILESYSTEM_AUTOCOMPLETE_SKIP_DIRS
+        ]
+        root_path = Path(root)
+
+        for dirname in dirnames:
+            rel_dir = (root_path / dirname).relative_to(base_path).as_posix() + "/"
+            score = _score_filesystem_candidate(rel_dir, normalized_needle)
+            if score is not None:
+                matches.append((score, rel_dir))
+
+        for filename in filenames:
+            rel_file = (root_path / filename).relative_to(base_path).as_posix()
+            score = _score_filesystem_candidate(rel_file, normalized_needle)
+            if score is not None:
+                matches.append((score, rel_file))
+
+    matches.sort(key=lambda item: (item[0], item[1]))
+    deduped_paths: list[str] = []
+    seen_paths: set[str] = set()
+    for _, rel_path in matches:
+        if rel_path in seen_paths:
+            continue
+        seen_paths.add(rel_path)
+        deduped_paths.append(rel_path)
+        if len(deduped_paths) >= FILESYSTEM_AUTOCOMPLETE_LIMIT:
+            break
+
+    return [
+        AutocompleteItem(
+            title=rel_path,
+            replace_start=start,
+            replace_text=word,
+            insert_text=rel_path,
+        )
+        for rel_path in deduped_paths
+    ]
+
+
+async def _know_autocomplete_items(
+    server: "UIServer",
+    needle: str,
+    start: int,
+    word: str,
+) -> list[AutocompleteItem] | None:
+    project = server.manager.project
+    try:
+        kp = project.know
+    except AttributeError:
+        return None
+    if kp is None:
+        return None
+
+    try:
+        repo_ids: Optional[list[str]] = kp.pm.repo_ids
+        files = await kp.data.file.filename_complete(
+            needle=needle,
+            repo_ids=repo_ids,
+            limit=FILESYSTEM_AUTOCOMPLETE_LIMIT,
+        )
+    except Exception as exc:
+        logger.debug(
+            "file autocomplete falling back to filesystem",
+            error=str(exc),
+        )
+        return None
+
+    return [
+        AutocompleteItem(
+            title=f.path,
+            replace_start=start,
+            replace_text=word,
+            insert_text=f.path,
+        )
+        for f in files
+        if f.path
+    ]
+
+
 @AutocompleteManager.register_default
 async def file_autocomplete_provider(
     server: "UIServer",
@@ -64,24 +188,14 @@ async def file_autocomplete_provider(
 
     try:
         project = server.manager.project
-        kp = project.know
-        repo_ids: Optional[list[str]] = kp.pm.repo_ids
-        limit = 5
-        files = await kp.data.file.filename_complete(
-            needle=needle,
-            repo_ids=repo_ids,
-            limit=limit,
-        )
-        items = [
-            AutocompleteItem(
-                title=f.path,
-                replace_start=start,
-                replace_text=word,
-                insert_text=f.path,
+        items = await _know_autocomplete_items(server, needle, start, word)
+        if items is None:
+            items = _filesystem_autocomplete_items(
+                project.base_path,
+                needle,
+                start,
+                word,
             )
-            for f in files
-            if f.path
-        ]
         return _filter_noop(text, items) or None
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.exception("file_autocomplete_provider error", exc=exc)

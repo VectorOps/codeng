@@ -284,6 +284,33 @@ async def test_uiserver_handles_autocomplete_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_uiserver_handles_file_autocomplete_request_without_know(
+    tmp_path,
+) -> None:
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "main.py").write_text("print('hi')\n", encoding="utf-8")
+
+    project = StubProject(base_path=tmp_path)
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    req = manager_proto.AutocompleteReqPacket(text="@ma", row=0, col=3)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=req)
+    await client_endpoint.send(envelope)
+
+    server_incoming = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_incoming)
+    assert handled is True
+
+    resp_envelope = await client_endpoint.recv()
+    resp_payload = resp_envelope.payload
+    assert resp_payload.kind == manager_proto.BasePacketKind.AUTOCOMPLETE_RESP
+    assert isinstance(resp_payload, manager_proto.AutocompleteRespPacket)
+    assert [item.title for item in resp_payload.items] == ["src/main.py"]
+
+
+@pytest.mark.asyncio
 async def test_run_autocomplete_provider_uses_workflow_name_values() -> None:
     project = StubProject()
     workflow_name = "wf-auto"

@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 from typing import ClassVar, Optional
 import dataclasses
 
+from vocode.logger import logger
+
 if TYPE_CHECKING:
     from .server import UIServer
 
@@ -19,6 +21,8 @@ class AutocompleteItem:
 AutocompleteProvider = Callable[
     ["UIServer", str, int, int], Awaitable[Optional[list[AutocompleteItem]]]
 ]
+
+
 def filter_autocomplete_items_for_text(
     items: list[AutocompleteItem],
     text: str,
@@ -51,7 +55,15 @@ class AutocompleteManager:
     ) -> list[AutocompleteItem]:
         results: list[AutocompleteItem] = []
         for provider in self._providers:
-            items = await provider(server, text, row, col)
+            try:
+                items = await provider(server, text, row, col)
+            except Exception as exc:
+                logger.exception(
+                    "autocomplete provider failed",
+                    provider=repr(provider),
+                    exc=exc,
+                )
+                continue
             if items is None:
                 continue
             filtered = filter_autocomplete_items_for_text(items, text)
