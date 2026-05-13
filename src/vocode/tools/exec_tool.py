@@ -19,6 +19,55 @@ if TYPE_CHECKING:
 EXEC_TOOL_TIMEOUT_S: float = 60.0
 
 
+class _OutputAccumulator:
+    def __init__(self, max_chars: int) -> None:
+        self._max_chars = max_chars
+        self._truncated = False
+        self._full_parts: List[str] = []
+        self._full_len = 0
+        self._head = ""
+        self._tail = ""
+        self._separator = "\n...\n"
+        if max_chars > len(self._separator):
+            keep = max_chars - len(self._separator)
+            self._head_limit = keep // 2
+            self._tail_limit = keep - self._head_limit
+        else:
+            self._head_limit = max_chars
+            self._tail_limit = 0
+
+    def add(self, chunk: str) -> None:
+        if not chunk:
+            return
+        if self._max_chars <= 0:
+            self._truncated = True
+            return
+        if not self._truncated:
+            if self._full_len + len(chunk) <= self._max_chars:
+                self._full_parts.append(chunk)
+                self._full_len += len(chunk)
+                return
+            self._truncated = True
+            full = "".join(self._full_parts)
+            combined = full + chunk
+            self._head = combined[: self._head_limit]
+            remainder = combined[self._head_limit :]
+            if self._tail_limit > 0:
+                self._tail = remainder[-self._tail_limit :]
+            self._full_parts = []
+            self._full_len = 0
+            return
+        if self._tail_limit > 0:
+            self._tail = (self._tail + chunk)[-self._tail_limit :]
+
+    def render(self) -> str:
+        if not self._truncated:
+            return "".join(self._full_parts)
+        if self._tail_limit <= 0:
+            return self._head[: self._max_chars]
+        return self._head + self._separator + self._tail
+
+
 def _get_max_output_chars(project: "Project", spec: ToolSpec) -> int:
     """Determine max output size for this exec tool invocation.
 
@@ -106,16 +155,16 @@ class ExecTool(tools_base.BaseTool):
 
         handle = await shell_manager.run(command, timeout=timeout_s)
 
-        stdout_parts: List[str] = []
-        stderr_parts: List[str] = []
+        max_output_chars = _get_max_output_chars(self.prj, spec)
+        output = _OutputAccumulator(max_output_chars)
 
         async def _read_stdout():
             async for chunk in handle.iter_stdout():
-                stdout_parts.append(chunk)
+                output.add(chunk)
 
         async def _read_stderr():
             async for chunk in handle.iter_stderr():
-                stderr_parts.append(chunk)
+                output.add(chunk)
 
         readers = [
             asyncio.create_task(_read_stdout()),
@@ -146,12 +195,8 @@ class ExecTool(tools_base.BaseTool):
             if pending_readers:
                 await asyncio.gather(*pending_readers, return_exceptions=True)
 
-        output = "".join(stdout_parts) + "".join(stderr_parts)
-        max_output_chars = _get_max_output_chars(self.prj, spec)
-        if len(output) > max_output_chars:
-            output = output[:max_output_chars]
         payload = {
-            "output": output,
+            "output": output.render(),
             "exit_code": rc,
             "timed_out": timed_out,
         }

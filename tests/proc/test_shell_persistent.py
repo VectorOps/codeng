@@ -17,12 +17,16 @@ class _DummyHandle:
         stdout_lines: list[str],
         stderr_lines: Optional[list[str]] = None,
         hang_after_first_stderr: bool = False,
+        stdout_error: Optional[Exception] = None,
+        stderr_error: Optional[Exception] = None,
     ) -> None:
         self.id = "dummy"
         self.name: Optional[str] = "dummy"
         self._stdout_lines = list(stdout_lines)
         self._stderr_lines = list(stderr_lines or [])
         self._hang_after_first_stderr = hang_after_first_stderr
+        self._stdout_error = stdout_error
+        self._stderr_error = stderr_error
         self._alive = True
         self._returncode: Optional[int] = None
 
@@ -46,11 +50,15 @@ class _DummyHandle:
     async def iter_stdout(self) -> AsyncIterator[str]:
         for line in self._stdout_lines:
             yield line
+        if self._stdout_error is not None:
+            raise self._stdout_error
 
     async def iter_stderr(self) -> AsyncIterator[str]:
         if not self._hang_after_first_stderr:
             for line in self._stderr_lines:
                 yield line
+            if self._stderr_error is not None:
+                raise self._stderr_error
             return
         # Emit a single line, then hang indefinitely unless cancelled.
         if self._stderr_lines:
@@ -81,6 +89,10 @@ class _DummyProcessor:
     @property
     def handle(self) -> _DummyHandle:
         return self._handle
+
+    def invalidate_handle(self, handle: _DummyHandle) -> None:
+        if self._handle is handle:
+            self._handle = None
 
     def on_command_finished(self, cmd: PersistentShellCommand) -> None:
         self.finished.append(cmd)
@@ -179,3 +191,22 @@ async def test_last_empty_line_before_marker_is_suppressed() -> None:
         collected.append(line)
 
     assert collected == ["out1\n"]
+
+
+@pytest.mark.asyncio
+async def test_stdout_pump_failure_is_captured_without_task_exception() -> None:
+    handle = _DummyHandle(stdout_lines=[], stdout_error=RuntimeError("boom"))
+    processor = _DummyProcessor(handle=handle)
+    cmd = PersistentShellCommand(
+        processor=processor,
+        marker="VOCODE_TEST_MARK_FAIL",
+        name="test",
+    )
+
+    rc = await cmd.wait()
+
+    assert rc == 1
+    assert processor.finished == [cmd]
+    assert cmd._stdout_task is not None
+    assert cmd._stdout_task.done()
+    assert cmd._stdout_task.exception() is None

@@ -14,6 +14,11 @@ from .base import ProcessHandle
 from .shell_base import ShellCommandHandle, ShellProcessor
 
 
+def _consume_task_result(task: asyncio.Task[None]) -> None:
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        task.result()
+
+
 class PersistentShellCommand(ShellCommandHandle):
     """
     Represents a single command executed inside the long-lived shell.
@@ -74,12 +79,23 @@ class PersistentShellCommand(ShellCommandHandle):
         await handle.close_stdin()
 
     def _stop_stderr_streaming(self) -> None:
-        """Cancel stderr pump (if running) and signal end-of-stream."""
         stderr_task = self._stderr_task
         if stderr_task is not None and not stderr_task.done():
             stderr_task.cancel()
         with contextlib.suppress(asyncio.QueueFull):
             self._stderr_queue.put_nowait(None)
+
+    def _finish(self, returncode: int) -> None:
+        if self._done.is_set():
+            return
+        self._returncode = returncode
+        self._done.set()
+        self._processor.on_command_finished(self)
+
+    def _fail(self, handle: Optional[ProcessHandle]) -> None:
+        self._processor.invalidate_handle(handle)
+        self._finish(self._returncode if self._returncode is not None else 1)
+        self._stop_stderr_streaming()
 
     async def _ensure_stdout_pump(self) -> None:
         # Start a single background task that consumes the persistent shell's
@@ -104,6 +120,7 @@ class PersistentShellCommand(ShellCommandHandle):
 
             async def _pump() -> None:
                 pending: Optional[str] = None
+                failed = False
 
                 async def _flush_pending() -> None:
                     nonlocal pending
@@ -132,34 +149,35 @@ class PersistentShellCommand(ShellCommandHandle):
                                     self._returncode = int(suffix[1:])
                             if self._returncode is None:
                                 self._returncode = 0
-                            self._done.set()
-                            self._processor.on_command_finished(self)
+                            self._finish(self._returncode)
                             self._stop_stderr_streaming()
                             break
 
                         if pending is not None:
                             await _flush_pending()
                         pending = line
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    failed = True
+                    self._fail(handle)
                 finally:
                     with contextlib.suppress(Exception):
                         await stdout_iter.aclose()
-                    if pending is not None:
+                    if pending is not None and not failed:
                         if not self._stdout_consumed:
                             self._stdout_buffer.append(pending)
                         else:
                             await self._stdout_queue.put(pending)
                     if not self._done.is_set():
-                        # Shell exited without emitting the marker; treat as unknown non-zero.
-                        self._returncode = (
+                        self._finish(
                             self._returncode if self._returncode is not None else 1
                         )
-                        self._done.set()
-                        self._processor.on_command_finished(self)
                         self._stop_stderr_streaming()
-                    # Always signal end-of-stream to any stdout consumer.
                     await self._stdout_queue.put(None)
 
             self._stdout_task = asyncio.create_task(_pump())
+            self._stdout_task.add_done_callback(_consume_task_result)
 
     async def _ensure_stderr_pump(self) -> None:
         # Start a single background task that consumes the persistent shell's
@@ -177,15 +195,26 @@ class PersistentShellCommand(ShellCommandHandle):
             stderr_iter = handle.iter_stderr()
 
             async def _pump_err() -> None:
+                failed = False
                 try:
                     async for line in stderr_iter:
                         await self._stderr_queue.put(line)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    failed = True
+                    self._fail(handle)
                 finally:
                     with contextlib.suppress(Exception):
                         await stderr_iter.aclose()
+                    if failed and not self._done.is_set():
+                        self._finish(
+                            self._returncode if self._returncode is not None else 1
+                        )
                     await self._stderr_queue.put(None)
 
             self._stderr_task = asyncio.create_task(_pump_err())
+            self._stderr_task.add_done_callback(_consume_task_result)
 
     async def iter_stdout(self) -> AsyncIterator[str]:
         # Expose a single consumer view over the background pump. If nobody
@@ -235,20 +264,14 @@ class PersistentShellCommand(ShellCommandHandle):
         if handle is None:
             return
         await handle.terminate(grace_s=grace_s)
-        if not self._done.is_set():
-            self._returncode = self._returncode if self._returncode is not None else 1
-            self._done.set()
-            self._processor.on_command_finished(self)
+        self._finish(self._returncode if self._returncode is not None else 1)
 
     async def kill(self) -> None:
         handle = self._processor.handle
         if handle is None:
             return
         await handle.kill()
-        if not self._done.is_set():
-            self._returncode = self._returncode if self._returncode is not None else 1
-            self._done.set()
-            self._processor.on_command_finished(self)
+        self._finish(self._returncode if self._returncode is not None else 1)
 
     async def wait(self) -> int:
         # Ensure stdout is being consumed so that the marker is detected even
@@ -282,6 +305,7 @@ class PersistentShellProcessor(ShellProcessor):
         self._handle: Optional[ProcessHandle] = None
         self._active_cmd: Optional[PersistentShellCommand] = None
         self._lock = asyncio.Lock()
+        self._cleanup_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def handle(self) -> Optional[ProcessHandle]:
@@ -308,6 +332,10 @@ class PersistentShellProcessor(ShellProcessor):
         finally:
             with contextlib.suppress(Exception):
                 await handle.wait()
+            if self._cleanup_tasks:
+                cleanup_tasks = list(self._cleanup_tasks)
+                self._cleanup_tasks.clear()
+                await asyncio.gather(*cleanup_tasks, return_exceptions=True)
 
     async def run(self, command: str) -> ShellCommandHandle:
         async with self._lock:
@@ -367,3 +395,29 @@ class PersistentShellProcessor(ShellProcessor):
     def on_command_finished(self, cmd: PersistentShellCommand) -> None:
         if self._active_cmd is cmd:
             self._active_cmd = None
+
+    def invalidate_handle(self, handle: Optional[ProcessHandle]) -> None:
+        if handle is None:
+            return
+        if self._handle is handle:
+            self._handle = None
+        self._active_cmd = None
+
+        async def _cleanup() -> None:
+            try:
+                await handle.terminate(grace_s=1.0)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await handle.kill()
+            finally:
+                with contextlib.suppress(Exception):
+                    await handle.wait()
+
+        cleanup_task = asyncio.create_task(_cleanup())
+        self._cleanup_tasks.add(cleanup_task)
+
+        def _on_cleanup_done(task: asyncio.Task[None]) -> None:
+            self._cleanup_tasks.discard(task)
+            _consume_task_result(task)
+
+        cleanup_task.add_done_callback(_on_cleanup_done)

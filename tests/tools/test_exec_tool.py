@@ -110,6 +110,9 @@ def test_exec_tool_output_truncation(tmp_path: Path):
         assert data["exit_code"] == 0
         assert isinstance(data["output"], str)
         assert len(data["output"]) <= EXEC_TOOL_MAX_OUTPUT_CHARS_DEFAULT
+        assert data["output"].startswith("x")
+        assert data["output"].endswith("x\n")
+        assert "\n...\n" in data["output"]
 
         await pm.shutdown()
 
@@ -142,6 +145,36 @@ def test_exec_tool_output_truncation_respects_settings(tmp_path: Path):
         assert data["exit_code"] == 0
         assert isinstance(data["output"], str)
         assert len(data["output"]) <= 100
+        assert "\n...\n" in data["output"]
+
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_exec_tool_output_truncation_handles_large_single_line(tmp_path: Path):
+    async def scenario():
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        proj = StubProject(process_manager=pm)
+        tool = ExecTool(proj)
+        spec = ToolSpec(name="exec", config={"timeout_s": 1, "max_output_chars": 64})
+        execution = vocode_state.WorkflowExecution(workflow_name="test")
+        tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+
+        resp = await tool.run(
+            tool_req,
+            {
+                "command": "python - << 'EOF'\nimport sys\nsys.stdout.write('A' * 2000)\nEOF"
+            },
+        )
+        data = json.loads(resp.text or "{}")
+
+        assert data["timed_out"] is False
+        assert data["exit_code"] == 0
+        assert len(data["output"]) <= 64
+        assert data["output"].startswith("A")
+        assert data["output"].endswith("A\n")
+        assert "\n...\n" in data["output"]
 
         await pm.shutdown()
 

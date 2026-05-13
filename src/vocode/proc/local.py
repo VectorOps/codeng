@@ -30,6 +30,28 @@ def _build_env(policy: EnvPolicy, overlay: Optional[Dict[str, str]]) -> Dict[str
     return base
 
 
+async def _iter_stream_lines(
+    stream: Optional[asyncio.StreamReader],
+) -> AsyncIterator[str]:
+    if stream is None:
+        return
+    buffer = bytearray()
+    while True:
+        chunk = await stream.read(4096)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                break
+            line = bytes(buffer[: newline_index + 1])
+            del buffer[: newline_index + 1]
+            yield line.decode("utf-8", errors="replace")
+    if buffer:
+        yield bytes(buffer).decode("utf-8", errors="replace")
+
+
 class LocalProcessHandle(ProcessHandle):
     def __init__(
         self,
@@ -71,22 +93,12 @@ class LocalProcessHandle(ProcessHandle):
                 pass
 
     async def iter_stdout(self) -> AsyncIterator[str]:
-        if self._proc.stdout is None:
-            return
-        while True:
-            line = await self._proc.stdout.readline()
-            if not line:
-                break
-            yield line.decode("utf-8", errors="replace")
+        async for line in _iter_stream_lines(self._proc.stdout):
+            yield line
 
     async def iter_stderr(self) -> AsyncIterator[str]:
-        if self._proc.stderr is None:
-            return
-        while True:
-            line = await self._proc.stderr.readline()
-            if not line:
-                break
-            yield line.decode("utf-8", errors="replace")
+        async for line in _iter_stream_lines(self._proc.stderr):
+            yield line
 
     async def terminate(self, grace_s: float = 5.0) -> None:
         if self._proc.returncode is not None:

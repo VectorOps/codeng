@@ -42,6 +42,71 @@ def test_shell_manager_direct_mode_runs_command(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_shell_manager_shell_mode_recovers_after_large_unterminated_output(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        settings = ShellSettings(mode=ShellMode.shell)
+        manager = ShellManager(
+            process_manager=pm,
+            settings=settings,
+            default_cwd=tmp_path,
+        )
+
+        cmd1 = await manager.run(
+            "python -c \"import sys; sys.stdout.write('A' * 70000)\""
+        )
+        pid1 = cmd1.pid
+        out1 = await _read_all_stdout(cmd1)
+        rc1 = await cmd1.wait()
+
+        assert out1 == ("A" * 70000) + "\n"
+        assert rc1 == 0
+        assert pid1 is not None
+
+        cmd2 = await manager.run("printf 'OK\\n'")
+        out2 = await _read_all_stdout(cmd2)
+        rc2 = await cmd2.wait()
+
+        assert out2 == "OK\n"
+        assert rc2 == 0
+        assert cmd2.pid is not None
+        assert cmd2.pid == pid1
+
+        await manager.stop()
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_shell_manager_direct_mode_handles_large_unterminated_output(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        settings = ShellSettings(mode=ShellMode.direct)
+        manager = ShellManager(
+            process_manager=pm,
+            settings=settings,
+            default_cwd=tmp_path,
+        )
+
+        cmd = await manager.run(
+            "python -c \"import sys; sys.stdout.write('B' * 70000)\""
+        )
+        out = await _read_all_stdout(cmd)
+        rc = await cmd.wait()
+
+        assert out == "B" * 70000
+        assert rc == 0
+
+        await manager.stop()
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_shell_manager_commands_do_not_wait_for_stdin_direct_mode(
     tmp_path: Path,
 ) -> None:
