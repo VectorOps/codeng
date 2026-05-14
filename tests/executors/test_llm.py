@@ -3268,3 +3268,316 @@ async def test_llm_executor_retries_once_after_context_length_error(
     assert final_step.type == state.StepType.OUTPUT_MESSAGE
     assert final_step.message is not None
     assert final_step.message.text == "Recovered after compaction"
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_uses_node_model_for_compaction_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary_requests: List[Any] = []
+    stream_requests: List[Any] = []
+    summary_models: List[str] = []
+    summary_providers: List[Optional[str]] = []
+
+    class CapturingSummaryThenStreamAsyncLLMClient(SummaryThenStreamAsyncLLMClient):
+        async def generate(
+            self,
+            model: str,
+            request: Any,
+            provider: Optional[str] = None,
+            options: Any = None,
+        ) -> connect.AssistantMessage:
+            summary_models.append(model)
+            summary_providers.append(provider)
+            return await super().generate(model, request, provider, options)
+
+    summary_response = _assistant_response(
+        "## Goal\nCompact context\n\n## Constraints & Preferences\n- Keep exact paths.\n\n## Progress\n### Done\n- Built compact summary\n### In Progress\n- Retry request\n### Blocked\n- None\n\n## Key Decisions\n- Compact on overflow\n\n## Next Steps\n- Retry\n\n## Critical Context\n- tail"
+    )
+    response = _assistant_response("after compaction")
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: CapturingSummaryThenStreamAsyncLLMClient(
+            summary_response,
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="after compaction"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            summary_requests,
+            stream_requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-default-compaction-model",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 8},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-default-compaction-model",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    history.upsert_message(run, old_user)
+    history.upsert_message(run, recent_user)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    async for _ in executor.run(ExecutorInput(execution=execution, run=run)):
+        pass
+
+    assert summary_models == ["gpt-3.5-turbo"]
+    assert summary_providers == [None]
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_uses_compaction_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    summary_models: List[str] = []
+    summary_providers: List[Optional[str]] = []
+
+    class CapturingSummaryThenStreamAsyncLLMClient(SummaryThenStreamAsyncLLMClient):
+        async def generate(
+            self,
+            model: str,
+            request: Any,
+            provider: Optional[str] = None,
+            options: Any = None,
+        ) -> connect.AssistantMessage:
+            summary_models.append(model)
+            summary_providers.append(provider)
+            return await super().generate(model, request, provider, options)
+
+    summary_response = _assistant_response(
+        "## Goal\nCompact context\n\n## Constraints & Preferences\n- Keep exact paths.\n\n## Progress\n### Done\n- Built compact summary\n### In Progress\n- Retry request\n### Blocked\n- None\n\n## Key Decisions\n- Compact on overflow\n\n## Next Steps\n- Retry\n\n## Critical Context\n- tail"
+    )
+    response = _assistant_response("after compaction")
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: CapturingSummaryThenStreamAsyncLLMClient(
+            summary_response,
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="after compaction"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            [],
+            [],
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-override-compaction-model",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 8},
+        compaction=CompactionSettings(
+            summary_model="openai/gpt-4.1-mini",
+            summary_provider="openai",
+        ),
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-override-compaction-model",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    history.upsert_message(run, old_user)
+    history.upsert_message(run, recent_user)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="vocode"):
+        async for _ in executor.run(ExecutorInput(execution=execution, run=run)):
+            pass
+
+    assert summary_models == ["openai/gpt-4.1-mini"]
+    assert summary_providers == ["openai"]
+    start_logs = [
+        record
+        for record in caplog.records
+        if "Compaction summary generation started" in record.getMessage()
+    ]
+    assert len(start_logs) == 1
+    assert "summary_model" in start_logs[0].getMessage()
+    assert "openai/gpt-4.1-mini" in start_logs[0].getMessage()
+    assert "summary_provider" in start_logs[0].getMessage()
+    assert "openai" in start_logs[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_rejects_on_permanent_compaction_summary_error(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    error = connect.PermanentProviderError(
+        connect.ErrorInfo(
+            code="provider_error",
+            message="Provider request failed",
+            provider="chatgpt",
+            api_family="chatgpt-responses",
+            status_code=400,
+            retryable=False,
+            raw={"error": {"message": "bad request"}},
+        )
+    )
+
+    class FailingGenerateAsyncLLMClient(FakeAsyncLLMClient):
+        async def generate(
+            self,
+            model: str,
+            request: Any,
+            provider: Optional[str] = None,
+            options: Any = None,
+        ) -> connect.AssistantMessage:
+            raise error
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FailingGenerateAsyncLLMClient(
+            _stream_with_text("unused"),
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-compaction-permanent-failure",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 8},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-compaction-permanent-failure",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    history.upsert_message(run, old_user)
+    history.upsert_message(run, recent_user)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="vocode"):
+        steps: List[state.Step] = []
+        async for step in executor.run(ExecutorInput(execution=execution, run=run)):
+            steps.append(step)
+
+    assert len(steps) == 1
+    assert steps[0].type == state.StepType.REJECTION
+    assert steps[0].message is not None
+    assert "Compaction summary generation failed." in steps[0].message.text
+    assert "summary_model=gpt-3.5-turbo" in steps[0].message.text
+    assert "status_code=400" in steps[0].message.text
+    assert not any(
+        step.type == state.StepType.CONTEXT_COMPACTION
+        for step in execution.iter_steps()
+    )
+    failure_logs = [
+        record
+        for record in caplog.records
+        if "Compaction summary generation failed" in record.getMessage()
+    ]
+    assert len(failure_logs) == 1
+    assert "retryable" in failure_logs[0].getMessage()
+    assert "False" in failure_logs[0].getMessage()

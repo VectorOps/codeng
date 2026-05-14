@@ -10,6 +10,7 @@ from vocode import state, models
 from vocode.logger import logger
 from . import helpers as llm_helpers
 from .compaction import collect_prompt_messages
+from .compaction import CompactionSummaryGenerationError
 from .compaction import CompactionPreparationResult
 from .compaction import estimate_context_tokens
 from .compaction import maybe_compact_execution_history
@@ -514,25 +515,90 @@ class LLMExecutor(runner_base.BaseExecutor):
                 parts.append(f"raw={raw_text}")
         return "\n".join(parts)
 
+    def _build_compaction_failure_text(
+        self,
+        error: CompactionSummaryGenerationError,
+    ) -> str:
+        rejection_text = self._format_connect_error_message(error.cause)
+        return "\n".join(
+            [
+                "Compaction summary generation failed.",
+                f"summary_model={error.summary_model}",
+                f"summary_provider={error.summary_provider or 'default'}",
+                rejection_text,
+            ]
+        )
+
+    async def _maybe_compact_or_reject(
+        self,
+        inp: runner_base.ExecutorInput,
+        preparation: CompactionPreparationResult,
+    ) -> Optional[state.Step]:
+        try:
+            await maybe_compact_execution_history(
+                self.project.history,
+                self.project.credentials,
+                inp.execution,
+                preparation,
+            )
+        except CompactionSummaryGenerationError as exc:
+            logger.error(
+                "LLM compaction failed",
+                current_model=preparation.current_model,
+                summary_model=exc.summary_model,
+                summary_provider=exc.summary_provider,
+                status_code=exc.cause.error.status_code,
+                code=exc.cause.error.code,
+                provider=exc.cause.error.provider,
+                api_family=exc.cause.error.api_family,
+                err=exc.cause,
+            )
+            error_step = self.project.history.upsert_step(
+                inp.run,
+                state.Step(
+                    execution_id=inp.execution.id,
+                    type=state.StepType.REJECTION,
+                    is_complete=True,
+                    workflow_execution=inp.run,
+                ),
+            )
+            return self._build_step_from_message(
+                error_step,
+                role=models.Role.SYSTEM,
+                step_type=state.StepType.REJECTION,
+                text=self._build_compaction_failure_text(exc),
+                is_complete=True,
+            )
+        return None
+
     async def _handle_context_overflow_retry(
         self,
         inp: runner_base.ExecutorInput,
         overflow_compaction_attempted: bool,
-    ) -> tuple[bool, Optional[tuple[Optional[str], List[connect.Message]]]]:
+    ) -> tuple[
+        bool,
+        Optional[tuple[Optional[str], List[connect.Message]]],
+        Optional[state.Step],
+    ]:
         if overflow_compaction_attempted or not self.config.compaction.enabled:
-            return False, None
+            return False, None, None
         forced_compaction = self._prepare_compaction(inp).model_copy(
             update={"should_compact": True}
         )
-        compaction_step = await maybe_compact_execution_history(
-            self.project.history,
-            self.project.credentials,
-            inp.execution,
-            forced_compaction,
+        rejection_step = await self._maybe_compact_or_reject(inp, forced_compaction)
+        if rejection_step is not None:
+            return False, None, rejection_step
+        compaction_step = next(
+            (
+                step
+                for step in inp.execution.iter_steps_reversed()
+                if step.type == state.StepType.CONTEXT_COMPACTION
+            ),
+            None,
         )
         if compaction_step is None:
-            return False, None
-        return True, self.build_connect_messages(inp)
+            return False, None, None
+        return True, self.build_connect_messages(inp), None
 
     def _build_preview_usage(
         self,
@@ -609,12 +675,10 @@ class LLMExecutor(runner_base.BaseExecutor):
             should_compact=compaction_prep.should_compact,
         )
         if compaction_prep.should_compact:
-            await maybe_compact_execution_history(
-                self.project.history,
-                self.project.credentials,
-                inp.execution,
-                compaction_prep,
-            )
+            rejection_step = await self._maybe_compact_or_reject(inp, compaction_prep)
+            if rejection_step is not None:
+                yield rejection_step
+                return
 
         system_prompt, connect_messages = self.build_connect_messages(inp)
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
@@ -796,10 +860,17 @@ class LLMExecutor(runner_base.BaseExecutor):
 
                     break
                 except connect.ContextLengthError as e:
-                    retried, rebuilt_prompt = await self._handle_context_overflow_retry(
+                    (
+                        retried,
+                        rebuilt_prompt,
+                        rejection_step,
+                    ) = await self._handle_context_overflow_retry(
                         inp,
                         overflow_compaction_attempted,
                     )
+                    if rejection_step is not None:
+                        yield rejection_step
+                        return
                     if rebuilt_prompt is not None:
                         overflow_compaction_attempted = retried
                         system_prompt, connect_messages = rebuilt_prompt

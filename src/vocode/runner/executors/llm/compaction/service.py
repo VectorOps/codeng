@@ -20,6 +20,21 @@ from .prompting import resolve_compaction_system_prompt
 from .prompting import serialize_messages_to_transcript
 
 
+class CompactionSummaryGenerationError(Exception):
+    def __init__(
+        self,
+        message: str,
+        *,
+        cause: connect.ConnectError,
+        summary_model: str,
+        summary_provider: Optional[str],
+    ) -> None:
+        super().__init__(message)
+        self.cause = cause
+        self.summary_model = summary_model
+        self.summary_provider = summary_provider
+
+
 VALID_PRIMARY_BOUNDARY_STEP_TYPES = (state.StepType.INPUT_MESSAGE,)
 
 VALID_FALLBACK_BOUNDARY_STEP_TYPES = (
@@ -160,6 +175,14 @@ async def generate_summary_message_text(
         return build_summary_message_text(summarized_messages, settings)
     summary_model = settings.summary_model or current_model
     summary_provider = settings.summary_provider or None
+    logger.info(
+        "Compaction summary generation started",
+        current_model=current_model,
+        summary_model=summary_model,
+        summary_provider=summary_provider,
+        summary_model_overridden=(settings.summary_model is not None),
+        summarized_messages_count=len(summarized_messages),
+    )
     prompt = build_summary_generation_prompt(previous_summary, transcript, settings)
     request = connect.GenerateRequest(
         messages=[connect.UserMessage(content=prompt)],
@@ -178,14 +201,54 @@ async def generate_summary_message_text(
                     provider_options=dict(provider_options or {})
                 ),
             )
+    except connect.ConnectError as exc:
+        logger.warning(
+            "Compaction summary generation failed",
+            current_model=current_model,
+            summary_model=summary_model,
+            summary_provider=summary_provider,
+            summary_model_overridden=(settings.summary_model is not None),
+            summarized_messages_count=len(summarized_messages),
+            status_code=exc.error.status_code,
+            code=exc.error.code,
+            provider=exc.error.provider,
+            api_family=exc.error.api_family,
+            retryable=exc.error.retryable,
+            raw=exc.error.raw,
+            err=exc,
+        )
+        if not exc.error.retryable:
+            raise CompactionSummaryGenerationError(
+                "Compaction summary generation failed",
+                cause=exc,
+                summary_model=summary_model,
+                summary_provider=summary_provider,
+            ) from exc
+        return build_summary_message_text(summarized_messages, settings)
     except Exception as exc:
-        logger.warning("Compaction summary generation failed", err=exc)
+        logger.warning(
+            "Compaction summary generation failed",
+            current_model=current_model,
+            summary_model=summary_model,
+            summary_provider=summary_provider,
+            summary_model_overridden=(settings.summary_model is not None),
+            summarized_messages_count=len(summarized_messages),
+            err=exc,
+        )
         return build_summary_message_text(summarized_messages, settings)
     summary_text = "".join(
         block.text for block in response.content if block.type == "text"
     ).strip()
     if not summary_text:
         return build_summary_message_text(summarized_messages, settings)
+    logger.info(
+        "Compaction summary generation completed",
+        current_model=current_model,
+        summary_model=summary_model,
+        summary_provider=summary_provider,
+        summary_model_overridden=(settings.summary_model is not None),
+        summary_chars=len(summary_text),
+    )
     return build_summary_message_envelope(summary_text, settings)
 
 
