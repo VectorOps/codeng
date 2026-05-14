@@ -16,6 +16,7 @@ from vocode.runner.executors.llm.llm import LLMExecutor
 from vocode.runner import base as runner_base
 from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 from vocode.runner.executors.input import InputNode
+from vocode.runner.executors.result import ResultNode
 from vocode.runner.executors.llm.models import LLMNodeMCPSettings
 from vocode.runner.executors.llm.models import LLMNode
 from vocode.manager import base as manager_base
@@ -1676,6 +1677,212 @@ async def test_result_mode_concatenate_final_builds_single_message():
     combined = node2_exec.input_messages[0]
     assert combined.text == "hello\n\nrun1-final"
     assert combined.role == models.Role.USER
+
+
+@pytest.mark.asyncio
+async def test_result_node_custom_message_preserves_backward_compatible_default() -> (
+    None
+):
+    node = ResultNode(
+        name="result-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-result-default-message",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="hello",
+        ),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    node_exec = next(iter(runner.execution.node_executions.values()))
+    output_steps = [
+        step
+        for step in node_exec.iter_steps()
+        if step.type == state.StepType.OUTPUT_MESSAGE and step.is_complete
+    ]
+    assert output_steps
+    assert output_steps[-1].message is not None
+    assert output_steps[-1].message.text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_result_node_custom_message_forwards_final_response() -> None:
+    node1 = ResultNode(
+        name="node1",
+        outcomes=[models.OutcomeSlot(name="next")],
+        confirmation=models.Confirmation.AUTO,
+        message_mode=models.ResultMode.FINAL_RESPONSE,
+        message="keep going",
+    )
+    node2 = models.Node(
+        name="node2",
+        type="forward-last-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(
+        nodes=[node1, node2],
+        edges=[
+            models.Edge(
+                source_node="node1",
+                source_outcome="next",
+                target_node="node2",
+            ),
+        ],
+    )
+    workflow = DummyWorkflow(name="wf-result-custom-final", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="ignored input",
+        ),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for node_execution in runner.execution.node_executions.values():
+        node_execs_by_name[node_execution.node] = node_execution
+
+    assert [message.text for message in node_execs_by_name["node2"].input_messages] == [
+        "keep going"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_result_node_custom_message_forwards_all_messages() -> None:
+    node1 = ResultNode(
+        name="node1",
+        outcomes=[models.OutcomeSlot(name="next")],
+        confirmation=models.Confirmation.AUTO,
+        message_mode=models.ResultMode.ALL_MESSAGES,
+        message="keep going",
+    )
+    node2 = models.Node(
+        name="node2",
+        type="forward-last-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(
+        nodes=[node1, node2],
+        edges=[
+            models.Edge(
+                source_node="node1",
+                source_outcome="next",
+                target_node="node2",
+            ),
+        ],
+    )
+    workflow = DummyWorkflow(name="wf-result-custom-all", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="initial input",
+        ),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for node_execution in runner.execution.node_executions.values():
+        node_execs_by_name[node_execution.node] = node_execution
+
+    assert [message.text for message in node_execs_by_name["node2"].input_messages] == [
+        "initial input",
+        "keep going",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_result_node_custom_message_concatenates_final_message() -> None:
+    node1 = ResultNode(
+        name="node1",
+        outcomes=[models.OutcomeSlot(name="next")],
+        confirmation=models.Confirmation.AUTO,
+        message_mode=models.ResultMode.CONCATENATE_FINAL,
+        message="keep going",
+    )
+    node2 = models.Node(
+        name="node2",
+        type="forward-last-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(
+        nodes=[node1, node2],
+        edges=[
+            models.Edge(
+                source_node="node1",
+                source_outcome="next",
+                target_node="node2",
+            ),
+        ],
+    )
+    workflow = DummyWorkflow(name="wf-result-custom-concat", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="initial input",
+        ),
+    )
+
+    await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    node_execs_by_name: Dict[str, state.NodeExecution] = {}
+    for node_execution in runner.execution.node_executions.values():
+        node_execs_by_name[node_execution.node] = node_execution
+
+    forwarded_messages = node_execs_by_name["node2"].input_messages
+    assert len(forwarded_messages) == 1
+    assert forwarded_messages[0].text == "initial input\n\nkeep going"
 
 
 def test_build_next_input_messages_ignores_compaction_bookkeeping_steps() -> None:

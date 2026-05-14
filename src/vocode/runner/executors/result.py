@@ -8,6 +8,10 @@ from vocode.runner.base import BaseExecutor, ExecutorFactory, ExecutorInput
 
 class ResultNode(models.Node):
     type: str = "result"
+    message: Optional[str] = Field(
+        default=None,
+        description="Optional assistant message emitted by this result node.",
+    )
     confirmation: models.Confirmation = Field(
         default=models.Confirmation.AUTO,
         description="Result node auto confirmation.",
@@ -24,8 +28,10 @@ class ResultExecutor(BaseExecutor):
         execution = inp.execution
         history = self.project.history
 
-        texts = [m.text for m in execution.input_messages if m.text]
-        combined = "\n".join(texts)
+        text = self.config.message
+        if text is None:
+            texts = [m.text for m in execution.input_messages if m.text]
+            text = "\n".join(texts)
 
         outcome_name: Optional[str] = None
         outcomes = self.config.outcomes or []
@@ -42,7 +48,7 @@ class ResultExecutor(BaseExecutor):
 
         message = state.Message(
             role=models.Role.ASSISTANT,
-            text=combined,
+            text=text,
         )
         history.upsert_message(inp.run, message)
         step = history.upsert_step(
