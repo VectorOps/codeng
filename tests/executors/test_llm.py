@@ -3581,3 +3581,294 @@ async def test_llm_executor_rejects_on_permanent_compaction_summary_error(
     assert len(failure_logs) == 1
     assert "retryable" in failure_logs[0].getMessage()
     assert "False" in failure_logs[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_compaction_summary_request_matches_executor_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary_requests: List[Any] = []
+    summary_response = _assistant_response(
+        "## Goal\nCompact context\n\n## Constraints & Preferences\n- Keep exact paths.\n\n## Progress\n### Done\n- Built compact summary\n### In Progress\n- Retry request\n### Blocked\n- None\n\n## Key Decisions\n- Compact on overflow\n\n## Next Steps\n- Retry\n\n## Critical Context\n- tail"
+    )
+    response = _assistant_response("after compaction")
+
+    class CapturingSummaryThenStreamAsyncLLMClient(SummaryThenStreamAsyncLLMClient):
+        async def generate(
+            self,
+            model: str,
+            request: Any,
+            provider: Optional[str] = None,
+            options: Any = None,
+        ) -> connect.AssistantMessage:
+            summary_requests.append(request)
+            return await super().generate(model, request, provider, options)
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: CapturingSummaryThenStreamAsyncLLMClient(
+            summary_response,
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="after compaction"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            [],
+            [],
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-compaction-request-shape",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 8},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-compaction-request-shape",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    history.upsert_message(run, old_user)
+    history.upsert_message(run, recent_user)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    async for _ in executor.run(ExecutorInput(execution=execution, run=run)):
+        pass
+
+    assert len(summary_requests) == 1
+    assert summary_requests[0].max_output_tokens is None
+    assert summary_requests[0].temperature is None
+    assert summary_requests[0].reasoning is None
+    assert summary_requests[0].tools == []
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_compaction_summary_inherits_temperature_and_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary_requests: List[Any] = []
+    summary_response = _assistant_response(
+        "## Goal\nCompact context\n\n## Constraints & Preferences\n- Keep exact paths.\n\n## Progress\n### Done\n- Built compact summary\n### In Progress\n- Retry request\n### Blocked\n- None\n\n## Key Decisions\n- Compact on overflow\n\n## Next Steps\n- Retry\n\n## Critical Context\n- tail"
+    )
+    response = _assistant_response("after compaction")
+
+    class CapturingSummaryThenStreamAsyncLLMClient(SummaryThenStreamAsyncLLMClient):
+        async def generate(
+            self,
+            model: str,
+            request: Any,
+            provider: Optional[str] = None,
+            options: Any = None,
+        ) -> connect.AssistantMessage:
+            summary_requests.append(request)
+            return await super().generate(model, request, provider, options)
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: CapturingSummaryThenStreamAsyncLLMClient(
+            summary_response,
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="after compaction"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            [],
+            [],
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-compaction-inherit-params",
+        type="llm",
+        model="gpt-3.5-turbo",
+        temperature=0.3,
+        reasoning_effort="low",
+        extra={"model_max_tokens": 8},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-compaction-inherit-params",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    history.upsert_message(run, old_user)
+    history.upsert_message(run, recent_user)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    async for _ in executor.run(ExecutorInput(execution=execution, run=run)):
+        pass
+
+    assert len(summary_requests) == 1
+    assert summary_requests[0].temperature == 0.3
+    assert summary_requests[0].reasoning is not None
+    assert summary_requests[0].reasoning.effort == "low"
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_compaction_summary_overrides_temperature_and_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary_requests: List[Any] = []
+    summary_response = _assistant_response(
+        "## Goal\nCompact context\n\n## Constraints & Preferences\n- Keep exact paths.\n\n## Progress\n### Done\n- Built compact summary\n### In Progress\n- Retry request\n### Blocked\n- None\n\n## Key Decisions\n- Compact on overflow\n\n## Next Steps\n- Retry\n\n## Critical Context\n- tail"
+    )
+    response = _assistant_response("after compaction")
+
+    class CapturingSummaryThenStreamAsyncLLMClient(SummaryThenStreamAsyncLLMClient):
+        async def generate(
+            self,
+            model: str,
+            request: Any,
+            provider: Optional[str] = None,
+            options: Any = None,
+        ) -> connect.AssistantMessage:
+            summary_requests.append(request)
+            return await super().generate(model, request, provider, options)
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: CapturingSummaryThenStreamAsyncLLMClient(
+            summary_response,
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="after compaction"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            [],
+            [],
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-compaction-override-params",
+        type="llm",
+        model="gpt-3.5-turbo",
+        temperature=0.3,
+        reasoning_effort="low",
+        extra={"model_max_tokens": 8},
+        compaction=CompactionSettings(
+            summary_temperature=0.8,
+            summary_reasoning_effort="high",
+        ),
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-compaction-override-params",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    history.upsert_message(run, old_user)
+    history.upsert_message(run, recent_user)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    async for _ in executor.run(ExecutorInput(execution=execution, run=run)):
+        pass
+
+    assert len(summary_requests) == 1
+    assert summary_requests[0].temperature == 0.8
+    assert summary_requests[0].reasoning is not None
+    assert summary_requests[0].reasoning.effort == "high"

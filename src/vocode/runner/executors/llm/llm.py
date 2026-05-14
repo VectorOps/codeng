@@ -207,6 +207,8 @@ class LLMExecutor(runner_base.BaseExecutor):
             ),
             settings=self.config.compaction,
             current_model=self.config.model,
+            current_temperature=self.config.temperature,
+            current_reasoning_effort=self.config.reasoning_effort,
             provider_options=dict(self.config.extra or {}),
         )
 

@@ -168,6 +168,8 @@ async def generate_summary_message_text(
     summarized_messages: List[state.Message],
     settings: CompactionSettings,
     current_model: Optional[str],
+    current_temperature: Optional[float],
+    current_reasoning_effort: Optional[str],
     provider_options: dict[str, Any],
 ) -> str:
     previous_summary, transcript = _split_summary_inputs(summarized_messages)
@@ -175,19 +177,38 @@ async def generate_summary_message_text(
         return build_summary_message_text(summarized_messages, settings)
     summary_model = settings.summary_model or current_model
     summary_provider = settings.summary_provider or None
+    summary_temperature = (
+        settings.summary_temperature
+        if settings.summary_temperature is not None
+        else current_temperature
+    )
+    summary_reasoning_effort = (
+        settings.summary_reasoning_effort
+        if settings.summary_reasoning_effort is not None
+        else current_reasoning_effort
+    )
     logger.info(
         "Compaction summary generation started",
         current_model=current_model,
         summary_model=summary_model,
         summary_provider=summary_provider,
         summary_model_overridden=(settings.summary_model is not None),
+        summary_temperature=summary_temperature,
+        summary_temperature_overridden=(settings.summary_temperature is not None),
+        summary_reasoning_effort=summary_reasoning_effort,
+        summary_reasoning_overridden=(settings.summary_reasoning_effort is not None),
         summarized_messages_count=len(summarized_messages),
     )
     prompt = build_summary_generation_prompt(previous_summary, transcript, settings)
     request = connect.GenerateRequest(
         messages=[connect.UserMessage(content=prompt)],
         system_prompt=resolve_compaction_system_prompt(settings),
-        max_output_tokens=1024,
+        temperature=summary_temperature,
+        reasoning=(
+            connect.ReasoningConfig(effort=summary_reasoning_effort)
+            if summary_reasoning_effort is not None
+            else None
+        ),
     )
     try:
         async with connect.AsyncLLMClient(
@@ -208,6 +229,12 @@ async def generate_summary_message_text(
             summary_model=summary_model,
             summary_provider=summary_provider,
             summary_model_overridden=(settings.summary_model is not None),
+            summary_temperature=summary_temperature,
+            summary_temperature_overridden=(settings.summary_temperature is not None),
+            summary_reasoning_effort=summary_reasoning_effort,
+            summary_reasoning_overridden=(
+                settings.summary_reasoning_effort is not None
+            ),
             summarized_messages_count=len(summarized_messages),
             status_code=exc.error.status_code,
             code=exc.error.code,
@@ -232,6 +259,12 @@ async def generate_summary_message_text(
             summary_model=summary_model,
             summary_provider=summary_provider,
             summary_model_overridden=(settings.summary_model is not None),
+            summary_temperature=summary_temperature,
+            summary_temperature_overridden=(settings.summary_temperature is not None),
+            summary_reasoning_effort=summary_reasoning_effort,
+            summary_reasoning_overridden=(
+                settings.summary_reasoning_effort is not None
+            ),
             summarized_messages_count=len(summarized_messages),
             err=exc,
         )
@@ -247,6 +280,10 @@ async def generate_summary_message_text(
         summary_model=summary_model,
         summary_provider=summary_provider,
         summary_model_overridden=(settings.summary_model is not None),
+        summary_temperature=summary_temperature,
+        summary_temperature_overridden=(settings.summary_temperature is not None),
+        summary_reasoning_effort=summary_reasoning_effort,
+        summary_reasoning_overridden=(settings.summary_reasoning_effort is not None),
         summary_chars=len(summary_text),
     )
     return build_summary_message_envelope(summary_text, settings)
@@ -292,6 +329,8 @@ async def maybe_compact_execution_history(
             summarized_messages,
             preparation.settings,
             preparation.current_model,
+            preparation.current_temperature,
+            preparation.current_reasoning_effort,
             preparation.provider_options,
         ),
     )

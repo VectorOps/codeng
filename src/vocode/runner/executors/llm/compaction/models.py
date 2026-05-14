@@ -12,6 +12,8 @@ class CompactionSettings(BaseModel):
     keep_recent_ratio: float = 0.35
     summary_model: Optional[str] = None
     summary_provider: Optional[str] = None
+    summary_temperature: Optional[float] = None
+    summary_reasoning_effort: Optional[str] = None
     prompt_system: Optional[str] = None
     prompt_instructions: Optional[str] = None
 
@@ -37,4 +39,6 @@ class CompactionPreparationResult(BaseModel):
     should_compact: bool = False
     settings: CompactionSettings = Field(default_factory=CompactionSettings)
     current_model: Optional[str] = None
+    current_temperature: Optional[float] = None
+    current_reasoning_effort: Optional[str] = None
     provider_options: Dict[str, Any] = Field(default_factory=dict)
