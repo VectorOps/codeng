@@ -622,8 +622,11 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
     assert payload["steps_by_id"][str(step.id)]["type"] == "context_compaction"
     assert payload["steps_by_id"][str(step.id)]["state"] == {
         "compacted_step_ids": [],
+        "compacted_message_ids": [],
         "tokens_before": 1200,
         "tokens_after_estimate": 400,
+        "summary_input_tokens": None,
+        "summary_output_tokens": None,
         "trigger_threshold_ratio": 0.5,
         "summary_version": "v1",
     }

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from vocode import error_reporting
 from vocode.runner.executors.llm.models import LLMNode
 from vocode.settings.loader import load_settings
 from vocode.settings import MCPExternalSourceSettings, MCPStdioSourceSettings
@@ -11,6 +12,15 @@ def _write_tmp(tmp_path: Path, text: str) -> Path:
     p = tmp_path / "config.yaml"
     p.write_text(text, encoding="utf-8")
     return p
+
+
+def _assert_config_error(tmp_path: Path, cfg: str, expected: str) -> None:
+    with pytest.raises(error_reporting.ConfigLoadError) as exc_info:
+        load_settings(str(_write_tmp(tmp_path, cfg)))
+
+    error = exc_info.value
+    assert error.details is not None
+    assert expected in error.details
 
 
 def test_loads_mcp_settings_and_node_selectors(tmp_path: Path) -> None:
@@ -102,8 +112,7 @@ mcp:
     max_request_timeout_s: 20
 """
 
-    with pytest.raises(ValueError, match="max_request_timeout_s"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "max_request_timeout_s")
 
 
 def test_rejects_empty_mcp_tool_selector_fields(tmp_path: Path) -> None:
@@ -121,8 +130,7 @@ workflows:
     edges: []
 """
 
-    with pytest.raises(ValueError, match="source must be non-empty"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "source must be non-empty")
 
 
 def test_rejects_workflow_level_mcp_config(tmp_path: Path) -> None:
@@ -137,8 +145,7 @@ workflows:
     edges: []
 """
 
-    with pytest.raises(ValueError, match="workflow-level mcp config"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "workflow-level mcp config")
 
 
 def test_normalizes_path_roots_and_deduplicates_entries(tmp_path: Path) -> None:
@@ -182,8 +189,7 @@ mcp:
         uri: {root_dir.resolve().as_uri()}
 """
 
-    with pytest.raises(ValueError, match="exactly one of uri or path"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "exactly one of uri or path")
 
 
 def test_rejects_non_file_root_uri(tmp_path: Path) -> None:
@@ -194,8 +200,7 @@ mcp:
       - uri: https://example.com/root
 """
 
-    with pytest.raises(ValueError, match="file://"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "file://")
 
 
 def test_loads_external_source_auth_settings(tmp_path: Path) -> None:
@@ -235,8 +240,7 @@ mcp:
         mode: preregistered
 """
 
-    with pytest.raises(ValueError, match="client_id is required"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "client_id is required")
 
 
 def test_rejects_client_metadata_mode_without_url(tmp_path: Path) -> None:
@@ -250,8 +254,7 @@ mcp:
         mode: client_metadata
 """
 
-    with pytest.raises(ValueError, match="client_metadata_url is required"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "client_metadata_url is required")
 
 
 def test_rejects_client_metadata_url_without_https(tmp_path: Path) -> None:
@@ -266,8 +269,7 @@ mcp:
         client_metadata_url: http://example.com/metadata
 """
 
-    with pytest.raises(ValueError, match="client_metadata_url must use https"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "client_metadata_url must use https")
 
 
 def test_rejects_non_local_redirect_host(tmp_path: Path) -> None:
@@ -283,8 +285,7 @@ mcp:
         redirect_host: example.com
 """
 
-    with pytest.raises(ValueError, match="redirect_host must use localhost"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "redirect_host must use localhost")
 
 
 def test_rejects_dynamic_mode_without_registration_enabled(tmp_path: Path) -> None:
@@ -298,8 +299,7 @@ mcp:
         mode: dynamic
 """
 
-    with pytest.raises(ValueError, match="allow_dynamic_registration"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "allow_dynamic_registration")
 
 
 def test_resolves_variables_in_auth_fields(tmp_path: Path) -> None:
@@ -333,8 +333,7 @@ mcp:
       url: ftp://example.com/mcp
 """
 
-    with pytest.raises(ValueError, match="http:// or https://"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "http:// or https://")
 
 
 def test_rejects_invalid_mcp_source_name(tmp_path: Path) -> None:
@@ -346,8 +345,7 @@ mcp:
       command: uvx
 """
 
-    with pytest.raises(ValueError, match="mcp source names"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "mcp source names")
 
 
 def test_rejects_append_roots_without_entries(tmp_path: Path) -> None:
@@ -358,8 +356,7 @@ mcp:
     entries: []
 """
 
-    with pytest.raises(ValueError, match="append root merge_mode"):
-        load_settings(str(_write_tmp(tmp_path, cfg)))
+    _assert_config_error(tmp_path, cfg, "append root merge_mode")
 
 
 def test_loads_mcp_config_from_include(tmp_path: Path) -> None:

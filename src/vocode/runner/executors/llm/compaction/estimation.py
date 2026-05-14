@@ -30,25 +30,7 @@ def estimate_message_tokens(message: state.Message) -> int:
 def estimate_context_tokens(
     prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
 ) -> int:
-    latest_usage_index: Optional[int] = None
-    latest_usage_total: Optional[int] = None
-    for index in range(len(prompt_messages) - 1, -1, -1):
-        _, step = prompt_messages[index]
-        if step is None:
-            continue
-        if step.llm_usage is None:
-            continue
-        latest_usage_index = index
-        latest_usage_total = int(step.llm_usage.prompt_tokens) + int(
-            step.llm_usage.completion_tokens
-        )
-        break
-    if latest_usage_index is None or latest_usage_total is None:
-        return sum(estimate_message_tokens(message) for message, _ in prompt_messages)
-    trailing_total = 0
-    for message, _ in prompt_messages[latest_usage_index + 1 :]:
-        trailing_total += estimate_message_tokens(message)
-    return latest_usage_total + trailing_total
+    return sum(estimate_message_tokens(message) for message, _ in prompt_messages)
 
 
 def should_trigger_compaction(

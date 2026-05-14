@@ -944,7 +944,7 @@ async def test_llm_executor_preview_usage_estimates_prompt_from_visible_history(
 
     assert call_count["n"] == 0
     assert first_step.llm_usage is not None
-    assert first_step.llm_usage.prompt_tokens == 14
+    assert first_step.llm_usage.prompt_tokens == 4
     assert first_step.llm_usage.completion_tokens == 0
 
     async for _ in agen:
@@ -958,8 +958,8 @@ def test_should_trigger_compaction_uses_percentage_threshold() -> None:
         model="gpt-3.5-turbo",
     ).compaction
 
-    assert should_trigger_compaction(settings, 1000, 499) is False
-    assert should_trigger_compaction(settings, 1000, 500) is True
+    assert should_trigger_compaction(settings, 1000, 699) is False
+    assert should_trigger_compaction(settings, 1000, 700) is True
     assert should_trigger_compaction(settings, None, 900) is False
 
 
