@@ -6,6 +6,7 @@ from typing import Optional, cast
 import time
 import uuid
 
+import vocode.error_reporting as error_reporting
 from vocode import input_manager
 from vocode import settings as vocode_settings
 from vocode import models
@@ -278,6 +279,25 @@ class UIServer:
     async def _on_project_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
         await self.send_packet(manager_proto.UIEventPacket(event=event))
 
+    async def _publish_workflow_start_error(
+        self,
+        workflow_name: str,
+        error: Exception,
+    ) -> None:
+        workflow_error = error_reporting.build_workflow_validation_error(
+            workflow_name,
+            error,
+        )
+        await self._manager.project.publish_ui_event(
+            error_reporting.build_workflow_validation_ui_event(workflow_error)
+        )
+
+    async def _autostart_default_workflow(self, workflow_name: str) -> None:
+        try:
+            await self._manager.start_workflow(workflow_name)
+        except Exception as exc:
+            await self._publish_workflow_start_error(workflow_name, exc)
+
     async def start(self) -> None:
         if self._started:
             return
@@ -338,7 +358,7 @@ class UIServer:
         if settings is not None:
             default_workflow = settings.default_workflow
             if default_workflow is not None and default_workflow in settings.workflows:
-                asyncio.create_task(self._manager.start_workflow(default_workflow))
+                asyncio.create_task(self._autostart_default_workflow(default_workflow))
 
         self._started = True
 
@@ -757,6 +777,7 @@ class UIServer:
                 initial_message=payload.initial_message,
             )
         except Exception as ex:
+            await self._publish_workflow_start_error(payload.workflow_name, ex)
             return runner_proto.RunEventResp(
                 resp_type=runner_proto.RunEventResponseType.MESSAGE,
                 message=state.Message(

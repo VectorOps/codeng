@@ -557,6 +557,86 @@ async def test_uiserver_autostarts_default_workflow(
 
 
 @pytest.mark.asyncio
+async def test_uiserver_autostart_reports_workflow_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    workflow_name = "wf-broken-auto-start"
+    project.settings.workflows[workflow_name] = vocode_settings.WorkflowConfig()
+    project.settings.default_workflow = workflow_name
+
+    async def fake_start_workflow(
+        self: BaseManager,
+        wf_name: str,
+        initial_message: Optional[state.Message] = None,
+    ) -> object:
+        _ = self
+        _ = initial_message
+        raise ValueError(f"workflow '{wf_name}' has invalid edges")
+
+    monkeypatch.setattr(BaseManager, "start_workflow", fake_start_workflow)
+
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    await server.start()
+
+    resp_envelope = await client_endpoint.recv()
+    assert isinstance(resp_envelope.payload, manager_proto.UIEventPacket)
+    assert resp_envelope.payload.event.title == "Workflow validation failed"
+    assert resp_envelope.payload.event.source == workflow_name
+    assert "could not start" in resp_envelope.payload.event.message
+
+
+@pytest.mark.asyncio
+async def test_uiserver_runner_start_workflow_reports_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    await server.start()
+
+    async def fake_start_workflow(
+        self: BaseManager,
+        wf_name: str,
+        initial_message: Optional[state.Message] = None,
+    ) -> object:
+        _ = self
+        _ = initial_message
+        raise ValueError(f"workflow '{wf_name}' is invalid")
+
+    monkeypatch.setattr(BaseManager, "start_workflow", fake_start_workflow)
+
+    runner = DummyRunnerWithWorkflow(["node1"])
+    frame = RunnerFrame(
+        workflow_name="parent",
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+    event = runner_proto.RunEventReq(
+        kind=runner_proto.RunEventReqKind.START_WORKFLOW,
+        execution=runner.execution,
+        start_workflow=runner_proto.RunEventStartWorkflow(
+            workflow_name="broken-child",
+            initial_message=None,
+        ),
+    )
+
+    response = await server.on_runner_event(frame, event)
+
+    assert response is not None
+    assert response.message is not None
+    assert "workflow 'broken-child' is invalid" in response.message.text
+
+    resp_envelope = await client_endpoint.recv()
+    assert isinstance(resp_envelope.payload, manager_proto.UIEventPacket)
+    assert resp_envelope.payload.event.title == "Workflow validation failed"
+    assert resp_envelope.payload.event.source == "broken-child"
+
+
+@pytest.mark.asyncio
 async def test_uiserver_status_event_emits_ui_state_packet() -> None:
     history = HistoryManager()
     project = StubProject()

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 from collections.abc import Awaitable, Callable, AsyncIterator
 
+import vocode.error_reporting as error_reporting
 from vocode import models, state
 from vocode.history import models as history_models
 from vocode.logger import logger
@@ -273,7 +274,13 @@ class BaseManager:
         if wf is None:
             raise KeyError(f"Unknown workflow '{workflow_name}'")
         name = wf.name or workflow_name
-        graph = models.Graph(nodes=wf.nodes, edges=wf.edges)
+        try:
+            graph = models.Graph(nodes=wf.nodes, edges=wf.edges)
+        except Exception as exc:
+            raise error_reporting.build_workflow_validation_error(
+                workflow_name,
+                exc,
+            ) from exc
         return Workflow(
             name=name,
             graph=graph,

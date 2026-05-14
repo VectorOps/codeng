@@ -8,6 +8,7 @@ from pydantic import BaseModel
 import yaml
 import json5  # type: ignore
 from vocode import vars as vars_mod
+import vocode.error_reporting as error_reporting
 import vocode.settings.models as settings_models
 from vocode.vars import VAR_PATTERN, VarDef
 
@@ -567,7 +568,15 @@ def _load_workflows_from_dir(
     vars_map: Dict[str, Any] = {}
 
     for wf_path in _discover_workflow_files(config_path):
-        wf_any, wf_included_vars, wf_root_vars = _load_and_preprocess(wf_path)
+        try:
+            wf_any, wf_included_vars, wf_root_vars = _load_and_preprocess(wf_path)
+        except Exception as exc:
+            raise error_reporting.build_config_load_error(
+                config_path=config_path,
+                stage="loading workflow files",
+                error=exc,
+                source_path=wf_path,
+            ) from exc
         if not isinstance(wf_any, dict):
             raise ValueError(
                 f"Workflow file must be a mapping/object: {wf_path}",
@@ -594,11 +603,26 @@ def _load_workflows_from_dir(
 
 def load_settings(path: str) -> settings_models.Settings:
     config_path = Path(path).resolve()
-    data_any, included_vars, root_vars = _load_and_preprocess(config_path)
+    try:
+        data_any, included_vars, root_vars = _load_and_preprocess(config_path)
+    except Exception as exc:
+        raise error_reporting.build_config_load_error(
+            config_path=config_path,
+            stage="loading root configuration",
+            error=exc,
+            source_path=config_path,
+        ) from exc
     if not isinstance(data_any, dict):
         raise ValueError("Root configuration must be a mapping/object")
 
-    dir_workflows, dir_vars = _load_workflows_from_dir(config_path)
+    try:
+        dir_workflows, dir_vars = _load_workflows_from_dir(config_path)
+    except Exception as exc:
+        raise error_reporting.build_config_load_error(
+            config_path=config_path,
+            stage="loading workflow files",
+            error=exc,
+        ) from exc
     if dir_workflows:
         existing_workflows = data_any.get("workflows", {}) or {}
         if not isinstance(existing_workflows, dict):
@@ -631,7 +655,14 @@ def load_settings(path: str) -> settings_models.Settings:
     vars_map.update(filtered_root_vars)
 
     # Resolve variable-to-variable references (e.g., a: ${b}) with cycle detection
-    vars_map = _resolve_variables(vars_map)
+    try:
+        vars_map = _resolve_variables(vars_map)
+    except Exception as exc:
+        raise error_reporting.build_config_load_error(
+            config_path=config_path,
+            stage="resolving variables",
+            error=exc,
+        ) from exc
 
     value_only_map: Dict[str, Any] = {}
     var_defs_only: Dict[str, VarDef] = {}
@@ -645,7 +676,15 @@ def load_settings(path: str) -> settings_models.Settings:
     specs: List[_BindingSpec] = []
     data_for_validation = _prepare_data_and_collect_bindings(data_any, env, [], specs)
 
-    settings = settings_models.Settings.model_validate(data_for_validation)
+    try:
+        settings = settings_models.Settings.model_validate(data_for_validation)
+    except Exception as exc:
+        raise error_reporting.build_config_load_error(
+            config_path=config_path,
+            stage="validating configuration",
+            error=exc,
+            source_path=config_path,
+        ) from exc
     settings._var_env = env
     settings._set_var_defs(var_defs_only)
 

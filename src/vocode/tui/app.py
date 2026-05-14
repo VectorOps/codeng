@@ -7,6 +7,7 @@ import typing
 
 import click
 
+import vocode.error_reporting as error_reporting
 from vocode import models, state
 from vocode.logger import logger
 from vocode.manager import helpers as manager_helpers
@@ -293,7 +294,11 @@ class App:
 @click.argument("project_path", type=click.Path(exists=True, path_type=Path))
 def main(project_path: Path) -> None:
     async def _run() -> None:
-        app = App(project_path)
+        try:
+            app = App(project_path)
+        except error_reporting.ConfigLoadError as exc:
+            click.echo(error_reporting.format_config_load_error_text(exc), err=True)
+            raise click.Abort() from exc
         await app.run()
 
     asyncio.run(_run())
