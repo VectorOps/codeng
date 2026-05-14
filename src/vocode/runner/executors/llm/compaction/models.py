@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 
 class CompactionSettings(BaseModel):
     enabled: bool = True
-    trigger_threshold_ratio: float = 0.5
-    keep_recent_ratio: float = 0.35
+    trigger_threshold_ratio: float = 0.7
+    keep_recent_ratio: float = 0.25
     summary_model: Optional[str] = None
     summary_provider: Optional[str] = None
     summary_temperature: Optional[float] = None

@@ -165,8 +165,8 @@ Required models:
 ```python
 class CompactionSettings(BaseModel):
     enabled: bool = True
-    trigger_threshold_ratio: float = 0.5
-    keep_recent_ratio: float = 0.35
+    trigger_threshold_ratio: float = 0.7
+    keep_recent_ratio: float = 0.25
     summary_model: Optional[str] = None
     summary_provider: Optional[str] = None
     prompt_system: Optional[str] = None
@@ -284,8 +284,8 @@ kind: llm
 model: provider/model-name
 compaction:
   enabled: true
-  trigger_threshold_ratio: 0.5
-  keep_recent_ratio: 0.35
+  trigger_threshold_ratio: 0.7
+  keep_recent_ratio: 0.25
   summary_model: null
   summary_provider: null
   prompt_system: null
