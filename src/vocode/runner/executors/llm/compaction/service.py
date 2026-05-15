@@ -68,6 +68,14 @@ def _resolve_summary_model_name(
     return settings.summary_model or current_model
 
 
+def _get_summary_output_tokens(
+    summary_usage: Optional[state.LLMUsageStats],
+) -> Optional[int]:
+    if summary_usage is None:
+        return None
+    return int(summary_usage.completion_tokens)
+
+
 def _resolve_threshold_token_source(
     prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
 ) -> str:
@@ -80,11 +88,34 @@ def _resolve_threshold_token_source(
 def _get_latest_prompt_tokens(
     prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
 ) -> Optional[int]:
-    for message, _ in reversed(prompt_messages):
-        if message.llm_usage is None:
+    for message, step in reversed(prompt_messages):
+        if message.llm_usage is not None:
+            return int(message.llm_usage.prompt_tokens)
+        if step is None or step.llm_usage is None:
             continue
-        return int(message.llm_usage.prompt_tokens)
+        return int(step.llm_usage.prompt_tokens)
     return None
+
+
+def _build_compaction_prompt_usage_delta(
+    actual_prompt_tokens_before: Optional[int],
+    summary_usage: Optional[state.LLMUsageStats],
+    input_token_limit: Optional[int],
+    settings: CompactionSettings,
+) -> int:
+    if actual_prompt_tokens_before is None:
+        return 0
+    if summary_usage is None:
+        return 0
+    if input_token_limit is None or input_token_limit <= 0:
+        return 0
+    keep_recent_budget = max(
+        1, int(float(input_token_limit) * settings.keep_recent_ratio)
+    )
+    target_prompt_tokens_after = keep_recent_budget + int(
+        summary_usage.completion_tokens
+    )
+    return max(0, actual_prompt_tokens_before - target_prompt_tokens_after)
 
 
 def _apply_compaction_prompt_usage_delta(
@@ -461,12 +492,11 @@ async def maybe_compact_execution_history(
         text=summary_text,
     )
     history.upsert_message(workflow_execution, summary_message)
-    final_token_estimate = estimate_context_tokens(
-        [(summary_message, None)] + remaining_pairs
-    )
-    prompt_token_delta = max(
-        0,
-        preparation.estimated_context_tokens - final_token_estimate,
+    prompt_token_delta = _build_compaction_prompt_usage_delta(
+        actual_prompt_tokens_before,
+        summary_usage,
+        preparation.input_token_limit,
+        preparation.settings,
     )
     _apply_compaction_prompt_usage_delta(
         history,
@@ -474,11 +504,13 @@ async def maybe_compact_execution_history(
         remaining_pairs,
         prompt_token_delta,
     )
+    final_pairs = [(summary_message, None)] + remaining_pairs
+    actual_prompt_tokens_after = _get_summary_output_tokens(summary_usage)
     summary_state = CompactionSummaryState(
         compacted_step_ids=compacted_step_ids,
         compacted_message_ids=[message.id for message, _ in summarized_messages],
-        tokens_before=preparation.estimated_context_tokens,
-        tokens_after_estimate=final_token_estimate,
+        prompt_tokens_before=actual_prompt_tokens_before,
+        prompt_tokens_after=actual_prompt_tokens_after,
         summary_input_tokens=(
             int(summary_usage.prompt_tokens) if summary_usage is not None else None
         ),
@@ -486,11 +518,6 @@ async def maybe_compact_execution_history(
             int(summary_usage.completion_tokens) if summary_usage is not None else None
         ),
         trigger_threshold_ratio=preparation.settings.trigger_threshold_ratio,
-    )
-    final_pairs = [(summary_message, None)] + remaining_pairs
-    final_threshold_tokens = get_threshold_context_tokens(
-        final_pairs,
-        final_token_estimate,
     )
     logger.info(
         "Context compaction finished",
@@ -502,6 +529,7 @@ async def maybe_compact_execution_history(
         retained_messages_count=len(remaining_pairs),
         total_chars=total_chars,
         prompt_tokens_before=actual_prompt_tokens_before,
+        prompt_tokens_after=actual_prompt_tokens_after,
         summary_chars=len(summary_text),
         summary_input_tokens=(
             int(summary_usage.prompt_tokens) if summary_usage is not None else None

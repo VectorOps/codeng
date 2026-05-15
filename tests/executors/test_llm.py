@@ -1077,8 +1077,8 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
             state=CompactionSummaryState(
                 compacted_step_ids=[],
                 compacted_message_ids=[old_user.id],
-                tokens_before=100,
-                tokens_after_estimate=2,
+                prompt_tokens_before=100,
+                prompt_tokens_after=2,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -1228,6 +1228,7 @@ async def test_llm_executor_persists_compaction_step_before_request(
     assert "completed" in log_message
     assert "prompt_messages_before" in log_message
     assert "prompt_messages_after" in log_message
+    assert "prompt_tokens_after" in log_message
     assert "summary_input_tokens" in log_message
     assert "summary_output_tokens" in log_message
 
@@ -1776,8 +1777,8 @@ async def test_llm_executor_repeated_compaction_uses_update_mode_prompt(
             message_id=prior_summary.id,
             state=CompactionSummaryState(
                 compacted_step_ids=[],
-                tokens_before=10,
-                tokens_after_estimate=5,
+                prompt_tokens_before=10,
+                prompt_tokens_after=5,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -2037,11 +2038,13 @@ async def test_llm_executor_logs_realized_compaction_savings_from_actual_usage(
     assert "prompt_tokens_before" in realized_message
     assert "71" in realized_message
     assert "prompt_tokens_after" in realized_message
-    assert "20" in realized_message
+    assert "4" in realized_message
     assert "saved_input_tokens" in realized_message
-    assert "51" in realized_message
+    assert "67" in realized_message
     assert "summary_input_tokens" in realized_message
     assert "9" in realized_message
+    assert "summary_output_tokens" in realized_message
+    assert "4" in realized_message
 
 
 @pytest.mark.asyncio
@@ -2175,9 +2178,9 @@ async def test_llm_executor_logs_negative_realized_compaction_savings(
     assert "prompt_tokens_before" in realized_message
     assert "12" in realized_message
     assert "prompt_tokens_after" in realized_message
-    assert "20" in realized_message
+    assert "4" in realized_message
     assert "saved_input_tokens" in realized_message
-    assert "-8" in realized_message
+    assert "8" in realized_message
 
 
 @pytest.mark.asyncio

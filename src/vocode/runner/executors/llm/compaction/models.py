@@ -21,8 +21,8 @@ class CompactionSettings(BaseModel):
 class CompactionSummaryState(BaseModel):
     compacted_step_ids: List[UUID] = Field(default_factory=list)
     compacted_message_ids: List[UUID] = Field(default_factory=list)
-    tokens_before: int
-    tokens_after_estimate: Optional[int] = None
+    prompt_tokens_before: Optional[int] = None
+    prompt_tokens_after: Optional[int] = None
     summary_input_tokens: Optional[int] = None
     summary_output_tokens: Optional[int] = None
     trigger_threshold_ratio: float

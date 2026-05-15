@@ -122,8 +122,8 @@ class ManagerCompactionExecutor(BaseExecutor):
                 message_id=summary_message.id,
                 state=CompactionSummaryState(
                     compacted_step_ids=[],
-                    tokens_before=120,
-                    tokens_after_estimate=45,
+                    prompt_tokens_before=120,
+                    prompt_tokens_after=45,
                     trigger_threshold_ratio=0.5,
                 ),
                 is_complete=True,
@@ -287,7 +287,9 @@ async def test_manager_status_events_are_stored_and_not_forwarded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_manager_forwards_context_compaction_steps_as_normal_step_events() -> None:
+async def test_manager_forwards_context_compaction_steps_as_normal_step_events() -> (
+    None
+):
     node = models.Node(
         name="node-compaction",
         type="manager-compaction",

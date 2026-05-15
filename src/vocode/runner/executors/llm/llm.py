@@ -12,6 +12,7 @@ from . import helpers as llm_helpers
 from .compaction import collect_prompt_messages
 from .compaction import CompactionSummaryGenerationError
 from .compaction import CompactionPreparationResult
+from .compaction import CompactionSummaryState
 from .compaction import LLMExecutionState
 from .compaction import estimate_context_tokens
 from .compaction import get_threshold_context_tokens
@@ -625,6 +626,16 @@ class LLMExecutor(runner_base.BaseExecutor):
             )
         return None
 
+    def _get_latest_compaction_step(
+        self,
+        execution: state.NodeExecution,
+        compaction_step_id,
+    ) -> Optional[state.Step]:
+        for step in execution.iter_steps_reversed():
+            if step.id == compaction_step_id:
+                return step
+        return None
+
     def _maybe_log_compaction_realized_savings(
         self,
         inp: runner_base.ExecutorInput,
@@ -634,23 +645,41 @@ class LLMExecutor(runner_base.BaseExecutor):
         compaction_state = execution_state.compaction
         if compaction_state is None:
             return
-        prompt_tokens_before = (
-            compaction_state.last_compaction_actual_prompt_tokens_before
-        )
-        if prompt_tokens_before is None:
+        latest_compaction_step_id = compaction_state.latest_compaction_step_id
+        if latest_compaction_step_id is None:
             return
-        prompt_tokens_after = int(usage_stats.prompt_tokens)
+        compaction_step = self._get_latest_compaction_step(
+            inp.execution,
+            latest_compaction_step_id,
+        )
+        _ = usage_stats
+        compaction_summary_state = None
+        if compaction_step is not None:
+            compaction_summary_state = (
+                CompactionSummaryState.model_validate(
+                    compaction_step.state.model_dump(mode="python")
+                )
+                if compaction_step.state is not None
+                else None
+            )
+        if compaction_summary_state is None:
+            return
+        prompt_tokens_before = compaction_summary_state.prompt_tokens_before
+        prompt_tokens_after = compaction_summary_state.prompt_tokens_after
+        if prompt_tokens_before is None or prompt_tokens_after is None:
+            return
         saved_input_tokens = prompt_tokens_before - prompt_tokens_after
-        summary_input_tokens = compaction_state.last_compaction_summary_input_tokens
         logger.info(
             "Context compaction realized",
             prompt_tokens_before=prompt_tokens_before,
             prompt_tokens_after=prompt_tokens_after,
             saved_input_tokens=saved_input_tokens,
-            summary_input_tokens=summary_input_tokens,
+            summary_input_tokens=compaction_summary_state.summary_input_tokens,
+            summary_output_tokens=compaction_summary_state.summary_output_tokens,
         )
         compaction_state.last_compaction_actual_prompt_tokens_before = None
         compaction_state.last_compaction_summary_input_tokens = None
+        compaction_state.latest_compaction_step_id = None
         execution_state.compaction = compaction_state
         inp.execution.state = execution_state
         self.project.history.upsert_node_execution(inp.run, inp.execution)

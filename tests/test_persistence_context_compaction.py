@@ -34,8 +34,8 @@ def test_persistence_round_trip_preserves_step_owned_compaction_state() -> None:
         state=CompactionSummaryState(
             compacted_step_ids=[],
             compacted_message_ids=[],
-            tokens_before=120,
-            tokens_after_estimate=45,
+            prompt_tokens_before=120,
+            prompt_tokens_after=45,
             trigger_threshold_ratio=0.5,
         ),
         is_complete=True,
@@ -70,8 +70,8 @@ def test_persistence_round_trip_preserves_step_owned_compaction_state() -> None:
     assert payload["steps_by_id"][str(step.id)]["state"] == {
         "compacted_step_ids": [],
         "compacted_message_ids": [],
-        "tokens_before": 120,
-        "tokens_after_estimate": 45,
+        "prompt_tokens_before": 120,
+        "prompt_tokens_after": 45,
         "summary_input_tokens": None,
         "summary_output_tokens": None,
         "trigger_threshold_ratio": 0.5,

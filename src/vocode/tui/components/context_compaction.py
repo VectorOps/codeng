@@ -37,13 +37,14 @@ class ContextCompactionComponent(tui_renderable_component.RenderableComponentBas
         text.append(f"{summarized_count} step")
         if summarized_count != 1:
             text.append("s")
-        text.append("  ")
-        text.append(f"~{summary_state.tokens_before}", style="yellow")
-        if summary_state.tokens_after_estimate is not None:
-            text.append(" -> ")
-            text.append(
-                f"~{summary_state.tokens_after_estimate}",
-                style="green",
-            )
-        text.append(" tokens")
+        if summary_state.prompt_tokens_before is not None:
+            text.append("  ")
+            text.append(f"{summary_state.prompt_tokens_before}", style="yellow")
+            if summary_state.prompt_tokens_after is not None:
+                text.append(" -> ")
+                text.append(
+                    f"{summary_state.prompt_tokens_after}",
+                    style="green",
+                )
+            text.append(" tokens")
         return text

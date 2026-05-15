@@ -656,8 +656,8 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
         message_id=summary_message.id,
         state=CompactionSummaryState(
             compacted_step_ids=[],
-            tokens_before=1200,
-            tokens_after_estimate=400,
+            prompt_tokens_before=1200,
+            prompt_tokens_after=400,
             trigger_threshold_ratio=0.5,
         ),
     )
@@ -695,8 +695,8 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
     assert payload["steps_by_id"][str(step.id)]["state"] == {
         "compacted_step_ids": [],
         "compacted_message_ids": [],
-        "tokens_before": 1200,
-        "tokens_after_estimate": 400,
+        "prompt_tokens_before": 1200,
+        "prompt_tokens_after": 400,
         "summary_input_tokens": None,
         "summary_output_tokens": None,
         "trigger_threshold_ratio": 0.5,
@@ -766,8 +766,8 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
             state=CompactionSummaryState(
                 compacted_step_ids=[],
                 compacted_message_ids=[old_user.id, old_assistant.id],
-                tokens_before=100,
-                tokens_after_estimate=20,
+                prompt_tokens_before=100,
+                prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -843,8 +843,8 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
             state=CompactionSummaryState(
                 compacted_step_ids=[],
                 compacted_message_ids=[],
-                tokens_before=100,
-                tokens_after_estimate=50,
+                prompt_tokens_before=100,
+                prompt_tokens_after=50,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -870,8 +870,8 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
             state=CompactionSummaryState(
                 compacted_step_ids=[],
                 compacted_message_ids=[middle_user.id],
-                tokens_before=50,
-                tokens_after_estimate=20,
+                prompt_tokens_before=50,
+                prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -961,8 +961,8 @@ def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary(
             state=CompactionSummaryState(
                 compacted_step_ids=[],
                 compacted_message_ids=[old_user.id, old_assistant.id],
-                tokens_before=100,
-                tokens_after_estimate=20,
+                prompt_tokens_before=100,
+                prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,

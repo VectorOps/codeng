@@ -30,6 +30,8 @@ def estimate_message_tokens(message: state.Message) -> int:
 def estimate_context_tokens(
     prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
 ) -> int:
+    # Token estimation is reserved for internal compaction decisions only.
+    # Never surface estimated token counts in user-facing UI or logs.
     return sum(estimate_message_tokens(message) for message, _ in prompt_messages)
 
 

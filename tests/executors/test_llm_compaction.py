@@ -117,8 +117,8 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
             state=service_mod.CompactionSummaryState(
                 compacted_step_ids=[old_output_step.id],
                 compacted_message_ids=[old_input.id, old_output.id],
-                tokens_before=100,
-                tokens_after_estimate=10,
+                prompt_tokens_before=100,
+                prompt_tokens_after=10,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -167,8 +167,8 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
             state=service_mod.CompactionSummaryState(
                 compacted_step_ids=[],
                 compacted_message_ids=[],
-                tokens_before=100,
-                tokens_after_estimate=60,
+                prompt_tokens_before=100,
+                prompt_tokens_after=60,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -194,8 +194,8 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
             state=service_mod.CompactionSummaryState(
                 compacted_step_ids=[],
                 compacted_message_ids=[middle_user.id],
-                tokens_before=60,
-                tokens_after_estimate=20,
+                prompt_tokens_before=60,
+                prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -467,6 +467,8 @@ async def test_maybe_compact_execution_history_records_summary_usage(
     summary_state = service_mod.CompactionSummaryState.model_validate(
         compaction_step.state.model_dump(mode="python")
     )
+    assert summary_state.prompt_tokens_before == 1000
+    assert summary_state.prompt_tokens_after == 45
     assert summary_state.summary_input_tokens == 321
     assert summary_state.summary_output_tokens == 45
     assert summary_state.compacted_message_ids
@@ -557,7 +559,13 @@ async def test_maybe_compact_execution_history_adjusts_retained_tail_usage(
     )
 
     async def _fake_generate_summary_message_text(*args, **kwargs):
-        return "summary", None
+        return (
+            "summary",
+            state.LLMUsageStats(
+                prompt_tokens=111,
+                completion_tokens=50,
+            ),
+        )
 
     monkeypatch.setattr(
         service_mod,
@@ -588,12 +596,8 @@ async def test_maybe_compact_execution_history_adjusts_retained_tail_usage(
     )
 
     assert compaction_step is not None
-    summary_message = compaction_step.message
-    assert summary_message is not None
-    remaining_pairs = [(retained_assistant, retained_step), (recent_user, None)]
-    expected_delta = estimated_context_tokens - estimation_mod.estimate_context_tokens(
-        [(summary_message, None)] + remaining_pairs
-    )
+    expected_keep_recent_budget = int(2000 * 0.1)
+    expected_delta = 900 - (expected_keep_recent_budget + 50)
     assert retained_assistant.llm_usage is not None
     assert retained_assistant.llm_usage.prompt_tokens == 900 - expected_delta
     assert retained_assistant.llm_usage.completion_tokens == 30
