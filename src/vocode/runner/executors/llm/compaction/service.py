@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from typing import List, Optional
 
@@ -9,6 +10,7 @@ from vocode import models, state
 from vocode.logger import logger
 from vocode.runner import base as runner_base
 from .estimation import estimate_context_tokens, estimate_message_tokens
+from .estimation import get_threshold_context_tokens
 from .models import CompactionPreparationResult
 from .models import CompactionSettings
 from .models import LLMExecutionState
@@ -34,6 +36,81 @@ def _build_summary_usage(
         cost_dollars=0.0,
         model_name=model_name,
     )
+
+
+def _message_character_count(message: state.Message) -> int:
+    total = len(message.text or "")
+    total += len(message.thinking_content or "")
+    for req in message.tool_call_requests:
+        total += len(req.name)
+        total += len(json.dumps(req.arguments, sort_keys=True))
+    for resp in message.tool_call_responses:
+        total += len(resp.name)
+        if resp.result is not None:
+            total += len(json.dumps(resp.result, sort_keys=True))
+    return total
+
+
+def _messages_character_count(messages: List[state.Message]) -> int:
+    return sum(_message_character_count(message) for message in messages)
+
+
+def _get_message_prompt_tokens(message: state.Message) -> Optional[int]:
+    if message.llm_usage is None:
+        return None
+    return int(message.llm_usage.prompt_tokens)
+
+
+def _resolve_summary_model_name(
+    settings: CompactionSettings,
+    current_model: Optional[str],
+) -> Optional[str]:
+    return settings.summary_model or current_model
+
+
+def _resolve_threshold_token_source(
+    prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
+) -> str:
+    for message, _ in reversed(prompt_messages):
+        if message.llm_usage is not None:
+            return "last_message_usage"
+    return "estimated_context"
+
+
+def _get_latest_prompt_tokens(
+    prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
+) -> Optional[int]:
+    for message, _ in reversed(prompt_messages):
+        if message.llm_usage is None:
+            continue
+        return int(message.llm_usage.prompt_tokens)
+    return None
+
+
+def _apply_compaction_prompt_usage_delta(
+    history: Any,
+    workflow_execution: state.WorkflowExecution,
+    remaining_pairs: List[tuple[state.Message, Optional[state.Step]]],
+    prompt_token_delta: int,
+) -> None:
+    if prompt_token_delta <= 0:
+        return
+    for message, step in remaining_pairs:
+        message_usage = message.llm_usage
+        if message_usage is not None:
+            message_usage.prompt_tokens = max(
+                0,
+                int(message_usage.prompt_tokens) - prompt_token_delta,
+            )
+            history.upsert_message(workflow_execution, message)
+        if step is None or step.llm_usage is None:
+            continue
+        if step.llm_usage is not message_usage:
+            step.llm_usage.prompt_tokens = max(
+                0,
+                int(step.llm_usage.prompt_tokens) - prompt_token_delta,
+            )
+        history.upsert_step(workflow_execution, step)
 
 
 class CompactionSummaryGenerationError(Exception):
@@ -213,18 +290,6 @@ async def generate_summary_message_text(
         if settings.summary_reasoning_effort is not None
         else current_reasoning_effort
     )
-    logger.info(
-        "Compaction summary generation started",
-        current_model=current_model,
-        summary_model=summary_model,
-        summary_provider=summary_provider,
-        summary_model_overridden=(settings.summary_model is not None),
-        summary_temperature=summary_temperature,
-        summary_temperature_overridden=(settings.summary_temperature is not None),
-        summary_reasoning_effort=summary_reasoning_effort,
-        summary_reasoning_overridden=(settings.summary_reasoning_effort is not None),
-        summarized_messages_count=len(summarized_messages),
-    )
     prompt = build_summary_generation_prompt(previous_summary, transcript, settings)
     request = connect.GenerateRequest(
         messages=[connect.UserMessage(content=prompt)],
@@ -251,23 +316,12 @@ async def generate_summary_message_text(
     except connect.ConnectError as exc:
         logger.warning(
             "Compaction summary generation failed",
-            current_model=current_model,
             summary_model=summary_model,
             summary_provider=summary_provider,
-            summary_model_overridden=(settings.summary_model is not None),
-            summary_temperature=summary_temperature,
-            summary_temperature_overridden=(settings.summary_temperature is not None),
-            summary_reasoning_effort=summary_reasoning_effort,
-            summary_reasoning_overridden=(
-                settings.summary_reasoning_effort is not None
-            ),
             summarized_messages_count=len(summarized_messages),
             status_code=exc.error.status_code,
             code=exc.error.code,
-            provider=exc.error.provider,
-            api_family=exc.error.api_family,
             retryable=exc.error.retryable,
-            raw=exc.error.raw,
             err=exc,
         )
         if not exc.error.retryable:
@@ -281,16 +335,8 @@ async def generate_summary_message_text(
     except Exception as exc:
         logger.warning(
             "Compaction summary generation failed",
-            current_model=current_model,
             summary_model=summary_model,
             summary_provider=summary_provider,
-            summary_model_overridden=(settings.summary_model is not None),
-            summary_temperature=summary_temperature,
-            summary_temperature_overridden=(settings.summary_temperature is not None),
-            summary_reasoning_effort=summary_reasoning_effort,
-            summary_reasoning_overridden=(
-                settings.summary_reasoning_effort is not None
-            ),
             summarized_messages_count=len(summarized_messages),
             err=exc,
         )
@@ -300,18 +346,6 @@ async def generate_summary_message_text(
     ).strip()
     if not summary_text:
         return build_summary_message_text(summarized_messages, settings), None
-    logger.info(
-        "Compaction summary generation completed",
-        current_model=current_model,
-        summary_model=summary_model,
-        summary_provider=summary_provider,
-        summary_model_overridden=(settings.summary_model is not None),
-        summary_temperature=summary_temperature,
-        summary_temperature_overridden=(settings.summary_temperature is not None),
-        summary_reasoning_effort=summary_reasoning_effort,
-        summary_reasoning_overridden=(settings.summary_reasoning_effort is not None),
-        summary_chars=len(summary_text),
-    )
     return build_summary_message_envelope(summary_text, settings), _build_summary_usage(
         response,
         summary_model,
@@ -339,6 +373,7 @@ async def maybe_compact_execution_history(
         return None
     summarized_pairs = prompt_messages[:summarize_count]
     summarized_messages = [message for message, _ in summarized_pairs]
+    remaining_pairs = prompt_messages[summarize_count:]
     compacted_step_ids = [
         step.id
         for _, step in summarized_pairs
@@ -351,15 +386,64 @@ async def maybe_compact_execution_history(
     if workflow_execution is None:
         raise ValueError("NodeExecution is not attached to a workflow execution")
 
-    summary_text, summary_usage = await generate_summary_message_text(
-        credential_manager,
-        summarized_messages,
+    summary_model = _resolve_summary_model_name(
         preparation.settings,
         preparation.current_model,
-        preparation.current_temperature,
-        preparation.current_reasoning_effort,
-        preparation.provider_options,
     )
+    actual_prompt_tokens_before = _get_latest_prompt_tokens(prompt_messages)
+    keep_recent_budget = (
+        int(
+            float(preparation.input_token_limit)
+            * preparation.settings.keep_recent_ratio
+        )
+        if preparation.input_token_limit is not None
+        else None
+    )
+    total_chars = _messages_character_count([message for message, _ in prompt_messages])
+    logger.info(
+        "Context compaction started",
+        summary_model=summary_model,
+        prompt_messages_before=len(prompt_messages),
+        summarized_messages_count=len(summarized_messages),
+        retained_messages_count=len(remaining_pairs),
+        total_chars=total_chars,
+        prompt_tokens_before=actual_prompt_tokens_before,
+        input_token_limit=preparation.input_token_limit,
+        trigger_threshold_tokens=(
+            int(
+                float(preparation.input_token_limit)
+                * preparation.settings.trigger_threshold_ratio
+            )
+            if preparation.input_token_limit is not None
+            else None
+        ),
+        keep_recent_budget_tokens=keep_recent_budget,
+    )
+
+    try:
+        summary_text, summary_usage = await generate_summary_message_text(
+            credential_manager,
+            summarized_messages,
+            preparation.settings,
+            preparation.current_model,
+            preparation.current_temperature,
+            preparation.current_reasoning_effort,
+            preparation.provider_options,
+        )
+    except CompactionSummaryGenerationError as exc:
+        logger.warning(
+            "Context compaction finished",
+            status="failed",
+            summary_model=exc.summary_model,
+            prompt_messages_before=len(prompt_messages),
+            summarized_messages_count=len(summarized_messages),
+            retained_messages_count=len(remaining_pairs),
+            total_chars=total_chars,
+            prompt_tokens_before=actual_prompt_tokens_before,
+            status_code=exc.cause.error.status_code,
+            code=exc.cause.error.code,
+        )
+        raise
     summary_message = state.Message(
         role=models.Role.SYSTEM,
         text=summary_text,
@@ -380,9 +464,18 @@ async def maybe_compact_execution_history(
         ),
     )
     history.upsert_message(workflow_execution, summary_message)
-    remaining_pairs = prompt_messages[summarize_count:]
     final_token_estimate = estimate_context_tokens(
         [(summary_message, None)] + remaining_pairs
+    )
+    prompt_token_delta = max(
+        0,
+        preparation.estimated_context_tokens - final_token_estimate,
+    )
+    _apply_compaction_prompt_usage_delta(
+        history,
+        workflow_execution,
+        remaining_pairs,
+        prompt_token_delta,
     )
     summary_state = get_compaction_summary_state(summary_message)
     if summary_state is None:
@@ -390,12 +483,22 @@ async def maybe_compact_execution_history(
     summary_state.tokens_after_estimate = final_token_estimate
     summary_message.state = summary_state
     history.upsert_message(workflow_execution, summary_message)
+    final_pairs = [(summary_message, None)] + remaining_pairs
+    final_threshold_tokens = get_threshold_context_tokens(
+        final_pairs,
+        final_token_estimate,
+    )
     logger.info(
-        "Context compaction completed",
-        source_tokens=preparation.estimated_context_tokens,
-        final_tokens=final_token_estimate,
+        "Context compaction finished",
+        status="completed",
+        summary_model=summary_model,
+        prompt_messages_before=len(prompt_messages),
+        prompt_messages_after=len(final_pairs),
         summarized_messages_count=len(summarized_messages),
-        remaining_messages_count=len(remaining_pairs),
+        retained_messages_count=len(remaining_pairs),
+        total_chars=total_chars,
+        prompt_tokens_before=actual_prompt_tokens_before,
+        summary_chars=len(summary_text),
         summary_input_tokens=(
             int(summary_usage.prompt_tokens) if summary_usage is not None else None
         ),
@@ -426,6 +529,10 @@ async def maybe_compact_execution_history(
             latest_compaction_message_id=summary_message.id,
             compaction_count=compaction_count + 1,
             last_compaction_tokens_before=preparation.estimated_context_tokens,
+            last_compaction_actual_prompt_tokens_before=actual_prompt_tokens_before,
+            last_compaction_summary_input_tokens=(
+                int(summary_usage.prompt_tokens) if summary_usage is not None else None
+            ),
         ),
     )
     history.upsert_node_execution(workflow_execution, execution)
@@ -446,11 +553,28 @@ def select_compaction_cut_index(
         1, int(float(input_token_limit) * settings.keep_recent_ratio)
     )
     accumulated_tokens = 0
+    pending_estimated_tokens = 0
+    newer_prompt_tokens: Optional[int] = None
 
     for index in range(len(prompt_messages) - 1, -1, -1):
         message, step = prompt_messages[index]
-        accumulated_tokens += estimate_message_tokens(message)
-        if accumulated_tokens < keep_recent_budget:
+        prompt_tokens = _get_message_prompt_tokens(message)
+        if prompt_tokens is None:
+            estimated_tokens = estimate_message_tokens(message)
+            if newer_prompt_tokens is None:
+                accumulated_tokens += estimated_tokens
+            else:
+                pending_estimated_tokens += estimated_tokens
+        elif newer_prompt_tokens is None:
+            accumulated_tokens += estimate_message_tokens(message)
+            newer_prompt_tokens = prompt_tokens
+        else:
+            accumulated_tokens += max(0, newer_prompt_tokens - prompt_tokens)
+            newer_prompt_tokens = prompt_tokens
+            pending_estimated_tokens = 0
+
+        current_tail_tokens = accumulated_tokens + pending_estimated_tokens
+        if current_tail_tokens < keep_recent_budget:
             continue
         primary_index = _find_boundary_index(
             prompt_messages,

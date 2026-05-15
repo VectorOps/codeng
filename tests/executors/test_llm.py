@@ -857,11 +857,7 @@ async def test_llm_executor_emits_preview_usage_before_request(
     assert first_step.type == state.StepType.OUTPUT_MESSAGE
     assert first_step.is_complete is False
     assert first_step.message is None
-    assert first_step.llm_usage is not None
-    assert first_step.llm_usage.prompt_tokens == 0
-    assert first_step.llm_usage.completion_tokens == 0
-    assert first_step.llm_usage.cost_dollars == 0.0
-    assert first_step.llm_usage.model_name == "gpt-3.5-turbo"
+    assert first_step.llm_usage is None
 
     async for _ in agen:
         pass
@@ -870,7 +866,7 @@ async def test_llm_executor_emits_preview_usage_before_request(
 
 
 @pytest.mark.asyncio
-async def test_llm_executor_preview_usage_estimates_prompt_from_visible_history(
+async def test_llm_executor_preview_usage_uses_last_real_message_usage_from_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_count = {"n": 0}
@@ -903,7 +899,15 @@ async def test_llm_executor_preview_usage_estimates_prompt_from_visible_history(
     )
 
     first_user = state.Message(role=models.Role.USER, text="12345678")
-    assistant = state.Message(role=models.Role.ASSISTANT, text="done")
+    assistant = state.Message(
+        role=models.Role.ASSISTANT,
+        text="done",
+        llm_usage=state.LLMUsageStats(
+            prompt_tokens=10,
+            completion_tokens=3,
+            cost_dollars=0.2,
+        ),
+    )
     trailing_user = state.Message(role=models.Role.USER, text="1234")
     for message in [first_user, assistant, trailing_user]:
         history.upsert_message(run, message)
@@ -925,7 +929,7 @@ async def test_llm_executor_preview_usage_estimates_prompt_from_visible_history(
             execution_id=execution.id,
             type=state.StepType.OUTPUT_MESSAGE,
             message_id=assistant.id,
-            llm_usage=state.LLMUsageStats(prompt_tokens=10, completion_tokens=3),
+            llm_usage=assistant.llm_usage,
             is_complete=True,
         ),
     )
@@ -945,8 +949,10 @@ async def test_llm_executor_preview_usage_estimates_prompt_from_visible_history(
 
     assert call_count["n"] == 0
     assert first_step.llm_usage is not None
-    assert first_step.llm_usage.prompt_tokens == 4
-    assert first_step.llm_usage.completion_tokens == 0
+    assert first_step.llm_usage.prompt_tokens == 10
+    assert first_step.llm_usage.completion_tokens == 3
+    assert first_step.llm_usage.cost_dollars == 0.2
+    assert first_step.llm_usage.model_name == "gpt-3.5-turbo"
 
     async for _ in agen:
         pass
@@ -1216,14 +1222,16 @@ async def test_llm_executor_persists_compaction_step_before_request(
     compaction_logs = [
         record
         for record in caplog.records
-        if "Context compaction completed" in record.getMessage()
+        if "Context compaction finished" in record.getMessage()
     ]
     assert len(compaction_logs) == 1
     log_message = compaction_logs[0].getMessage()
-    assert "source_tokens" in log_message
-    assert "18" in log_message
-    assert "final_tokens" in log_message
-    assert "34" in log_message
+    assert "status" in log_message
+    assert "completed" in log_message
+    assert "prompt_messages_before" in log_message
+    assert "prompt_messages_after" in log_message
+    assert "summary_input_tokens" in log_message
+    assert "summary_output_tokens" in log_message
 
     assert len(captured_requests) == 2
     summary_request = captured_requests[0]
@@ -1287,8 +1295,9 @@ def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() ->
         ),
     )
 
+    inp = ExecutorInput(execution=execution, run=run)
     system_prompt, messages = executor.build_connect_messages(
-        ExecutorInput(execution=execution, run=run)
+        executor._iter_prompt_messages(inp)
     )
 
     assert system_prompt is not None
@@ -1800,12 +1809,150 @@ async def test_llm_executor_prepare_compaction_uses_last_message_usage_for_thres
     result = executor._prepare_compaction(ExecutorInput(execution=execution, run=run))
 
     assert result.estimated_context_tokens == 8
-    assert result.threshold_context_tokens == 74
+    assert result.threshold_context_tokens == 71
     assert result.should_compact is True
 
 
 @pytest.mark.asyncio
-async def test_llm_executor_preview_usage_reuses_last_step_stats(
+async def test_llm_executor_logs_realized_compaction_savings_from_actual_usage(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    summary_requests: List[Any] = []
+    stream_requests: List[Any] = []
+    summary_response = connect.AssistantMessage(
+        provider="openai",
+        model="gpt-3.5-turbo",
+        api_family="openai-responses",
+        content=[connect.TextBlock(text="condensed summary")],
+        finish_reason="stop",
+        usage=connect.Usage(
+            input_tokens=9,
+            output_tokens=4,
+            total_tokens=13,
+            completeness="final",
+        ),
+    )
+    response = connect.AssistantMessage(
+        provider="openai",
+        model="gpt-3.5-turbo",
+        api_family="openai-responses",
+        content=[connect.TextBlock(text="after compaction")],
+        finish_reason="stop",
+        usage=connect.Usage(
+            input_tokens=20,
+            output_tokens=6,
+            total_tokens=26,
+            completeness="final",
+        ),
+    )
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: SummaryThenStreamAsyncLLMClient(
+            summary_response,
+            FakeStreamHandle(
+                [
+                    connect.TextDeltaEvent(index=0, delta="after compaction"),
+                    connect.ResponseEndEvent(response=response),
+                ],
+                final_response=response,
+            ),
+            summary_requests,
+            stream_requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-realized-compaction-savings",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 50},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-realized-compaction-savings",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 120)
+    assistant = state.Message(
+        role=models.Role.ASSISTANT,
+        text="older assistant",
+        llm_usage=state.LLMUsageStats(
+            prompt_tokens=71,
+            completion_tokens=3,
+        ),
+    )
+    trailing_user = state.Message(role=models.Role.USER, text="tail")
+    for message in [old_user, assistant, trailing_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant.id,
+            llm_usage=assistant.llm_usage,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=trailing_user.id,
+            is_complete=True,
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="vocode"):
+        async for _ in executor.run(ExecutorInput(execution=execution, run=run)):
+            pass
+
+    realized_logs = [
+        record
+        for record in caplog.records
+        if "Context compaction realized" in record.getMessage()
+    ]
+    assert len(realized_logs) == 1
+    realized_message = realized_logs[0].getMessage()
+    assert "prompt_tokens_before" in realized_message
+    assert "71" in realized_message
+    assert "prompt_tokens_after" in realized_message
+    assert "20" in realized_message
+    assert "saved_input_tokens" in realized_message
+    assert "51" in realized_message
+    assert "summary_input_tokens" in realized_message
+    assert "9" in realized_message
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_preview_usage_ignores_run_last_step_stats_without_lineage_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_count = {"n": 0}
@@ -1838,16 +1985,114 @@ async def test_llm_executor_preview_usage_reuses_last_step_stats(
     first_step = await agen.__anext__()
 
     assert call_count["n"] == 0
-    assert first_step.llm_usage is not None
-    assert first_step.llm_usage.prompt_tokens == 21
-    assert first_step.llm_usage.completion_tokens == 8
-    assert first_step.llm_usage.cost_dollars == 0.75
-    assert first_step.llm_usage.model_name == "gpt-3.5-turbo"
+    assert first_step.llm_usage is None
 
     async for _ in agen:
         pass
 
     assert call_count["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_preview_usage_uses_last_tool_round_message_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = {"n": 0}
+
+    def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
+        call_count["n"] += 1
+        return FakeAsyncLLMClient(_stream_with_text("preview response"), **kwargs)
+
+    monkeypatch.setattr(connect, "AsyncLLMClient", fake_client_factory)
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-preview-tool-round-usage",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-preview-tool-round-usage",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    assistant = state.Message(
+        role=models.Role.ASSISTANT,
+        text="tool round",
+        tool_call_requests=[
+            state.ToolCallReq(id="call-1", name="echo", arguments={"x": 1})
+        ],
+        tool_call_responses=[
+            state.ToolCallResp(
+                id="call-1",
+                name="echo",
+                status=state.ToolCallStatus.COMPLETED,
+                result={"ok": True},
+            )
+        ],
+        llm_usage=state.LLMUsageStats(
+            prompt_tokens=33,
+            completion_tokens=7,
+            cost_dollars=0.5,
+        ),
+    )
+    trailing_user = state.Message(role=models.Role.USER, text="continue")
+    for message in [assistant, trailing_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant.id,
+            llm_usage=assistant.llm_usage,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=trailing_user.id,
+            is_complete=True,
+        ),
+    )
+
+    agen = executor.run(ExecutorInput(execution=execution, run=run))
+    first_step = await agen.__anext__()
+
+    assert call_count["n"] == 0
+    assert first_step.llm_usage is not None
+    assert first_step.llm_usage.prompt_tokens == 33
+    assert first_step.llm_usage.completion_tokens == 7
+    assert first_step.llm_usage.cost_dollars == 0.5
+    assert first_step.llm_usage.model_name == "gpt-3.5-turbo"
+
+    steps = [first_step]
+    async for step in agen:
+        steps.append(step)
+
+    assert call_count["n"] == 1
+    final_step = [step for step in steps if step.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert final_step.llm_usage is not None
+    assert final_step.llm_usage.prompt_tokens == 5
+    assert final_step.llm_usage.completion_tokens == len("preview response")
 
 
 @pytest.mark.asyncio
@@ -3577,13 +3822,12 @@ async def test_llm_executor_uses_compaction_model_override(
     start_logs = [
         record
         for record in caplog.records
-        if "Compaction summary generation started" in record.getMessage()
+        if "Context compaction started" in record.getMessage()
     ]
     assert len(start_logs) == 1
     assert "summary_model" in start_logs[0].getMessage()
     assert "openai/gpt-4.1-mini" in start_logs[0].getMessage()
-    assert "summary_provider" in start_logs[0].getMessage()
-    assert "openai" in start_logs[0].getMessage()
+    assert "trigger_threshold_tokens" in start_logs[0].getMessage()
 
 
 @pytest.mark.asyncio
@@ -3686,11 +3930,14 @@ async def test_llm_executor_rejects_on_permanent_compaction_summary_error(
     failure_logs = [
         record
         for record in caplog.records
-        if "Compaction summary generation failed" in record.getMessage()
+        if "Context compaction finished" in record.getMessage()
     ]
     assert len(failure_logs) == 1
-    assert "retryable" in failure_logs[0].getMessage()
-    assert "False" in failure_logs[0].getMessage()
+    failure_message = failure_logs[0].getMessage()
+    assert "status" in failure_message
+    assert "failed" in failure_message
+    assert "status_code" in failure_message
+    assert "400" in failure_message
 
 
 @pytest.mark.asyncio

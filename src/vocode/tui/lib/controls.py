@@ -10,6 +10,7 @@ SYNC_UPDATE_END: typing.Final[str] = "\x1b[?2026l"
 ERASE_SCROLLBACK: typing.Final[str] = "\x1b[3J"
 ERASE_SCREEN: typing.Final[str] = "\x1b[2J"
 CURSOR_HOME: typing.Final[str] = "\x1b[H"
+SCREEN_CLEAR: typing.Final[str] = "\x1b[H\x1b[2J"
 FULL_CLEAR: typing.Final[str] = "\x1b[H\x1b[2J\x1b[3J"
 CURSOR_COLUMN_1: typing.Final[str] = "\x1b[1G"
 ERASE_DOWN: typing.Final[str] = "\x1b[J"
@@ -38,6 +39,10 @@ class CustomControl(rich_control.Control):
     @classmethod
     def erase_scrollback(cls) -> "CustomControl":
         return cls(ERASE_SCROLLBACK)
+
+    @classmethod
+    def screen_clear(cls) -> "CustomControl":
+        return cls(SCREEN_CLEAR)
 
     @classmethod
     def full_clear(cls) -> "CustomControl":

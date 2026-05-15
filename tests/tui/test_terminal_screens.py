@@ -8,6 +8,7 @@ from rich import console as rich_console
 from vocode.tui import lib as tui_terminal
 from vocode.tui.lib import controls as tui_controls
 from vocode.tui.lib.input import base as input_base
+from vocode.tui.screens import base_viewer
 import pytest
 
 
@@ -47,6 +48,22 @@ async def test_push_and_pop_screen_alt_buffer_and_render() -> None:
 
     output = buffer.getvalue()
     assert tui_controls.ALT_SCREEN_EXIT in output
+    assert output.count(tui_controls.ALT_SCREEN_EXIT) == 1
+
+
+@pytest.mark.asyncio
+async def test_text_viewer_screen_does_not_erase_scrollback() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    terminal = tui_terminal.Terminal(console=console)
+
+    screen = base_viewer.TextViewerScreen(terminal=terminal, text="line")
+    terminal.push_screen(screen)
+
+    output = buffer.getvalue()
+    assert tui_controls.ALT_SCREEN_ENTER in output
+    assert tui_controls.SCREEN_CLEAR in output
+    assert tui_controls.ERASE_SCROLLBACK not in output
 
 
 @pytest.mark.asyncio

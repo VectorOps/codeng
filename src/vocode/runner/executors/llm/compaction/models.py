@@ -33,6 +33,8 @@ class LLMExecutionCompactionState(BaseModel):
     latest_compaction_message_id: Optional[UUID] = None
     compaction_count: int = 0
     last_compaction_tokens_before: Optional[int] = None
+    last_compaction_actual_prompt_tokens_before: Optional[int] = None
+    last_compaction_summary_input_tokens: Optional[int] = None
 
 
 class LLMExecutionState(BaseModel):

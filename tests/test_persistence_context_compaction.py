@@ -56,6 +56,8 @@ def test_persistence_round_trip_preserves_message_owned_compaction_state() -> No
             "latest_compaction_message_id": str(summary_message.id),
             "compaction_count": 1,
             "last_compaction_tokens_before": 120,
+            "last_compaction_actual_prompt_tokens_before": None,
+            "last_compaction_summary_input_tokens": None,
         },
     }
     assert payload["messages_by_id"][str(summary_message.id)]["state"] == {

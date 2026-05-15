@@ -217,7 +217,7 @@ class LLMExecutor(runner_base.BaseExecutor):
 
     def build_connect_messages(
         self,
-        inp: runner_base.ExecutorInput,
+        prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
     ) -> tuple[Optional[str], List[connect.Message]]:
         cfg = self.config
 
@@ -233,7 +233,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             collected_messages.append(system_message)
             message_steps[str(system_message.id)] = None
 
-        for msg, step in self._iter_prompt_messages(inp):
+        for msg, step in prompt_messages:
             if step is not None and step.type not in INCLUDED_STEP_TYPES:
                 continue
             collected_messages.append(msg)
@@ -262,12 +262,6 @@ class LLMExecutor(runner_base.BaseExecutor):
         final_system_prompt: Optional[str] = None
         if system_prompt_parts:
             final_system_prompt = "\n\n".join(system_prompt_parts)
-
-        if not connect_messages:
-            for msg in inp.execution.input_messages:
-                connect_messages.extend(
-                    self._build_connect_messages_for_message(msg, None)
-                )
 
         return final_system_prompt, connect_messages
 
@@ -601,32 +595,56 @@ class LLMExecutor(runner_base.BaseExecutor):
             or execution_state.compaction.latest_compaction_message_id is None
         ):
             return False, None, None
-        return True, self.build_connect_messages(inp), None
+        rebuilt_prompt_messages = self._iter_prompt_messages(inp)
+        return True, self.build_connect_messages(rebuilt_prompt_messages), None
 
-    def _build_preview_usage(
+    def _build_last_known_usage(
+        self,
+        prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
+    ) -> Optional[state.LLMUsageStats]:
+        for message, _ in reversed(prompt_messages):
+            usage = message.llm_usage
+            if usage is None:
+                continue
+            return state.LLMUsageStats(
+                prompt_tokens=int(usage.prompt_tokens or 0),
+                completion_tokens=int(usage.completion_tokens or 0),
+                cost_dollars=float(usage.cost_dollars or 0.0),
+                model_name=self.config.model,
+                input_token_limit=llm_helpers.resolve_model_token_limit(self.config),
+                output_token_limit=self.config.max_tokens,
+            )
+        return None
+
+    def _maybe_log_compaction_realized_savings(
         self,
         inp: runner_base.ExecutorInput,
-    ) -> state.LLMUsageStats:
-        prior_usage = inp.run.last_step_llm_usage
-        prompt_messages = self._iter_prompt_messages(inp)
-        estimated_prompt_tokens = (
-            prior_usage.prompt_tokens if prior_usage is not None else 0
+        execution_state: LLMExecutionState,
+        usage_stats: state.LLMUsageStats,
+    ) -> None:
+        compaction_state = execution_state.compaction
+        if compaction_state is None:
+            return
+        prompt_tokens_before = (
+            compaction_state.last_compaction_actual_prompt_tokens_before
         )
-        if any(
-            step is not None and step.llm_usage is not None
-            for _, step in prompt_messages
-        ):
-            estimated_prompt_tokens = estimate_context_tokens(prompt_messages)
-        return state.LLMUsageStats(
-            prompt_tokens=estimated_prompt_tokens,
-            completion_tokens=(
-                prior_usage.completion_tokens if prior_usage is not None else 0
-            ),
-            cost_dollars=(prior_usage.cost_dollars if prior_usage is not None else 0.0),
-            model_name=self.config.model,
-            input_token_limit=llm_helpers.resolve_model_token_limit(self.config),
-            output_token_limit=self.config.max_tokens,
+        if prompt_tokens_before is None:
+            return
+        prompt_tokens_after = int(usage_stats.prompt_tokens)
+        saved_input_tokens = max(0, prompt_tokens_before - prompt_tokens_after)
+        summary_input_tokens = compaction_state.last_compaction_summary_input_tokens
+        logger.info(
+            "Context compaction realized",
+            prompt_tokens_before=prompt_tokens_before,
+            prompt_tokens_after=prompt_tokens_after,
+            saved_input_tokens=saved_input_tokens,
+            summary_input_tokens=summary_input_tokens,
         )
+        compaction_state.last_compaction_actual_prompt_tokens_before = None
+        compaction_state.last_compaction_summary_input_tokens = None
+        execution_state.compaction = compaction_state
+        inp.execution.state = execution_state
+        self.project.history.upsert_node_execution(inp.run, inp.execution)
 
     async def run(self, inp: runner_base.ExecutorInput) -> AsyncIterator[state.Step]:
         cfg = self.config
@@ -683,8 +701,10 @@ class LLMExecutor(runner_base.BaseExecutor):
             if rejection_step is not None:
                 yield rejection_step
                 return
+            execution_state = self._get_execution_state(inp.execution)
 
-        system_prompt, connect_messages = self.build_connect_messages(inp)
+        prompt_messages = self._iter_prompt_messages(inp)
+        system_prompt, connect_messages = self.build_connect_messages(prompt_messages)
         effective_specs = llm_helpers.build_effective_tool_specs(self.project, cfg)
         effective_specs.update(self._node_mcp_tool_specs)
         tools = await self._build_connect_tools(effective_specs)
@@ -723,7 +743,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         )
         preview_step = step.model_copy(
             update={
-                "llm_usage": self._build_preview_usage(inp),
+                "llm_usage": self._build_last_known_usage(prompt_messages),
                 "is_complete": False,
             }
         )
@@ -1141,6 +1161,12 @@ class LLMExecutor(runner_base.BaseExecutor):
 
             final_outcome_name = (
                 execution_state.selected_outcome if len(outcome_names) > 1 else None
+            )
+
+            self._maybe_log_compaction_realized_savings(
+                inp,
+                execution_state,
+                usage_stats,
             )
 
             if tool_call_reqs:

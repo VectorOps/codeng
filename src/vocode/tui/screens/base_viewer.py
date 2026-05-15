@@ -173,9 +173,7 @@ class BaseViewerScreen(abc.ABC):
         status = f"{self._cursor_line + 1}/{total} ({percent}%)"
         base_help = "q: quit  j/k, up/down: line  f/b, pgdn/pgup, space: page"
         if self._enable_search:
-            help_text = (
-                f"{base_help}  g/G: top/bottom  /: search  n: next"
-            )
+            help_text = f"{base_help}  g/G: top/bottom  /: search  n: next"
         else:
             help_text = base_help
         separator = (
@@ -213,9 +211,7 @@ class BaseViewerScreen(abc.ABC):
         console.control(tui_controls.CustomControl.sync_update_start())
         if self._first_render:
             console.control(
-                tui_controls.CustomControl.erase_scrollback(),
-                rich_control.Control.clear(),
-                rich_control.Control.home(),
+                tui_controls.CustomControl.screen_clear(),
             )
             self._first_render = False
         else:

@@ -41,7 +41,7 @@ def get_threshold_context_tokens(
         if message.llm_usage is None:
             continue
         usage = message.llm_usage
-        return int(usage.prompt_tokens) + int(usage.completion_tokens)
+        return int(usage.prompt_tokens)
     return estimated_context_tokens
 
 

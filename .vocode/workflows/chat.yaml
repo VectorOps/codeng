@@ -101,7 +101,7 @@ workflows:
         type: input
         message: Enter your request
         confirmation: auto
-        hide_final_output: true
+        output_mode: hide_final
         outcomes:
           - name: done
       - name: llm
@@ -111,7 +111,7 @@ workflows:
         compaction:
           enabled: true
           trigger_threshold_ratio: 0.01
-          keep_recent_ratio: 0.35
+          keep_recent_ratio: 0.002
         tools:
           - summarize_files
           - read_files

@@ -107,7 +107,9 @@ def test_build_connect_messages_with_tool_call_and_tool_result() -> None:
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
 
-    system_prompt, messages = executor.build_connect_messages(inp)
+    system_prompt, messages = executor.build_connect_messages(
+        executor._iter_prompt_messages(inp)
+    )
 
     assert system_prompt is None
     assert len(messages) == 2
@@ -157,7 +159,9 @@ def test_build_connect_messages_applies_preprocessors_to_system_prompt() -> None
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
 
-    system_prompt, messages = executor.build_connect_messages(inp)
+    system_prompt, messages = executor.build_connect_messages(
+        executor._iter_prompt_messages(inp)
+    )
 
     assert system_prompt is not None
     assert system_prompt.startswith("prefix")
@@ -236,7 +240,9 @@ def test_build_connect_messages_keeps_linear_history_order() -> None:
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
 
-    system_prompt, messages = executor.build_connect_messages(inp)
+    system_prompt, messages = executor.build_connect_messages(
+        executor._iter_prompt_messages(inp)
+    )
 
     assert system_prompt == "base system"
     assert len(messages) == 3
@@ -288,7 +294,7 @@ def test_build_connect_messages_copies_llm_step_state_provider_fields_to_message
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=execution, run=run)
 
-    _, messages = executor.build_connect_messages(inp)
+    _, messages = executor.build_connect_messages(executor._iter_prompt_messages(inp))
 
     assert len(messages) == 1
     first = messages[0]
@@ -363,7 +369,7 @@ def test_build_connect_messages_uses_active_history_view_after_user_input_edit()
     executor = LLMExecutor(config=cfg, project=StubProject())
     inp = ExecutorInput(execution=active_execution, run=run)
 
-    _, messages = executor.build_connect_messages(inp)
+    _, messages = executor.build_connect_messages(executor._iter_prompt_messages(inp))
 
     assert len(messages) == 5
     assert isinstance(messages[0], connect.UserMessage)
@@ -449,9 +455,8 @@ def test_build_connect_messages_omits_unresolved_tool_calls_after_history_edit()
     active_execution = run.get_last_step().execution
 
     executor = LLMExecutor(config=cfg, project=StubProject())
-    _, messages = executor.build_connect_messages(
-        ExecutorInput(execution=active_execution, run=run)
-    )
+    inp = ExecutorInput(execution=active_execution, run=run)
+    _, messages = executor.build_connect_messages(executor._iter_prompt_messages(inp))
 
     assert len(messages) == 2
     assert isinstance(messages[0], connect.AssistantMessage)
@@ -677,6 +682,8 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
             "latest_compaction_message_id": str(summary_message.id),
             "compaction_count": 1,
             "last_compaction_tokens_before": None,
+            "last_compaction_actual_prompt_tokens_before": None,
+            "last_compaction_summary_input_tokens": None,
         },
     }
     assert payload["steps_by_id"][str(step.id)]["type"] == "context_compaction"
@@ -785,7 +792,7 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
     executor = LLMExecutor(config=cfg, project=StubProject())
 
     system_prompt, messages = executor.build_connect_messages(
-        ExecutorInput(execution=execution, run=run)
+        executor._iter_prompt_messages(ExecutorInput(execution=execution, run=run))
     )
 
     assert system_prompt == "base system\n\nsummary checkpoint"
@@ -879,7 +886,7 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
     executor = LLMExecutor(config=cfg, project=StubProject())
 
     system_prompt, messages = executor.build_connect_messages(
-        ExecutorInput(execution=execution, run=run)
+        executor._iter_prompt_messages(ExecutorInput(execution=execution, run=run))
     )
 
     assert system_prompt == "second summary"
@@ -967,10 +974,11 @@ def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary(
         ),
     )
 
-    system_prompt, messages = executor = LLMExecutor(
-        config=cfg,
-        project=StubProject(),
-    ).build_connect_messages(ExecutorInput(execution=execution, run=run))
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    inp = ExecutorInput(execution=execution, run=run)
+    system_prompt, messages = executor.build_connect_messages(
+        executor._iter_prompt_messages(inp)
+    )
 
     assert system_prompt == "base system\n\nsummary checkpoint"
     assert len(messages) == 1

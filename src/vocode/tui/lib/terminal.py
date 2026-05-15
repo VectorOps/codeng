@@ -441,8 +441,9 @@ class Terminal:
         screen = self._screens.pop()
         if not self._screens:
             self._console.control(tui_controls.CustomControl.exit_alt_screen())
-            self.enable_auto_render()
-            self._request_auto_render(force=True)
+            if self._auto_render_suppressed > 0:
+                self._auto_render_suppressed -= 1
+            self._auto_render_enabled = self._auto_render_suppressed == 0
         else:
             top = self._screens[-1]
             top.render()
@@ -452,7 +453,7 @@ class Terminal:
         if self._screens:
             self._console.control(tui_controls.CustomControl.sync_update_start())
             self._console.control(
-                tui_controls.CustomControl.full_clear(),
+                tui_controls.CustomControl.screen_clear(),
             )
             self._console.control(tui_controls.CustomControl.sync_update_end())
             top = self._screens[-1]
