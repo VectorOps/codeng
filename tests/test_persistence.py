@@ -13,6 +13,7 @@ from vocode.persistence import codec as persistence_codec
 from vocode.persistence import state_manager as persistence_state_manager
 from vocode.runner.executors.llm.compaction import CompactionSummaryState
 from vocode.runner.executors.llm.compaction import LLMExecutionCompactionState
+from vocode.runner.executors.llm.compaction import LLMExecutionState
 
 
 def _build_sample_execution() -> state.WorkflowExecution:
@@ -228,9 +229,11 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
             workflow_execution=run,
             node="llm-node",
             status=state.RunStatus.RUNNING,
-            state=LLMExecutionCompactionState(
-                compaction_count=1,
-                last_compaction_tokens_before=120,
+            state=LLMExecutionState(
+                compaction=LLMExecutionCompactionState(
+                    compaction_count=1,
+                    last_compaction_tokens_before=120,
+                )
             ),
         ),
     )
@@ -241,6 +244,13 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
         text=(
             "The conversation history before this point was compacted into the following summary:\n\n"
             "<summary>\n## Goal\nContinue task\n</summary>"
+        ),
+        state=CompactionSummaryState(
+            compacted_step_ids=[],
+            compacted_message_ids=[old_user.id],
+            tokens_before=120,
+            tokens_after_estimate=30,
+            trigger_threshold_ratio=0.5,
         ),
     )
     recent_user = state.Message(role=models.Role.USER, text="recent user")
@@ -264,19 +274,15 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
             execution_id=execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
-            state=CompactionSummaryState(
-                compacted_step_ids=[old_step.id],
-                tokens_before=120,
-                tokens_after_estimate=30,
-                trigger_threshold_ratio=0.5,
-            ),
             is_complete=True,
         ),
     )
-    execution.state = LLMExecutionCompactionState(
-        latest_compaction_step_id=compaction_step.id,
-        compaction_count=1,
-        last_compaction_tokens_before=120,
+    execution.state = LLMExecutionState(
+        compaction=LLMExecutionCompactionState(
+            latest_compaction_message_id=compaction_step.message_id,
+            compaction_count=1,
+            last_compaction_tokens_before=120,
+        )
     )
     history.upsert_node_execution(run, execution)
     history.upsert_step(
@@ -294,19 +300,20 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
     restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(run))
 
     restored_execution = restored.get_node_execution(execution.id)
-    restored_state = LLMExecutionCompactionState.model_validate(
+    restored_state = LLMExecutionState.model_validate(
         payload["node_executions"][str(execution.id)]["state"]
     )
-    assert restored_state.latest_compaction_step_id == compaction_step.id
-    assert restored_state.compaction_count == 1
-    assert restored_state.last_compaction_tokens_before == 120
+    assert restored_state.compaction is not None
+    assert restored_state.compaction.latest_compaction_message_id == compaction_step.message_id
+    assert restored_state.compaction.compaction_count == 1
+    assert restored_state.compaction.last_compaction_tokens_before == 120
 
     restored_compaction_step = restored.get_step(compaction_step.id)
     restored_compaction_state = CompactionSummaryState.model_validate(
-        payload["steps_by_id"][str(compaction_step.id)]["state"]
+        payload["messages_by_id"][str(summary.id)]["state"]
     )
     assert restored_compaction_step.type == state.StepType.CONTEXT_COMPACTION
-    assert restored_compaction_state.compacted_step_ids == [old_step.id]
+    assert restored_compaction_state.compacted_message_ids == [old_user.id]
     assert restored_compaction_state.tokens_before == 120
     assert restored_compaction_state.tokens_after_estimate == 30
     assert restored_compaction_state.trigger_threshold_ratio == 0.5

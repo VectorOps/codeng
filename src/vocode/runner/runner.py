@@ -373,6 +373,8 @@ class Runner:
                     state.StepType.INPUT_MESSAGE,
                 ):
                     continue
+                if s.message.role == models.Role.SYSTEM:
+                    continue
                 messages.append(s.message)
             return messages
 

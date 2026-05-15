@@ -2,6 +2,7 @@ from .models import (
     CompactionPreparationResult,
     CompactionSettings,
     CompactionSummaryState,
+    LLMExecutionState,
     LLMExecutionCompactionState,
 )
 from .estimation import estimate_context_tokens, should_trigger_compaction

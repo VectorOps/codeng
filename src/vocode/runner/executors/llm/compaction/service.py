@@ -11,6 +11,7 @@ from vocode.runner import base as runner_base
 from .estimation import estimate_context_tokens, estimate_message_tokens
 from .models import CompactionPreparationResult
 from .models import CompactionSettings
+from .models import LLMExecutionState
 from .models import CompactionSummaryState
 from .models import LLMExecutionCompactionState
 from .prompting import build_summary_generation_prompt
@@ -82,21 +83,29 @@ SUMMARY_HEADER_LINES = [
 ]
 
 
+def get_compaction_summary_state(
+    message: state.Message,
+) -> Optional[CompactionSummaryState]:
+    if message.state is None:
+        return None
+    return CompactionSummaryState.model_validate(
+        message.state.model_dump(mode="python")
+    )
+
+
+def is_compaction_summary_message(message: state.Message) -> bool:
+    return get_compaction_summary_state(message) is not None
+
+
 def collect_prompt_messages(
     execution: state.NodeExecution,
 ) -> List[tuple[state.Message, Optional[state.Step]]]:
     prompt_messages = list(runner_base.iter_execution_messages(execution))
     for index in range(len(prompt_messages) - 1, -1, -1):
         message, step = prompt_messages[index]
-        if step is None:
+        summary_state = get_compaction_summary_state(message)
+        if summary_state is None:
             continue
-        if step.type != state.StepType.CONTEXT_COMPACTION:
-            continue
-        if step.state is None:
-            return prompt_messages[index:]
-        summary_state = CompactionSummaryState.model_validate(
-            step.state.model_dump(mode="python")
-        )
         compacted_step_ids = set(summary_state.compacted_step_ids)
         compacted_message_ids = set(summary_state.compacted_message_ids)
         rebuilt_messages: List[tuple[state.Message, Optional[state.Step]]] = [
@@ -105,10 +114,13 @@ def collect_prompt_messages(
         for retained_message, retained_step in prompt_messages:
             if retained_message.id in compacted_message_ids:
                 continue
+            if get_compaction_summary_state(retained_message) is not None:
+                if retained_message.id != message.id:
+                    continue
             if retained_step is None:
                 rebuilt_messages.append((retained_message, retained_step))
                 continue
-            if retained_step.id == step.id:
+            if step is not None and retained_step.id == step.id:
                 continue
             if retained_step.id in compacted_step_ids:
                 continue
@@ -154,13 +166,9 @@ def build_summary_message_envelope(
     summary_body: str,
     settings: CompactionSettings,
 ) -> str:
-    prompt_system = resolve_compaction_system_prompt(settings)
-    prompt_instructions = resolve_compaction_instructions(settings)
     return (
         "The conversation history before this point was compacted into the following summary:\n\n"
-        f"<summary>\n{summary_body}\n</summary>\n\n"
-        f"<compaction_prompt_system>\n{prompt_system}\n</compaction_prompt_system>\n\n"
-        f"<compaction_prompt_instructions>\n{prompt_instructions}\n</compaction_prompt_instructions>"
+        f"<summary>\n{summary_body}\n</summary>"
     )
 
 
@@ -355,12 +363,33 @@ async def maybe_compact_execution_history(
     summary_message = state.Message(
         role=models.Role.SYSTEM,
         text=summary_text,
+        state=CompactionSummaryState(
+            compacted_step_ids=compacted_step_ids,
+            compacted_message_ids=[message.id for message in summarized_messages],
+            tokens_before=preparation.estimated_context_tokens,
+            tokens_after_estimate=0,
+            summary_input_tokens=(
+                int(summary_usage.prompt_tokens) if summary_usage is not None else None
+            ),
+            summary_output_tokens=(
+                int(summary_usage.completion_tokens)
+                if summary_usage is not None
+                else None
+            ),
+            trigger_threshold_ratio=preparation.settings.trigger_threshold_ratio,
+        ),
     )
     history.upsert_message(workflow_execution, summary_message)
     remaining_pairs = prompt_messages[summarize_count:]
     final_token_estimate = estimate_context_tokens(
         [(summary_message, None)] + remaining_pairs
     )
+    summary_state = get_compaction_summary_state(summary_message)
+    if summary_state is None:
+        raise ValueError("Expected compaction summary state on summary message")
+    summary_state.tokens_after_estimate = final_token_estimate
+    summary_message.state = summary_state
+    history.upsert_message(workflow_execution, summary_message)
     logger.info(
         "Context compaction completed",
         source_tokens=preparation.estimated_context_tokens,
@@ -376,11 +405,11 @@ async def maybe_compact_execution_history(
     )
 
     compaction_count = 0
-    if execution.state is not None:
-        previous_state = LLMExecutionCompactionState.model_validate(
-            execution.state.model_dump(mode="python")
-        )
-        compaction_count = previous_state.compaction_count
+    selected_outcome = None
+    if isinstance(execution.state, LLMExecutionState):
+        selected_outcome = execution.state.selected_outcome
+        if execution.state.compaction is not None:
+            compaction_count = execution.state.compaction.compaction_count
 
     compaction_step = state.Step(
         workflow_execution=workflow_execution,
@@ -388,28 +417,16 @@ async def maybe_compact_execution_history(
         type=state.StepType.CONTEXT_COMPACTION,
         message_id=summary_message.id,
         llm_usage=summary_usage,
-        state=CompactionSummaryState(
-            compacted_step_ids=compacted_step_ids,
-            compacted_message_ids=[message.id for message in summarized_messages],
-            tokens_before=preparation.estimated_context_tokens,
-            tokens_after_estimate=final_token_estimate,
-            summary_input_tokens=(
-                int(summary_usage.prompt_tokens) if summary_usage is not None else None
-            ),
-            summary_output_tokens=(
-                int(summary_usage.completion_tokens)
-                if summary_usage is not None
-                else None
-            ),
-            trigger_threshold_ratio=(preparation.settings.trigger_threshold_ratio),
-        ),
         is_complete=True,
     )
     persisted_step = history.upsert_step(workflow_execution, compaction_step)
-    execution.state = LLMExecutionCompactionState(
-        latest_compaction_step_id=persisted_step.id,
-        compaction_count=compaction_count + 1,
-        last_compaction_tokens_before=preparation.estimated_context_tokens,
+    execution.state = LLMExecutionState(
+        selected_outcome=selected_outcome,
+        compaction=LLMExecutionCompactionState(
+            latest_compaction_message_id=summary_message.id,
+            compaction_count=compaction_count + 1,
+            last_compaction_tokens_before=preparation.estimated_context_tokens,
+        ),
     )
     history.upsert_node_execution(workflow_execution, execution)
     return persisted_step

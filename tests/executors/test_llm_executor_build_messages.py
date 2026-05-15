@@ -7,6 +7,7 @@ from vocode.runner.base import ExecutorInput
 from vocode.runner.executors.llm.compaction import CompactionSettings
 from vocode.runner.executors.llm.compaction import CompactionSummaryState
 from vocode.runner.executors.llm.compaction import LLMExecutionCompactionState
+from vocode.runner.executors.llm.compaction.models import LLMExecutionState
 from vocode.runner.executors.llm.llm import (
     LLMExecutor,
     LLMStepState,
@@ -586,41 +587,50 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
     )
 
     assert cfg.compaction == CompactionSettings()
-    assert state.StepType.CONTEXT_COMPACTION == "context_compaction"
-
-    execution_state = LLMExecutionCompactionState(compaction_count=1)
-    step_state = CompactionSummaryState(
-        compacted_step_ids=[],
-        tokens_before=1200,
-        tokens_after_estimate=400,
-        trigger_threshold_ratio=0.5,
+    summary_message = state.Message(
+        role=models.Role.SYSTEM,
+        text="summary checkpoint",
+        state=CompactionSummaryState(
+            compacted_step_ids=[],
+            tokens_before=1200,
+            tokens_after_estimate=400,
+            trigger_threshold_ratio=0.5,
+        ),
     )
-
     execution = state.NodeExecution(
         node="llm-node",
         input_message_ids=[],
         status=state.RunStatus.RUNNING,
-        state=execution_state,
+        state=LLMExecutionState(
+            compaction=LLMExecutionCompactionState(
+                latest_compaction_message_id=summary_message.id,
+                compaction_count=1,
+            )
+        ),
     )
     step = state.Step(
         execution_id=execution.id,
         type=state.StepType.CONTEXT_COMPACTION,
-        state=step_state,
+        message_id=summary_message.id,
     )
 
     payload = state.WorkflowExecution(
         workflow_name="wf",
         node_executions={execution.id: execution},
         steps_by_id={step.id: step},
+        messages_by_id={summary_message.id: summary_message},
     ).model_dump(mode="json")
 
     assert payload["node_executions"][str(execution.id)]["state"] == {
-        "latest_compaction_step_id": None,
-        "compaction_count": 1,
-        "last_compaction_tokens_before": None,
+        "selected_outcome": None,
+        "compaction": {
+            "latest_compaction_message_id": str(summary_message.id),
+            "compaction_count": 1,
+            "last_compaction_tokens_before": None,
+        },
     }
     assert payload["steps_by_id"][str(step.id)]["type"] == "context_compaction"
-    assert payload["steps_by_id"][str(step.id)]["state"] == {
+    assert payload["messages_by_id"][str(summary_message.id)]["state"] == {
         "compacted_step_ids": [],
         "compacted_message_ids": [],
         "tokens_before": 1200,
@@ -653,7 +663,17 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
 
     old_user = state.Message(role=models.Role.USER, text="old user")
     old_assistant = state.Message(role=models.Role.ASSISTANT, text="old assistant")
-    summary = state.Message(role=models.Role.SYSTEM, text="summary checkpoint")
+    summary = state.Message(
+        role=models.Role.SYSTEM,
+        text="summary checkpoint",
+        state=CompactionSummaryState(
+            compacted_step_ids=[],
+            compacted_message_ids=[old_user.id, old_assistant.id],
+            tokens_before=100,
+            tokens_after_estimate=20,
+            trigger_threshold_ratio=0.5,
+        ),
+    )
     recent_user = state.Message(role=models.Role.USER, text="recent user")
     recent_assistant = state.Message(
         role=models.Role.ASSISTANT, text="recent assistant"
@@ -746,7 +766,21 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
 
     first_summary = state.Message(role=models.Role.SYSTEM, text="first summary")
     middle_user = state.Message(role=models.Role.USER, text="middle user")
+    first_summary.state = CompactionSummaryState(
+        compacted_step_ids=[],
+        compacted_message_ids=[],
+        tokens_before=100,
+        tokens_after_estimate=50,
+        trigger_threshold_ratio=0.5,
+    )
     second_summary = state.Message(role=models.Role.SYSTEM, text="second summary")
+    second_summary.state = CompactionSummaryState(
+        compacted_step_ids=[],
+        compacted_message_ids=[middle_user.id],
+        tokens_before=50,
+        tokens_after_estimate=20,
+        trigger_threshold_ratio=0.5,
+    )
     final_user = state.Message(role=models.Role.USER, text="final user")
     for msg in [first_summary, middle_user, second_summary, final_user]:
         history.upsert_message(run, msg)
@@ -802,3 +836,91 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
     assert len(messages) == 1
     assert isinstance(messages[0], connect.UserMessage)
     assert messages[0].content == "final user"
+
+
+def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary() -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+        system="base system",
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="old user")
+    old_assistant = state.Message(role=models.Role.ASSISTANT, text="old assistant")
+    summary = state.Message(
+        role=models.Role.SYSTEM,
+        text="summary checkpoint",
+        state=CompactionSummaryState(
+            compacted_step_ids=[],
+            compacted_message_ids=[old_user.id, old_assistant.id],
+            tokens_before=100,
+            tokens_after_estimate=20,
+            trigger_threshold_ratio=0.5,
+        ),
+    )
+    recent_user = state.Message(role=models.Role.USER, text="recent user")
+    for message in [old_user, old_assistant, summary, recent_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=old_assistant.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    system_prompt, messages = executor = LLMExecutor(
+        config=cfg,
+        project=StubProject(),
+    ).build_connect_messages(ExecutorInput(execution=execution, run=run))
+
+    assert system_prompt == "base system\n\nsummary checkpoint"
+    assert len(messages) == 1
+    assert isinstance(messages[0], connect.UserMessage)
+    assert messages[0].content == "recent user"

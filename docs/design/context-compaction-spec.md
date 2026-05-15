@@ -1,17 +1,17 @@
 # Context compaction internal spec
 
-This page defines the planned context compaction feature for this repository.
-Use it as the implementation contract for runner, executor, state, and persistence changes.
+This page defines the implemented and intended context compaction contract for this repository.
+Use it as the source of truth for runner, executor, state, UI, and persistence behavior.
 
 ## Quick reference
 
 Context compaction reduces prompt size for long-running LLM nodes by replacing older prompt history with a structured summary while preserving recent turns verbatim.
 
-Initial scope:
+Current scope:
 
 - support LLM node history compaction inside the current workflow execution
 - persist compaction artifacts in workflow state so resumed runs keep the reduced context
-- trigger compaction automatically when estimated context usage consumes too much of the remaining model input budget
+- trigger compaction automatically when estimated context usage consumes too much of the model input budget
 - allow manual compaction later without changing the stored data model
 
 Out of scope for the first implementation:
@@ -23,14 +23,14 @@ Out of scope for the first implementation:
 
 ## Problem statement
 
-The current runner sends all visible message history for an LLM node back into the next request.
-In `src/vocode/runner/executors/llm/llm.py`, `LLMExecutor._iter_prompt_messages()` returns the full execution message stream, and `build_connect_messages()` forwards it after preprocessing.
+Without compaction, the runner sends all visible message history for an LLM node back into the next request.
+For long-running tool-heavy sessions this causes prompt growth, latency and cost growth, and eventual provider overflow.
 
 This creates three problems:
 
 - long tool-heavy sessions can exceed the provider input limit
 - prompt growth increases latency and cost even before hard overflow
-- persistence stores enough information to resume a run, but there is no persisted compaction boundary that lets the runtime rebuild a shorter prompt on resume
+- persistence must preserve the compacted boundary so resumed runs rebuild the shorter prompt deterministically
 
 ## Current repository surfaces
 
@@ -117,29 +117,29 @@ The summary must preserve exact file paths, tool names, node names, outcome name
 
 ## Data model changes
 
-### New step type
+### Compaction event step
 
-Add a new `StepType` value:
+The runtime keeps a thin persisted step event:
 
 - `CONTEXT_COMPACTION = "context_compaction"`
 
 This step records that a compaction event happened for a node execution.
-It is a durable event, not an ephemeral UI status.
+It is a durable event and a UI/runtime event, but it is not the owner of compaction metadata.
 
-### New message role
+### Summary message role
 
 No new `Role` enum is required for the first version.
-The compacted summary should be stored as a `state.Message` with role `models.Role.SYSTEM`.
+The compacted summary is stored as a `state.Message` with role `models.Role.SYSTEM`.
 
 Reasoning:
 
 - the current Connect builder already handles system messages cleanly
 - using a normal message avoids widening the role contract immediately
-- the compaction step type is enough to distinguish summary messages from authored system prompts in workflow history
+- the compaction step type remains available for UI and durable event history
 
 If later needed, a dedicated summary role can be introduced as a backward-compatible additive change.
 
-### New compaction state models
+### Compaction state models
 
 Add new executor-owned Pydantic models in a dedicated compaction module under `src/vocode/runner/executors/llm/`.
 Do not place compaction logic directly in `llm.py` beyond orchestration hooks.
@@ -175,27 +175,36 @@ class CompactionSettings(BaseModel):
 
 class CompactionSummaryState(BaseModel):
     compacted_step_ids: List[UUID] = Field(default_factory=list)
+    compacted_message_ids: List[UUID] = Field(default_factory=list)
     tokens_before: int
     tokens_after_estimate: Optional[int] = None
+    summary_input_tokens: Optional[int] = None
+    summary_output_tokens: Optional[int] = None
     trigger_threshold_ratio: float
     summary_version: str = "v1"
 
 
 class LLMExecutionCompactionState(BaseModel):
-    latest_compaction_step_id: Optional[UUID] = None
+    latest_compaction_message_id: Optional[UUID] = None
     compaction_count: int = 0
     last_compaction_tokens_before: Optional[int] = None
+
+
+class LLMExecutionState(BaseModel):
+    selected_outcome: Optional[str] = None
+    compaction: Optional[LLMExecutionCompactionState] = None
 ```
 
 Usage:
 
 - `CompactionSettings` belongs to `LLMNode`
-- `CompactionSummaryState` lives on the compaction `Step.state`
-- `LLMExecutionCompactionState` becomes part of `NodeExecution.state` for LLM nodes, either directly or nested inside the existing execution state model
+- `CompactionSummaryState` lives on the summary `Message.state`
+- `LLMExecutionCompactionState` lives inside `NodeExecution.state` for LLM nodes
+- the compaction step references the summary message, but does not own compaction metadata
 
 `CompactionSummaryState` intentionally does not store a `first_kept_step_id`.
-Prompt reconstruction should start from the compaction step message itself and then include later prompt-visible steps on the active path.
-This makes the compaction step the durable boundary marker.
+Prompt reconstruction starts from the summary message itself and then includes later prompt-visible messages on the active path.
+This makes the summary message the durable boundary marker.
 
 ### Message text envelope
 
@@ -220,14 +229,21 @@ Ownership rules:
 
 - the dedicated compaction module decides what prompt history is compacted and how the prompt is rebuilt
 - `LLMExecutor` delegates compaction decisions and prompt rebuilding to that module
-- runner triggers compaction-aware retry flow and persists the resulting step
+- runner triggers compaction-aware retry flow and persists the resulting step event
 - persistence remains generic and stores the state models unchanged
+
+Boundary ownership rules:
+
+- the summary message is the durable compaction boundary
+- `CompactionSummaryState` is owned by the summary message
+- `LLMExecutionCompactionState.latest_compaction_message_id` points at the latest summary message for the node execution
+- the compaction step is not used as the authoritative boundary for prompt reconstruction
 
 ## Prompt reconstruction contract
 
 ### Eligible source messages
 
-For compaction prompt reconstruction, only prompt-visible steps are considered:
+For compaction prompt reconstruction, only prompt-visible messages referenced by prompt-visible steps are considered:
 
 - `output_message`
 - `input_message`
@@ -245,25 +261,25 @@ Standalone non-prompt-visible bookkeeping steps are still excluded from both nor
 
 ### Effective prompt after compaction
 
-Given a node execution with one or more compaction steps, prompt reconstruction must behave as follows:
+Given a node execution with one or more compaction events, prompt reconstruction must behave as follows:
 
-1. find the latest compaction step visible on the active path for the node execution
-2. include its summary message exactly once
-3. include only normal prompt-visible messages after that compaction step
-4. exclude compacted older visible steps from the provider request
+1. find the latest summary message with `CompactionSummaryState` visible on the active path for the node execution
+2. include that summary message exactly once
+3. include only normal prompt-visible messages after that summary message
+4. exclude compacted older visible messages from the provider request
 
 Older messages remain persisted in workflow history and remain exportable, but they are not resent to the model.
 
 For efficiency, prompt reconstruction should search backward through `NodeExecution.step_ids` until either:
 
-- the latest `context_compaction` step is found
+- the latest summary message with compaction state is found
 - or the beginning of the node execution history is reached
 
 The runtime should not rescan the entire workflow step graph when a node-local backward scan is sufficient.
 
 ### Repeated compaction
 
-On subsequent compaction passes, the summarized span starts at the previous compaction boundary represented by the latest compaction step.
+On subsequent compaction passes, the summarized span starts at the previous compaction boundary represented by the latest summary message.
 
 That means the next summary should merge:
 
@@ -316,7 +332,7 @@ Estimation algorithm:
 
 Implementation note:
 
-the first version should accept coarse estimation and optimize for avoiding overflow, not perfect token accounting.
+the current implementation accepts coarse estimation and optimizes for avoiding overflow, not perfect token accounting.
 
 ### Trigger decision
 
@@ -506,7 +522,7 @@ Compaction persistence must include:
 - the summary message itself in `messages_by_id`
 - the compaction step in `steps_by_id`
 - the compaction step id in the node execution active path
-- compaction metadata in `Step.state`
+- compaction metadata in `Message.state`
 - latest compaction metadata in `NodeExecution.state`
 
 ### What does not get deleted
@@ -528,7 +544,7 @@ Compaction is logical prompt exclusion, not data deletion.
 Required changes:
 
 - keep compaction-specific logic minimal and delegated
-- extend `_iter_prompt_messages()` so it respects the latest compaction boundary
+- extend `_iter_prompt_messages()` so it respects the latest message-owned compaction boundary
 - call into the compaction module before final message construction
 - teach `build_connect_messages()` to include the summary message and only the kept suffix
 - keep preview usage compatible with compacted prompt history
@@ -539,7 +555,7 @@ Required changes:
 
 - support one retry path after overflow-triggered compaction
 - treat `context_compaction` as a normal persisted step event
-- keep `_build_next_input_messages()` unchanged unless compaction steps accidentally leak into downstream node inputs
+- ensure `_build_next_input_messages()` ignores compaction bookkeeping and summary system messages for downstream inputs
 
 ### `src/vocode/state.py`
 
@@ -547,6 +563,7 @@ Required changes:
 
 - add the new `StepType`
 - ensure `LLMNode` owns `CompactionSettings`
+- ensure `Message.state` can carry executor-owned message metadata
 - ensure new fields remain backward compatible and optional where needed
 
 ### UI surfaces
@@ -556,14 +573,14 @@ Required changes:
 - the UI should mention that compaction happened
 - the UI should show compact compaction stats such as estimated tokens before, estimated tokens after, and number of summarized steps or messages
 - the UI should not expose the full compacted summary prompt by default
-- the compaction step may render as a condensed system/runtime event rather than a normal chat turn
+- the compaction step should render as a condensed system/runtime event derived from the summary message state rather than exposing the summary body
 
 ### Persistence
 
 Required changes:
 
 - no special codec shape should be required if the new state models are normal Pydantic models
-- add tests that serialize and restore workflow executions containing compaction steps
+- add tests that serialize and restore workflow executions containing compaction summary messages and compaction step events
 
 ## Failure handling
 
@@ -583,9 +600,9 @@ Add focused tests in the existing runner and executor suites.
 Required coverage:
 
 - prompt reconstruction with no compaction
-- prompt reconstruction after one compaction step
+- prompt reconstruction after one message-owned compaction boundary
 - iterative compaction that merges previous summary and newer old turns
-- backward scan stops at the latest compaction step instead of rescanning unnecessary older history
+- backward scan stops at the latest summary message boundary instead of rescanning unnecessary older history
 - cut-point selection that keeps recent messages and preserves tool-round consistency
 - persistence round-trip for workflow state containing compaction steps
 - overflow-triggered compaction retry happens at most once
@@ -599,29 +616,6 @@ Recommended test names:
 - `tests/test_runner_context_compaction.py`
 - `tests/test_persistence_context_compaction.py`
 
-## Rollout plan
-
-Phase 1:
-
-- logical compaction only
-- latest-summary plus kept-suffix prompt reconstruction
-- automatic percentage-based threshold trigger when input limit is known
-- configurable summary provider and prompt through `LLMNode.compaction`
-- compact UI event surfacing
-
-Phase 2:
-
-- manual compaction command or API trigger
-- forced compaction retry on detected token-limit errors
-- Connect-side structured token-limit error support if current errors are not specific enough
-- better tool-result truncation and token estimation
-- split-turn prefix summaries
-
-Phase 3:
-
-- branch-aware summarization if branch navigation becomes user-facing in this project
-- optional archival or pruning of old compacted spans
-
 ## Design constraints to preserve
 
 - compaction is iterative, not one-shot
@@ -629,6 +623,8 @@ Phase 3:
 - recent context stays verbatim
 - file paths, tool names, and error text must survive summarization
 - compaction metadata is persisted as part of session state
+- the summary message is the durable compaction boundary
+- compaction metadata is message-owned, not step-owned
 
 Deferred capabilities:
 
@@ -637,13 +633,36 @@ Deferred capabilities:
 - file-operation inventories appended to the summary
 - extension hooks for custom compaction providers
 
-## Open decisions
+## Current status
 
-The implementation should resolve these before coding starts:
+The current implementation uses:
 
-1. the exact percentage formulas for `trigger_threshold_ratio` and `keep_recent_ratio`
-2. whether `prompt_instructions` appends to or replaces the default summary instructions
-3. whether summary generation should use the same provider request path or a lighter helper client
-4. the exact compact UI presentation for compaction events
+- a message-owned compaction boundary through the summary message
+- `CompactionSummaryState` on `Message.state`
+- `LLMExecutionState.compaction.latest_compaction_message_id` on `NodeExecution.state`
+- a thin persisted `context_compaction` step for event history and UI rendering
+- a stable summary wrapper using only the `<summary>` envelope
+- condensed UI rendering that shows compaction stats without exposing the raw summary body by default
 
-Until those are decided, the data model and runtime flow in this spec should remain the source of truth.
+## TODO
+
+### Message-based usage snapshots and simpler threshold calculation
+
+The current trigger logic still relies on coarse estimation over prompt-visible messages.
+Follow-up work should simplify this by adding message-level usage snapshots for assistant messages produced by an LLM request.
+
+Target direction:
+
+1. add optional request-level `llm_usage` to assistant messages produced by the LLM
+2. treat the latest usage-bearing assistant message on the active path as the exact prompt-usage snapshot anchor for that request
+3. calculate the next trigger threshold from:
+   - that latest real prompt usage snapshot
+   - plus a small estimate for messages added after that snapshot
+4. stop estimating the entire prompt when a recent real usage snapshot exists
+
+Constraints:
+
+- message usage remains request-level, not additive per-message token accounting
+- do not sum usage across messages
+- use only the latest usage-bearing message as the baseline
+- keep overflow-triggered compaction retry unchanged

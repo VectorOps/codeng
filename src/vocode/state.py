@@ -154,6 +154,10 @@ class Message(BaseModel):
         default_factory=list,
         description="Tool call responses",
     )
+    state: Optional[SerializeAsAny[BaseModel]] = Field(
+        default=None,
+        description="Any internal state that is maintained by the message owner.",
+    )
     created_at: datetime = Field(default_factory=utcnow)
 
     @property

@@ -1109,11 +1109,12 @@ class TUIState:
         )
 
     def _handle_context_compaction_step(self, step: vocode_state.Step) -> None:
-        if step.state is None:
+        message = step.message
+        if message is None or message.state is None:
             text = "Context compacted."
         else:
             compaction_state = CompactionSummaryState.model_validate(
-                step.state.model_dump(mode="python")
+                message.state.model_dump(mode="python")
             )
             summarized_count = len(compaction_state.compacted_step_ids)
             token_text = str(compaction_state.tokens_before)

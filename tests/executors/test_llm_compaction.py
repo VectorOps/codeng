@@ -106,8 +106,15 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
         ),
     )
     summary_message = state.Message(role=models.Role.SYSTEM, text="summary")
+    summary_message.state = service_mod.CompactionSummaryState(
+        compacted_step_ids=[old_output_step.id],
+        compacted_message_ids=[old_input.id, old_output.id],
+        tokens_before=100,
+        tokens_after_estimate=10,
+        trigger_threshold_ratio=0.5,
+    )
     history.upsert_message(run, summary_message)
-    compaction_step = history.upsert_step(
+    history.upsert_step(
         run,
         state.Step(
             workflow_execution=run,
@@ -116,13 +123,6 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
             message_id=summary_message.id,
             is_complete=True,
         ),
-    )
-    compaction_step.state = service_mod.CompactionSummaryState(
-        compacted_step_ids=[old_output_step.id],
-        compacted_message_ids=[old_input.id, old_output.id],
-        tokens_before=100,
-        tokens_after_estimate=10,
-        trigger_threshold_ratio=0.5,
     )
 
     recent_input = state.Message(role=models.Role.USER, text="recent input")
@@ -134,6 +134,89 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
     assert [message.text for message, _ in prompt_messages] == [
         "summary",
         "recent input",
+    ]
+
+
+def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    first_summary = state.Message(role=models.Role.SYSTEM, text="first summary")
+    first_summary.state = service_mod.CompactionSummaryState(
+        compacted_step_ids=[],
+        compacted_message_ids=[],
+        tokens_before=100,
+        tokens_after_estimate=60,
+        trigger_threshold_ratio=0.5,
+    )
+    middle_user = state.Message(role=models.Role.USER, text="middle user")
+    second_summary = state.Message(role=models.Role.SYSTEM, text="second summary")
+    second_summary.state = service_mod.CompactionSummaryState(
+        compacted_step_ids=[],
+        compacted_message_ids=[middle_user.id],
+        tokens_before=60,
+        tokens_after_estimate=20,
+        trigger_threshold_ratio=0.5,
+    )
+    final_user = state.Message(role=models.Role.USER, text="final user")
+    for message in [first_summary, middle_user, second_summary, final_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=first_summary.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=middle_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=second_summary.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=final_user.id,
+            is_complete=True,
+        ),
+    )
+
+    prompt_messages = service_mod.collect_prompt_messages(execution)
+
+    assert [message.text for message, _ in prompt_messages] == [
+        "second summary",
+        "final user",
     ]
 
 
@@ -228,13 +311,19 @@ async def test_maybe_compact_execution_history_records_summary_usage(
     )
 
     assert compaction_step is not None
+    assert compaction_step.type == state.StepType.CONTEXT_COMPACTION
     assert compaction_step.llm_usage is not None
     assert compaction_step.llm_usage.prompt_tokens == 321
     assert compaction_step.llm_usage.completion_tokens == 45
-    assert compaction_step.state is not None
+    assert compaction_step.message is not None
+    assert compaction_step.message.state is not None
     summary_state = service_mod.CompactionSummaryState.model_validate(
-        compaction_step.state.model_dump(mode="python")
+        compaction_step.message.state.model_dump(mode="python")
     )
     assert summary_state.summary_input_tokens == 321
     assert summary_state.summary_output_tokens == 45
     assert summary_state.compacted_message_ids
+    assert isinstance(execution.state, service_mod.LLMExecutionState)
+    assert execution.state.compaction is not None
+    assert execution.state.compaction.latest_compaction_message_id == compaction_step.message_id
+    assert execution.state.compaction.compaction_count == 1

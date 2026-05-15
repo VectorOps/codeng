@@ -12,6 +12,7 @@ from . import helpers as llm_helpers
 from .compaction import collect_prompt_messages
 from .compaction import CompactionSummaryGenerationError
 from .compaction import CompactionPreparationResult
+from .compaction import LLMExecutionState
 from .compaction import estimate_context_tokens
 from .compaction import maybe_compact_execution_history
 from .compaction import should_trigger_compaction
@@ -44,10 +45,6 @@ class LLMStepState(BaseModel):
     provider_meta: Dict[str, Any] = Field(default_factory=dict)
     protocol_state: Dict[str, Any] = Field(default_factory=dict)
     reasoning_signature: Optional[str] = None
-
-
-class LLMExecutionState(BaseModel):
-    selected_outcome: Optional[str] = None
 
 
 @runner_base.ExecutorFactory.register("llm")
@@ -590,15 +587,11 @@ class LLMExecutor(runner_base.BaseExecutor):
         rejection_step = await self._maybe_compact_or_reject(inp, forced_compaction)
         if rejection_step is not None:
             return False, None, rejection_step
-        compaction_step = next(
-            (
-                step
-                for step in inp.execution.iter_steps_reversed()
-                if step.type == state.StepType.CONTEXT_COMPACTION
-            ),
-            None,
-        )
-        if compaction_step is None:
+        execution_state = self._get_execution_state(inp.execution)
+        if (
+            execution_state.compaction is None
+            or execution_state.compaction.latest_compaction_message_id is None
+        ):
             return False, None, None
         return True, self.build_connect_messages(inp), None
 

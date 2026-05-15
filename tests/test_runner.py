@@ -1951,6 +1951,75 @@ def test_build_next_input_messages_ignores_compaction_bookkeeping_steps() -> Non
     assert [message.text for message in messages] == ["user input", "assistant output"]
 
 
+def test_build_next_input_messages_keeps_compaction_summary_message_hidden() -> None:
+    node1 = models.Node(
+        name="node1",
+        type="fake",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        message_mode=models.ResultMode.ALL_MESSAGES,
+    )
+    workflow = DummyWorkflow(
+        name="wf-compaction-summary-hidden",
+        graph=models.Graph(nodes=[node1], edges=[]),
+    )
+    runner = Runner(workflow=workflow, project=StubProject(), initial_message=None)
+
+    history = HistoryManager()
+    execution = history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            workflow_execution=runner.execution,
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    visible_input = state.Message(role=models.Role.USER, text="user input")
+    summary_message = state.Message(
+        role=models.Role.SYSTEM,
+        text="The conversation history before this point was compacted into the following summary:\n\n<summary>\nsummary\n</summary>",
+    )
+    visible_output = state.Message(role=models.Role.ASSISTANT, text="assistant output")
+    for message in [visible_input, summary_message, visible_output]:
+        history.upsert_message(runner.execution, message)
+
+    history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=visible_input.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary_message.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        runner.execution,
+        state.Step(
+            workflow_execution=runner.execution,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=visible_output.id,
+            is_complete=True,
+        ),
+    )
+
+    messages = runner._build_next_input_messages(execution, node1)
+
+    assert [message.text for message in messages] == ["user input", "assistant output"]
+
+
 @pytest.mark.asyncio
 async def test_runner_stop_stops_execution_loop():
     node = models.Node(

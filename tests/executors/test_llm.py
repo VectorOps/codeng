@@ -16,6 +16,7 @@ from vocode.runner.executors.llm.compaction import build_compaction_instructions
 from vocode.runner.executors.llm.compaction import CompactionSettings
 from vocode.runner.executors.llm.compaction import CompactionSummaryState
 from vocode.runner.executors.llm.compaction import LLMExecutionCompactionState
+from vocode.runner.executors.llm.compaction import LLMExecutionState
 from vocode.runner.executors.llm.compaction import build_summary_generation_prompt
 from vocode.runner.executors.llm.compaction import resolve_compaction_instructions
 from vocode.runner.executors.llm.compaction import resolve_compaction_system_prompt
@@ -1041,7 +1042,17 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
     )
 
     old_user = state.Message(role=models.Role.USER, text="x" * 200)
-    summary = state.Message(role=models.Role.SYSTEM, text="summary")
+    summary = state.Message(
+        role=models.Role.SYSTEM,
+        text="summary",
+        state=CompactionSummaryState(
+            compacted_step_ids=[],
+            compacted_message_ids=[old_user.id],
+            tokens_before=100,
+            tokens_after_estimate=2,
+            trigger_threshold_ratio=0.5,
+        ),
+    )
     recent_user = state.Message(role=models.Role.USER, text="tail")
     for message in [old_user, summary, recent_user]:
         history.upsert_message(run, message)
@@ -1186,10 +1197,17 @@ async def test_llm_executor_persists_compaction_step_before_request(
         "The conversation history before this point was compacted"
         in compaction_step.message.text
     )
+    assert compaction_step.message.state is not None
+    summary_state = CompactionSummaryState.model_validate(
+        compaction_step.message.state.model_dump(mode="python")
+    )
+    assert summary_state.summary_input_tokens == 5
+    assert summary_state.summary_output_tokens == 16
     assert execution.state is not None
-    assert isinstance(execution.state, LLMExecutionCompactionState)
-    assert execution.state.latest_compaction_step_id == compaction_step.id
-    assert execution.state.compaction_count == 1
+    assert isinstance(execution.state, LLMExecutionState)
+    assert execution.state.compaction is not None
+    assert execution.state.compaction.latest_compaction_message_id == compaction_step.message_id
+    assert execution.state.compaction.compaction_count == 1
     compaction_logs = [
         record
         for record in caplog.records
@@ -1200,7 +1218,7 @@ async def test_llm_executor_persists_compaction_step_before_request(
     assert "source_tokens" in log_message
     assert "18" in log_message
     assert "final_tokens" in log_message
-    assert "255" in log_message
+    assert "34" in log_message
 
     assert len(captured_requests) == 2
     summary_request = captured_requests[0]
@@ -1577,10 +1595,8 @@ async def test_llm_executor_compaction_summary_uses_structured_sections_and_tran
     assert "## Next Steps" in compaction_step.message.text
     assert "## Critical Context" in compaction_step.message.text
     assert "read_files" in compaction_step.message.text
-    assert "<compaction_prompt_system>" in compaction_step.message.text
-    assert "Custom compaction system" in compaction_step.message.text
-    assert "<compaction_prompt_instructions>" in compaction_step.message.text
-    assert "Keep exact tool names." in compaction_step.message.text
+    assert "<compaction_prompt_system>" not in compaction_step.message.text
+    assert "<compaction_prompt_instructions>" not in compaction_step.message.text
 
 
 @pytest.mark.asyncio
