@@ -631,7 +631,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         if prompt_tokens_before is None:
             return
         prompt_tokens_after = int(usage_stats.prompt_tokens)
-        saved_input_tokens = max(0, prompt_tokens_before - prompt_tokens_after)
+        saved_input_tokens = prompt_tokens_before - prompt_tokens_after
         summary_input_tokens = compaction_state.last_compaction_summary_input_tokens
         logger.info(
             "Context compaction realized",
