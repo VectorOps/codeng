@@ -431,7 +431,9 @@ async def test_tui_state_renders_context_compaction_as_condensed_event() -> None
 
     await ui_state.terminal.render()
     output = buffer.getvalue()
-    assert "Context compacted: 2 steps, ~120 -> 45 tokens" in output
+    assert "Compaction complete" in output
+    assert "2 steps" in output
+    assert "~120 -> ~45 tokens" in output
     assert "raw hidden summary" not in output
 
 

@@ -1193,6 +1193,8 @@ async def test_llm_executor_persists_compaction_step_before_request(
         async for step in executor.run(ExecutorInput(execution=execution, run=run)):
             steps.append(step)
 
+    assert any(step.type == state.StepType.CONTEXT_COMPACTION for step in steps)
+
     compaction_steps = [
         step
         for step in execution.iter_steps()
@@ -1240,6 +1242,92 @@ async def test_llm_executor_persists_compaction_step_before_request(
     assert request.messages[0].content == "tail"
     assert isinstance(request.messages[1], connect.AssistantMessage)
     assert request.messages[1].content[0].text == "tail-2"
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_emits_compaction_step_before_final_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_requests: List[Any] = []
+    response = _assistant_response("after compaction")
+
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: RecordingAsyncLLMClient(
+            [
+                FakeStreamHandle(
+                    [
+                        connect.TextDeltaEvent(index=0, delta="after compaction"),
+                        connect.ResponseEndEvent(response=response),
+                    ],
+                    final_response=response,
+                )
+            ],
+            captured_requests,
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-emit-compaction",
+        type="llm",
+        model="gpt-3.5-turbo",
+        extra={"model_max_tokens": 8},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-emit-compaction",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 60)
+    recent_user = state.Message(role=models.Role.USER, text="tail")
+    for message in [old_user, recent_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    steps: List[state.Step] = []
+    async for step in executor.run(ExecutorInput(execution=execution, run=run)):
+        steps.append(step)
+
+    assert len(captured_requests) == 2
+    assert steps[0].type == state.StepType.CONTEXT_COMPACTION
+    assert steps[0].state is not None
+    assert steps[1].type == state.StepType.OUTPUT_MESSAGE
+    assert steps[1].is_complete is False
+    assert steps[-1].type == state.StepType.OUTPUT_MESSAGE
+    assert steps[-1].message is not None
+    assert steps[-1].message.text == "after compaction"
 
 
 def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() -> None:

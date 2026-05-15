@@ -849,6 +849,49 @@ class MultiCompleteExecutor(BaseExecutor):
         yield step2
 
 
+@ExecutorFactory.register("aux-complete-then-output")
+class AuxCompleteThenOutputExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        execution = inp.execution
+
+        aux_msg = state.Message(
+            role=models.Role.SYSTEM,
+            text="compaction checkpoint",
+        )
+        history.upsert_message(inp.run, aux_msg)
+        aux_step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.CONTEXT_COMPACTION,
+                message_id=aux_msg.id,
+                is_complete=True,
+                is_auxiliary=True,
+                is_final=True,
+            ),
+        )
+        yield aux_step
+
+        msg = state.Message(
+            role=models.Role.ASSISTANT,
+            text="final",
+        )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
 @ExecutorFactory.register("rejecting")
 class RejectingExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
@@ -1319,6 +1362,44 @@ async def test_runner_errors_when_executor_has_no_complete_step():
                 message=None,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_runner_ignores_complete_auxiliary_steps():
+    node = models.Node(
+        name="auxcomp",
+        type="aux-complete-then-output",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-aux-complete", graph=graph)
+
+    runner = Runner(
+        workflow=workflow,
+        project=StubProject(),
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.CONTEXT_COMPACTION
+        and event.step.is_auxiliary
+        for event in events
+    )
 
 
 @pytest.mark.asyncio

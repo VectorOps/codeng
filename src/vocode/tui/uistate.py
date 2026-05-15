@@ -28,6 +28,7 @@ from vocode.tui.lib.components import rich_text_component as tui_rich_text_compo
 from vocode.tui.lib.components import renderable as tui_renderable_component
 from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.components import select_list as tui_select_list
+from vocode.tui.components import context_compaction as context_compaction_component
 from vocode.tui.components import command_manager_help as command_manager_help_component
 from vocode.tui.components import progress as progress_component
 from vocode.tui.components import tool_call_req as tool_call_req_component
@@ -1109,23 +1110,26 @@ class TUIState:
         )
 
     def _handle_context_compaction_step(self, step: vocode_state.Step) -> None:
-        message = step.message
-        if step.state is None:
-            text = "Context compacted."
-        else:
-            compaction_state = CompactionSummaryState.model_validate(
+        step_id = str(step.id)
+        existing = self._step_components.get(step_id)
+        summary_state: CompactionSummaryState | None = None
+        if step.state is not None:
+            summary_state = CompactionSummaryState.model_validate(
                 step.state.model_dump(mode="python")
             )
-            summarized_count = len(compaction_state.compacted_step_ids)
-            token_text = str(compaction_state.tokens_before)
-            if compaction_state.tokens_after_estimate is not None:
-                token_text += f" -> {compaction_state.tokens_after_estimate}"
-            text = f"Context compacted: {summarized_count} steps, ~{token_text} tokens"
-        self._upsert_markdown_component(
-            step,
-            text,
-            component_style=tui_styles.OUTPUT_MESSAGE_STYLE,
+        if existing is not None:
+            self._terminal.remove_component(existing)
+            self._step_components.pop(step_id, None)
+        else:
+            self._step_component_ids.add(step_id)
+        component = context_compaction_component.ContextCompactionComponent(
+            step=step,
+            summary_state=summary_state,
+            id=step_id,
+            component_style=tui_styles.CONTEXT_COMPACTION_STYLE,
         )
+        self._step_components[step_id] = component
+        self._terminal.insert_component(-2, component)
 
     def _handle_tool_request_step(
         self,

@@ -323,6 +323,13 @@ class Step(BaseModel):
             "rather than an intermediate update."
         ),
     )
+    is_auxiliary: bool = Field(
+        default=False,
+        description=(
+            "True when this step should be persisted and emitted to clients "
+            "but ignored by runner control-flow semantics."
+        ),
+    )
     is_final: bool = Field(
         default=False,
         description=(

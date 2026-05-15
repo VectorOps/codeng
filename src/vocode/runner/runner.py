@@ -814,7 +814,10 @@ class Runner:
                                 current_execution=current_execution,
                             )
                             _ = yield preview_status_event
-                        if persisted_step.is_complete:
+                        if (
+                            persisted_step.is_complete
+                            and not persisted_step.is_auxiliary
+                        ):
                             complete_step_count += 1
                             last_complete_step = persisted_step
 

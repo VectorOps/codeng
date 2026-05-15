@@ -21,6 +21,7 @@ from vocode.manager.base import BaseManager, RunnerFrame
 from vocode.manager.helpers import InMemoryEndpoint
 from vocode.manager.server import UIServer
 from vocode.runner import proto as runner_proto
+from vocode.runner.executors.llm.compaction import CompactionSummaryState
 
 
 @pytest.mark.asyncio
@@ -117,6 +118,68 @@ async def test_uiserver_on_runner_event_roundtrip() -> None:
     dummy_task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await dummy_task
+
+
+@pytest.mark.asyncio
+async def test_uiserver_on_runner_event_forwards_compaction_step() -> None:
+    history = HistoryManager()
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    execution = state.WorkflowExecution(workflow_name="wf-ui-server-compaction")
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node1",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    summary_message = state.Message(
+        role=models.Role.SYSTEM,
+        text="The conversation history before this point was compacted.",
+    )
+    history.upsert_message(execution, summary_message)
+    step = history.upsert_step(
+        execution,
+        state.Step(
+            execution_id=node_execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary_message.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[uuid4()],
+                tokens_before=120,
+                tokens_after_estimate=45,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+    event = runner_proto.RunEventReq(
+        kind=runner_proto.RunEventReqKind.STEP,
+        execution=execution,
+        step=step,
+    )
+
+    runner = DummyRunnerWithWorkflow(["node1"], execution=execution)
+    frame = RunnerFrame(
+        workflow_name="wf-ui-server-compaction",
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+
+    response_task = asyncio.create_task(server.on_runner_event(frame, event))
+
+    request_envelope = await client_endpoint.recv()
+    req_payload = request_envelope.payload
+    assert isinstance(req_payload, manager_proto.RunnerReqPacket)
+    assert req_payload.step.type == state.StepType.CONTEXT_COMPACTION
+    assert req_payload.step.state is not None
+
+    resp = await response_task
+    assert resp is not None
+    assert resp.resp_type == runner_proto.RunEventResponseType.NOOP
 
 
 @pytest.mark.asyncio

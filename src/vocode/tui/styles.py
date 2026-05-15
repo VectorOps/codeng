@@ -25,6 +25,12 @@ OUTPUT_MESSAGE_STYLE = tui_terminal.ComponentStyle(
     margin_top=1,
 )
 
+CONTEXT_COMPACTION_STYLE = tui_terminal.ComponentStyle(
+    margin_top=1,
+    padding_pad=(0, 1),
+    style="dim",
+)
+
 TOOLBAR_COMPONENT_STYLE = tui_terminal.ComponentStyle()
 
 TOOL_CALL_DURATION_STYLE = "dim grey50"

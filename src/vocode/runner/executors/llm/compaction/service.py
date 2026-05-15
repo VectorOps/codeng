@@ -526,6 +526,8 @@ async def maybe_compact_execution_history(
         state=summary_state,
         llm_usage=summary_usage,
         is_complete=True,
+        is_auxiliary=True,
+        is_final=True,
     )
     persisted_step = history.upsert_step(workflow_execution, compaction_step)
     execution.state = LLMExecutionState(

@@ -534,9 +534,9 @@ class LLMExecutor(runner_base.BaseExecutor):
         self,
         inp: runner_base.ExecutorInput,
         preparation: CompactionPreparationResult,
-    ) -> Optional[state.Step]:
+    ) -> tuple[Optional[state.Step], Optional[state.Step]]:
         try:
-            await maybe_compact_execution_history(
+            compaction_step = await maybe_compact_execution_history(
                 self.project.history,
                 self.project.credentials,
                 inp.execution,
@@ -563,14 +563,14 @@ class LLMExecutor(runner_base.BaseExecutor):
                     workflow_execution=inp.run,
                 ),
             )
-            return self._build_step_from_message(
+            return None, self._build_step_from_message(
                 error_step,
                 role=models.Role.SYSTEM,
                 step_type=state.StepType.REJECTION,
                 text=self._build_compaction_failure_text(exc),
                 is_complete=True,
             )
-        return None
+        return compaction_step, None
 
     async def _handle_context_overflow_retry(
         self,
@@ -578,25 +578,34 @@ class LLMExecutor(runner_base.BaseExecutor):
         overflow_compaction_attempted: bool,
     ) -> tuple[
         bool,
+        Optional[state.Step],
         Optional[tuple[Optional[str], List[connect.Message]]],
         Optional[state.Step],
     ]:
         if overflow_compaction_attempted or not self.config.compaction.enabled:
-            return False, None, None
+            return False, None, None, None
         forced_compaction = self._prepare_compaction(inp).model_copy(
             update={"should_compact": True}
         )
-        rejection_step = await self._maybe_compact_or_reject(inp, forced_compaction)
+        compaction_step, rejection_step = await self._maybe_compact_or_reject(
+            inp,
+            forced_compaction,
+        )
         if rejection_step is not None:
-            return False, None, rejection_step
+            return False, compaction_step, None, rejection_step
         execution_state = self._get_execution_state(inp.execution)
         if (
             execution_state.compaction is None
             or execution_state.compaction.latest_compaction_step_id is None
         ):
-            return False, None, None
+            return False, compaction_step, None, None
         rebuilt_prompt_messages = self._iter_prompt_messages(inp)
-        return True, self.build_connect_messages(rebuilt_prompt_messages), None
+        return (
+            True,
+            compaction_step,
+            self.build_connect_messages(rebuilt_prompt_messages),
+            None,
+        )
 
     def _build_last_known_usage(
         self,
@@ -697,10 +706,15 @@ class LLMExecutor(runner_base.BaseExecutor):
             should_compact=compaction_prep.should_compact,
         )
         if compaction_prep.should_compact:
-            rejection_step = await self._maybe_compact_or_reject(inp, compaction_prep)
+            compaction_step, rejection_step = await self._maybe_compact_or_reject(
+                inp,
+                compaction_prep,
+            )
             if rejection_step is not None:
                 yield rejection_step
                 return
+            if compaction_step is not None:
+                yield compaction_step
             execution_state = self._get_execution_state(inp.execution)
 
         prompt_messages = self._iter_prompt_messages(inp)
@@ -886,12 +900,15 @@ class LLMExecutor(runner_base.BaseExecutor):
                 except connect.ContextLengthError as e:
                     (
                         retried,
+                        compaction_step,
                         rebuilt_prompt,
                         rejection_step,
                     ) = await self._handle_context_overflow_retry(
                         inp,
                         overflow_compaction_attempted,
                     )
+                    if compaction_step is not None:
+                        yield compaction_step
                     if rejection_step is not None:
                         yield rejection_step
                         return
