@@ -5,7 +5,11 @@ from .models import (
     LLMExecutionState,
     LLMExecutionCompactionState,
 )
-from .estimation import estimate_context_tokens, should_trigger_compaction
+from .estimation import (
+    estimate_context_tokens,
+    get_threshold_context_tokens,
+    should_trigger_compaction,
+)
 from .prompting import build_compaction_instructions, extract_wrapped_summary_text
 from .prompting import build_summary_generation_prompt
 from .prompting import resolve_compaction_instructions, resolve_compaction_system_prompt

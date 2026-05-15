@@ -33,15 +33,27 @@ def estimate_context_tokens(
     return sum(estimate_message_tokens(message) for message, _ in prompt_messages)
 
 
+def get_threshold_context_tokens(
+    prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
+    estimated_context_tokens: int,
+) -> int:
+    for message, _ in reversed(prompt_messages):
+        if message.llm_usage is None:
+            continue
+        usage = message.llm_usage
+        return int(usage.prompt_tokens) + int(usage.completion_tokens)
+    return estimated_context_tokens
+
+
 def should_trigger_compaction(
     settings: CompactionSettings,
     input_token_limit: Optional[int],
-    estimated_context_tokens: int,
+    threshold_context_tokens: int,
 ) -> bool:
     if not settings.enabled:
         return False
     if input_token_limit is None or input_token_limit <= 0:
         return False
-    return estimated_context_tokens >= (
+    return threshold_context_tokens >= (
         float(input_token_limit) * settings.trigger_threshold_ratio
     )

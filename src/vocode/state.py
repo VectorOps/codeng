@@ -154,6 +154,10 @@ class Message(BaseModel):
         default_factory=list,
         description="Tool call responses",
     )
+    llm_usage: Optional[LLMUsageStats] = Field(
+        default=None,
+        description="LLM usage stats for this message, if any.",
+    )
     state: Optional[SerializeAsAny[BaseModel]] = Field(
         default=None,
         description="Any internal state that is maintained by the message owner.",

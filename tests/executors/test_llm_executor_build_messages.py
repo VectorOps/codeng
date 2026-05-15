@@ -508,7 +508,57 @@ def test_build_step_from_message_reuses_existing_message_id_for_updates() -> Non
     assert final_step.message_id == interim_step.message_id
     assert final_step.message is not None
     assert final_step.message.text == "second"
+    assert final_step.message.llm_usage is None
     assert len(run.messages_by_id) == 1
+
+
+def test_build_step_from_message_persists_message_usage() -> None:
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    base_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+    usage = state.LLMUsageStats(
+        prompt_tokens=11,
+        completion_tokens=5,
+        cost_dollars=0.2,
+        model_name="test-model",
+    )
+
+    final_step = executor._build_step_from_message(
+        base_step,
+        role=models.Role.ASSISTANT,
+        step_type=state.StepType.OUTPUT_MESSAGE,
+        text="second",
+        usage=usage,
+        is_complete=True,
+    )
+
+    assert final_step.message is not None
+    assert final_step.message.llm_usage is not None
+    assert final_step.message.llm_usage.prompt_tokens == 11
+    assert final_step.message.llm_usage.completion_tokens == 5
 
 
 @pytest.mark.asyncio
@@ -838,7 +888,9 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
     assert messages[0].content == "final user"
 
 
-def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary() -> None:
+def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary() -> (
+    None
+):
     history = HistoryManager()
     cfg = LLMNode(
         name="llm-node",

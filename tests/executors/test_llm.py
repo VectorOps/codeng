@@ -1015,6 +1015,7 @@ def test_llm_executor_prepare_compaction_reports_threshold_state() -> None:
     assert result.prompt_messages_count == 1
     assert result.estimated_context_tokens == 15
     assert result.input_token_limit == 20
+    assert result.threshold_context_tokens == 15
     assert result.should_compact is True
 
 
@@ -1092,6 +1093,7 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
 
     assert result.prompt_messages_count == 2
     assert result.estimated_context_tokens == 3
+    assert result.threshold_context_tokens == 3
     assert result.should_compact is False
 
 
@@ -1206,7 +1208,10 @@ async def test_llm_executor_persists_compaction_step_before_request(
     assert execution.state is not None
     assert isinstance(execution.state, LLMExecutionState)
     assert execution.state.compaction is not None
-    assert execution.state.compaction.latest_compaction_message_id == compaction_step.message_id
+    assert (
+        execution.state.compaction.latest_compaction_message_id
+        == compaction_step.message_id
+    )
     assert execution.state.compaction.compaction_count == 1
     compaction_logs = [
         record
@@ -1708,6 +1713,95 @@ async def test_llm_executor_repeated_compaction_uses_update_mode_prompt(
     )
     assert "Previous summary:" in summary_prompt
     assert "Earlier summary" in summary_prompt
+
+
+def test_should_trigger_compaction_uses_last_message_usage_when_available() -> None:
+    settings = LLMNode(
+        name="node-compaction-last-message-usage",
+        type="llm",
+        model="gpt-3.5-turbo",
+    ).compaction
+
+    assert should_trigger_compaction(settings, 1000, 700) is True
+    assert should_trigger_compaction(settings, 1000, 699) is False
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_prepare_compaction_uses_last_message_usage_for_threshold() -> (
+    None
+):
+    project = StubProject()
+    node = LLMNode(
+        name="node-prepare-compaction-last-message-usage",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+        extra={"model_max_tokens": 100},
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-prepare-compaction-last-message-usage",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="x" * 20)
+    assistant = state.Message(
+        role=models.Role.ASSISTANT,
+        text="reply",
+        llm_usage=state.LLMUsageStats(
+            prompt_tokens=71,
+            completion_tokens=3,
+        ),
+    )
+    trailing_user = state.Message(role=models.Role.USER, text="tail")
+    for message in [old_user, assistant, trailing_user]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=old_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant.id,
+            llm_usage=assistant.llm_usage,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=trailing_user.id,
+            is_complete=True,
+        ),
+    )
+
+    result = executor._prepare_compaction(ExecutorInput(execution=execution, run=run))
+
+    assert result.estimated_context_tokens == 8
+    assert result.threshold_context_tokens == 74
+    assert result.should_compact is True
 
 
 @pytest.mark.asyncio

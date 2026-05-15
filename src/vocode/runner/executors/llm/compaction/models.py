@@ -43,6 +43,7 @@ class LLMExecutionState(BaseModel):
 class CompactionPreparationResult(BaseModel):
     prompt_messages_count: int = 0
     estimated_context_tokens: int = 0
+    threshold_context_tokens: int = 0
     input_token_limit: Optional[int] = None
     should_compact: bool = False
     settings: CompactionSettings = Field(default_factory=CompactionSettings)

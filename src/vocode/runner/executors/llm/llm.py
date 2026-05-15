@@ -14,6 +14,7 @@ from .compaction import CompactionSummaryGenerationError
 from .compaction import CompactionPreparationResult
 from .compaction import LLMExecutionState
 from .compaction import estimate_context_tokens
+from .compaction import get_threshold_context_tokens
 from .compaction import maybe_compact_execution_history
 from .compaction import should_trigger_compaction
 from .preprocessors import base as pre_base
@@ -193,14 +194,19 @@ class LLMExecutor(runner_base.BaseExecutor):
         prompt_messages = self._iter_prompt_messages(inp)
         input_token_limit = llm_helpers.resolve_model_token_limit(self.config)
         estimated_context_tokens = estimate_context_tokens(prompt_messages)
+        threshold_context_tokens = get_threshold_context_tokens(
+            prompt_messages,
+            estimated_context_tokens,
+        )
         return CompactionPreparationResult(
             prompt_messages_count=len(prompt_messages),
             estimated_context_tokens=estimated_context_tokens,
+            threshold_context_tokens=threshold_context_tokens,
             input_token_limit=input_token_limit,
             should_compact=should_trigger_compaction(
                 self.config.compaction,
                 input_token_limit,
-                estimated_context_tokens,
+                threshold_context_tokens,
             ),
             settings=self.config.compaction,
             current_model=self.config.model,
@@ -372,6 +378,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 text=text,
                 tool_call_requests=tool_call_requests or [],
                 tool_call_responses=tool_call_responses or [],
+                llm_usage=usage,
             )
             if workflow_execution is not None:
                 history.upsert_message(workflow_execution, message)
@@ -380,6 +387,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             message.text = text
             message.tool_call_requests = tool_call_requests or []
             message.tool_call_responses = tool_call_responses or []
+            message.llm_usage = usage
             if workflow_execution is not None:
                 history.upsert_message(workflow_execution, message)
 
@@ -666,6 +674,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             "LLM compaction preparation",
             prompt_messages_count=compaction_prep.prompt_messages_count,
             estimated_context_tokens=compaction_prep.estimated_context_tokens,
+            threshold_context_tokens=compaction_prep.threshold_context_tokens,
             input_token_limit=compaction_prep.input_token_limit,
             should_compact=compaction_prep.should_compact,
         )
