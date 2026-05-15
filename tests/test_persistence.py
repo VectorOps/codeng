@@ -245,13 +245,6 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
             "The conversation history before this point was compacted into the following summary:\n\n"
             "<summary>\n## Goal\nContinue task\n</summary>"
         ),
-        state=CompactionSummaryState(
-            compacted_step_ids=[],
-            compacted_message_ids=[old_user.id],
-            tokens_before=120,
-            tokens_after_estimate=30,
-            trigger_threshold_ratio=0.5,
-        ),
     )
     recent_user = state.Message(role=models.Role.USER, text="recent user")
     for message in [old_user, summary, recent_user]:
@@ -274,12 +267,19 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
             execution_id=execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[],
+                compacted_message_ids=[old_user.id],
+                tokens_before=120,
+                tokens_after_estimate=30,
+                trigger_threshold_ratio=0.5,
+            ),
             is_complete=True,
         ),
     )
     execution.state = LLMExecutionState(
         compaction=LLMExecutionCompactionState(
-            latest_compaction_message_id=compaction_step.message_id,
+            latest_compaction_step_id=compaction_step.id,
             compaction_count=1,
             last_compaction_tokens_before=120,
         )
@@ -304,13 +304,13 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
         payload["node_executions"][str(execution.id)]["state"]
     )
     assert restored_state.compaction is not None
-    assert restored_state.compaction.latest_compaction_message_id == compaction_step.message_id
+    assert restored_state.compaction.latest_compaction_step_id == compaction_step.id
     assert restored_state.compaction.compaction_count == 1
     assert restored_state.compaction.last_compaction_tokens_before == 120
 
     restored_compaction_step = restored.get_step(compaction_step.id)
     restored_compaction_state = CompactionSummaryState.model_validate(
-        payload["messages_by_id"][str(summary.id)]["state"]
+        payload["steps_by_id"][str(compaction_step.id)]["state"]
     )
     assert restored_compaction_step.type == state.StepType.CONTEXT_COMPACTION
     assert restored_compaction_state.compacted_message_ids == [old_user.id]

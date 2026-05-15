@@ -592,7 +592,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         execution_state = self._get_execution_state(inp.execution)
         if (
             execution_state.compaction is None
-            or execution_state.compaction.latest_compaction_message_id is None
+            or execution_state.compaction.latest_compaction_step_id is None
         ):
             return False, None, None
         rebuilt_prompt_messages = self._iter_prompt_messages(inp)

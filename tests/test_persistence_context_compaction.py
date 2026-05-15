@@ -10,17 +10,10 @@ from vocode.runner.executors.llm.compaction.models import LLMExecutionCompaction
 from vocode.runner.executors.llm.compaction.models import LLMExecutionState
 
 
-def test_persistence_round_trip_preserves_message_owned_compaction_state() -> None:
+def test_persistence_round_trip_preserves_step_owned_compaction_state() -> None:
     summary_message = state.Message(
         role=models.Role.SYSTEM,
         text="The conversation history before this point was compacted into the following summary:\n\n<summary>\nsummary\n</summary>",
-        state=CompactionSummaryState(
-            compacted_step_ids=[],
-            compacted_message_ids=[],
-            tokens_before=120,
-            tokens_after_estimate=45,
-            trigger_threshold_ratio=0.5,
-        ),
     )
     execution = state.NodeExecution(
         node="llm-node",
@@ -28,7 +21,7 @@ def test_persistence_round_trip_preserves_message_owned_compaction_state() -> No
         status=state.RunStatus.RUNNING,
         state=LLMExecutionState(
             compaction=LLMExecutionCompactionState(
-                latest_compaction_message_id=summary_message.id,
+                latest_compaction_step_id=None,
                 compaction_count=1,
                 last_compaction_tokens_before=120,
             )
@@ -38,7 +31,21 @@ def test_persistence_round_trip_preserves_message_owned_compaction_state() -> No
         execution_id=execution.id,
         type=state.StepType.CONTEXT_COMPACTION,
         message_id=summary_message.id,
+        state=CompactionSummaryState(
+            compacted_step_ids=[],
+            compacted_message_ids=[],
+            tokens_before=120,
+            tokens_after_estimate=45,
+            trigger_threshold_ratio=0.5,
+        ),
         is_complete=True,
+    )
+    execution.state = LLMExecutionState(
+        compaction=LLMExecutionCompactionState(
+            latest_compaction_step_id=step.id,
+            compaction_count=1,
+            last_compaction_tokens_before=120,
+        )
     )
     run = state.WorkflowExecution(
         workflow_name="wf",
@@ -53,14 +60,14 @@ def test_persistence_round_trip_preserves_message_owned_compaction_state() -> No
     assert payload["node_executions"][str(execution.id)]["state"] == {
         "selected_outcome": None,
         "compaction": {
-            "latest_compaction_message_id": str(summary_message.id),
+            "latest_compaction_step_id": str(step.id),
             "compaction_count": 1,
             "last_compaction_tokens_before": 120,
             "last_compaction_actual_prompt_tokens_before": None,
             "last_compaction_summary_input_tokens": None,
         },
     }
-    assert payload["messages_by_id"][str(summary_message.id)]["state"] == {
+    assert payload["steps_by_id"][str(step.id)]["state"] == {
         "compacted_step_ids": [],
         "compacted_message_ids": [],
         "tokens_before": 120,

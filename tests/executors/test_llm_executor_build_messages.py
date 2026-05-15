@@ -645,6 +645,15 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
     summary_message = state.Message(
         role=models.Role.SYSTEM,
         text="summary checkpoint",
+    )
+    step = state.Step(
+        execution_id=state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ).id,
+        type=state.StepType.CONTEXT_COMPACTION,
+        message_id=summary_message.id,
         state=CompactionSummaryState(
             compacted_step_ids=[],
             tokens_before=1200,
@@ -658,16 +667,12 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
         status=state.RunStatus.RUNNING,
         state=LLMExecutionState(
             compaction=LLMExecutionCompactionState(
-                latest_compaction_message_id=summary_message.id,
+                latest_compaction_step_id=step.id,
                 compaction_count=1,
             )
         ),
     )
-    step = state.Step(
-        execution_id=execution.id,
-        type=state.StepType.CONTEXT_COMPACTION,
-        message_id=summary_message.id,
-    )
+    step.execution_id = execution.id
 
     payload = state.WorkflowExecution(
         workflow_name="wf",
@@ -679,7 +684,7 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
     assert payload["node_executions"][str(execution.id)]["state"] == {
         "selected_outcome": None,
         "compaction": {
-            "latest_compaction_message_id": str(summary_message.id),
+            "latest_compaction_step_id": str(step.id),
             "compaction_count": 1,
             "last_compaction_tokens_before": None,
             "last_compaction_actual_prompt_tokens_before": None,
@@ -687,7 +692,7 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
         },
     }
     assert payload["steps_by_id"][str(step.id)]["type"] == "context_compaction"
-    assert payload["messages_by_id"][str(summary_message.id)]["state"] == {
+    assert payload["steps_by_id"][str(step.id)]["state"] == {
         "compacted_step_ids": [],
         "compacted_message_ids": [],
         "tokens_before": 1200,
@@ -723,13 +728,6 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
     summary = state.Message(
         role=models.Role.SYSTEM,
         text="summary checkpoint",
-        state=CompactionSummaryState(
-            compacted_step_ids=[],
-            compacted_message_ids=[old_user.id, old_assistant.id],
-            tokens_before=100,
-            tokens_after_estimate=20,
-            trigger_threshold_ratio=0.5,
-        ),
     )
     recent_user = state.Message(role=models.Role.USER, text="recent user")
     recent_assistant = state.Message(
@@ -765,6 +763,13 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
             execution_id=execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[],
+                compacted_message_ids=[old_user.id, old_assistant.id],
+                tokens_before=100,
+                tokens_after_estimate=20,
+                trigger_threshold_ratio=0.5,
+            ),
             is_complete=True,
         ),
     )
@@ -823,21 +828,7 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
 
     first_summary = state.Message(role=models.Role.SYSTEM, text="first summary")
     middle_user = state.Message(role=models.Role.USER, text="middle user")
-    first_summary.state = CompactionSummaryState(
-        compacted_step_ids=[],
-        compacted_message_ids=[],
-        tokens_before=100,
-        tokens_after_estimate=50,
-        trigger_threshold_ratio=0.5,
-    )
     second_summary = state.Message(role=models.Role.SYSTEM, text="second summary")
-    second_summary.state = CompactionSummaryState(
-        compacted_step_ids=[],
-        compacted_message_ids=[middle_user.id],
-        tokens_before=50,
-        tokens_after_estimate=20,
-        trigger_threshold_ratio=0.5,
-    )
     final_user = state.Message(role=models.Role.USER, text="final user")
     for msg in [first_summary, middle_user, second_summary, final_user]:
         history.upsert_message(run, msg)
@@ -849,6 +840,13 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
             execution_id=execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=first_summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[],
+                compacted_message_ids=[],
+                tokens_before=100,
+                tokens_after_estimate=50,
+                trigger_threshold_ratio=0.5,
+            ),
             is_complete=True,
         ),
     )
@@ -869,6 +867,13 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
             execution_id=execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=second_summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[],
+                compacted_message_ids=[middle_user.id],
+                tokens_before=50,
+                tokens_after_estimate=20,
+                trigger_threshold_ratio=0.5,
+            ),
             is_complete=True,
         ),
     )
@@ -921,13 +926,6 @@ def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary(
     summary = state.Message(
         role=models.Role.SYSTEM,
         text="summary checkpoint",
-        state=CompactionSummaryState(
-            compacted_step_ids=[],
-            compacted_message_ids=[old_user.id, old_assistant.id],
-            tokens_before=100,
-            tokens_after_estimate=20,
-            trigger_threshold_ratio=0.5,
-        ),
     )
     recent_user = state.Message(role=models.Role.USER, text="recent user")
     for message in [old_user, old_assistant, summary, recent_user]:
@@ -960,6 +958,13 @@ def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary(
             execution_id=execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[],
+                compacted_message_ids=[old_user.id, old_assistant.id],
+                tokens_before=100,
+                tokens_after_estimate=20,
+                trigger_threshold_ratio=0.5,
+            ),
             is_complete=True,
         ),
     )

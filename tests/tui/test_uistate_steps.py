@@ -418,15 +418,14 @@ async def test_tui_state_renders_context_compaction_as_condensed_event() -> None
             execution_id=local_execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary_message.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[uuid4(), uuid4()],
+                tokens_before=120,
+                tokens_after_estimate=45,
+                trigger_threshold_ratio=0.5,
+            ),
         ),
     )
-    summary_message.state = CompactionSummaryState(
-        compacted_step_ids=[uuid4(), uuid4()],
-        tokens_before=120,
-        tokens_after_estimate=45,
-        trigger_threshold_ratio=0.5,
-    )
-    history.upsert_message(run, summary_message)
 
     ui_state.handle_step(step)
 

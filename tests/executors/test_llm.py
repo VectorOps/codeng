@@ -1052,13 +1052,6 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
     summary = state.Message(
         role=models.Role.SYSTEM,
         text="summary",
-        state=CompactionSummaryState(
-            compacted_step_ids=[],
-            compacted_message_ids=[old_user.id],
-            tokens_before=100,
-            tokens_after_estimate=2,
-            trigger_threshold_ratio=0.5,
-        ),
     )
     recent_user = state.Message(role=models.Role.USER, text="tail")
     for message in [old_user, summary, recent_user]:
@@ -1081,6 +1074,13 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
             execution_id=execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[],
+                compacted_message_ids=[old_user.id],
+                tokens_before=100,
+                tokens_after_estimate=2,
+                trigger_threshold_ratio=0.5,
+            ),
             is_complete=True,
         ),
     )
@@ -1205,19 +1205,15 @@ async def test_llm_executor_persists_compaction_step_before_request(
         "The conversation history before this point was compacted"
         in compaction_step.message.text
     )
-    assert compaction_step.message.state is not None
     summary_state = CompactionSummaryState.model_validate(
-        compaction_step.message.state.model_dump(mode="python")
+        compaction_step.state.model_dump(mode="python")
     )
     assert summary_state.summary_input_tokens == 5
     assert summary_state.summary_output_tokens == 16
     assert execution.state is not None
     assert isinstance(execution.state, LLMExecutionState)
     assert execution.state.compaction is not None
-    assert (
-        execution.state.compaction.latest_compaction_message_id
-        == compaction_step.message_id
-    )
+    assert execution.state.compaction.latest_compaction_step_id == compaction_step.id
     assert execution.state.compaction.compaction_count == 1
     compaction_logs = [
         record
@@ -1265,7 +1261,9 @@ def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() ->
             node="node-build-after-compaction",
             input_message_ids=[],
             status=state.RunStatus.RUNNING,
-            state=LLMExecutionCompactionState(compaction_count=1),
+            state=LLMExecutionState(
+                compaction=LLMExecutionCompactionState(compaction_count=1)
+            ),
         ),
     )
 
@@ -1281,6 +1279,13 @@ def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() ->
             execution_id=execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
+            state=CompactionSummaryState(
+                compacted_step_ids=[],
+                compacted_message_ids=[],
+                tokens_before=100,
+                tokens_after_estimate=2,
+                trigger_threshold_ratio=0.5,
+            ),
             is_complete=True,
         ),
     )
