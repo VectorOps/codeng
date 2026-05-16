@@ -56,12 +56,6 @@ SUMMARY_PROMPT_FOCUS = (
 )
 
 
-def _truncate_text(text: str, limit: int = 400) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "..."
-
-
 def build_compaction_instructions(custom_instructions: Optional[str]) -> str:
     if custom_instructions:
         return DEFAULT_COMPACTION_INSTRUCTIONS + "\n\n" + custom_instructions.strip()
@@ -109,16 +103,16 @@ def serialize_messages_to_transcript(messages: List[state.Message]) -> str:
         role_name = message.role.value.capitalize()
         if message.text.strip():
             lines.append(f"[{role_name}]")
-            lines.append(_truncate_text(message.text.strip(), 600))
+            lines.append(message.text.strip())
         if message.thinking_content:
             lines.append(f"[{role_name} thinking]")
-            lines.append(_truncate_text(message.thinking_content.strip(), 300))
+            lines.append(message.thinking_content.strip())
         if message.tool_call_requests:
             lines.append("[Assistant tool calls]")
             tool_lines = []
             for req in message.tool_call_requests:
                 tool_lines.append(
-                    f"- {req.name}({_truncate_text(json.dumps(req.arguments, sort_keys=True), 300)})"
+                    f"- {req.name}({json.dumps(req.arguments, sort_keys=True)})"
                 )
             lines.extend(tool_lines)
         if message.tool_call_responses:
@@ -127,9 +121,7 @@ def serialize_messages_to_transcript(messages: List[state.Message]) -> str:
             result_text = ""
             if resp.result is not None:
                 result_text = json.dumps(resp.result, sort_keys=True)
-            lines.append(
-                f"- {resp.name}: {_truncate_text(result_text or '[empty]', 500)}"
-            )
+            lines.append(f"- {resp.name}: {result_text or '[empty]'}")
         if lines and lines[-1] != "":
             lines.append("")
     return "\n".join(lines)

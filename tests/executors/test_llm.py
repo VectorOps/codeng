@@ -1,5 +1,6 @@
 import asyncio
 import connect
+import json
 import logging
 import pytest
 from typing import Any, List, Optional
@@ -1435,6 +1436,41 @@ def test_compaction_transcript_serializes_tool_calls_and_results() -> None:
     )
     assert "[Tool results]" in transcript
     assert '- read_files: {"error": "context overflow"}' in transcript
+
+
+def test_compaction_transcript_preserves_full_message_content() -> None:
+    long_text = "x" * 700
+    long_thinking = "y" * 350
+    long_argument = {"path": "z" * 350}
+    long_result = {"content": "w" * 550}
+    message = state.Message(
+        role=models.Role.ASSISTANT,
+        text=long_text,
+        thinking_content=long_thinking,
+        tool_call_requests=[
+            state.ToolCallReq(
+                id="call-1",
+                name="read_files",
+                arguments=long_argument,
+            )
+        ],
+        tool_call_responses=[
+            state.ToolCallResp(
+                id="call-1",
+                name="read_files",
+                status=state.ToolCallStatus.COMPLETED,
+                result=long_result,
+            )
+        ],
+    )
+
+    transcript = serialize_messages_to_transcript([message])
+
+    assert long_text in transcript
+    assert long_thinking in transcript
+    assert json.dumps(long_argument, sort_keys=True) in transcript
+    assert json.dumps(long_result, sort_keys=True) in transcript
+    assert "..." not in transcript
 
 
 def test_compaction_instruction_builder_appends_custom_instructions() -> None:
