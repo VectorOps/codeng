@@ -1239,11 +1239,9 @@ async def test_llm_executor_persists_compaction_step_before_request(
     request = captured_requests[1]
     assert request.system_prompt is not None
     assert "<summary>" in request.system_prompt
-    assert len(request.messages) == 2
-    assert isinstance(request.messages[0], connect.UserMessage)
-    assert request.messages[0].content == "tail"
-    assert isinstance(request.messages[1], connect.AssistantMessage)
-    assert request.messages[1].content[0].text == "tail-2"
+    assert len(request.messages) == 1
+    assert isinstance(request.messages[0], connect.AssistantMessage)
+    assert request.messages[0].content[0].text == "tail-2"
 
 
 @pytest.mark.asyncio
@@ -1541,7 +1539,7 @@ def test_select_compaction_cut_index_prefers_user_boundary() -> None:
         8,
     )
 
-    assert cut_index == 2
+    assert cut_index == 3
 
 
 def test_select_compaction_cut_index_falls_back_to_assistant_boundary() -> None:

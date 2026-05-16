@@ -9,7 +9,7 @@ import connect
 from vocode import models, state
 from vocode.logger import logger
 from vocode.runner import base as runner_base
-from .estimation import estimate_context_tokens, estimate_message_tokens
+from .estimation import estimate_context_tokens
 from .estimation import get_threshold_context_tokens
 from .models import CompactionPreparationResult
 from .models import CompactionSettings
@@ -588,28 +588,21 @@ def select_compaction_cut_index(
         1, int(float(input_token_limit) * settings.keep_recent_ratio)
     )
     accumulated_tokens = 0
-    pending_estimated_tokens = 0
     newer_prompt_tokens: Optional[int] = None
 
     for index in range(len(prompt_messages) - 1, -1, -1):
-        message, step = prompt_messages[index]
+        message, _ = prompt_messages[index]
         prompt_tokens = _get_message_prompt_tokens(message)
         if prompt_tokens is None:
-            estimated_tokens = estimate_message_tokens(message)
-            if newer_prompt_tokens is None:
-                accumulated_tokens += estimated_tokens
-            else:
-                pending_estimated_tokens += estimated_tokens
-        elif newer_prompt_tokens is None:
-            accumulated_tokens += estimate_message_tokens(message)
+            continue
+        if newer_prompt_tokens is None:
+            accumulated_tokens = prompt_tokens
             newer_prompt_tokens = prompt_tokens
         else:
             accumulated_tokens += max(0, newer_prompt_tokens - prompt_tokens)
             newer_prompt_tokens = prompt_tokens
-            pending_estimated_tokens = 0
 
-        current_tail_tokens = accumulated_tokens + pending_estimated_tokens
-        if current_tail_tokens < keep_recent_budget:
+        if accumulated_tokens < keep_recent_budget:
             continue
         primary_index = _find_boundary_index(
             prompt_messages,

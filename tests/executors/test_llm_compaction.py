@@ -304,12 +304,10 @@ def test_select_compaction_cut_index_uses_llm_usage_deltas_for_tail_budget() -> 
         input_token_limit=10000,
     )
 
-    assert cut_index == 1
+    assert cut_index == 2
 
 
-def test_select_compaction_cut_index_estimates_only_trailing_messages_without_usage() -> (
-    None
-):
+def test_select_compaction_cut_index_skips_trailing_messages_without_usage() -> None:
     first_user = state.Message(role=models.Role.USER, text="a" * 40)
     assistant = state.Message(
         role=models.Role.ASSISTANT,
@@ -365,7 +363,7 @@ def test_select_compaction_cut_index_estimates_only_trailing_messages_without_us
         input_token_limit=10000,
     )
 
-    assert cut_index == 2
+    assert cut_index == 1
 
 
 @pytest.mark.asyncio
