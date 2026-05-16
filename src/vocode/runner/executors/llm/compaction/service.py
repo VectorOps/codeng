@@ -40,7 +40,6 @@ def _build_summary_usage(
 
 def _message_character_count(message: state.Message) -> int:
     total = len(message.text or "")
-    total += len(message.thinking_content or "")
     for req in message.tool_call_requests:
         total += len(req.name)
         total += len(json.dumps(req.arguments, sort_keys=True))
@@ -59,6 +58,18 @@ def _get_message_prompt_tokens(message: state.Message) -> Optional[int]:
     if message.llm_usage is None:
         return None
     return int(message.llm_usage.prompt_tokens)
+
+
+def _get_pair_prompt_tokens(
+    message: state.Message,
+    step: Optional[state.Step],
+) -> Optional[int]:
+    message_prompt_tokens = _get_message_prompt_tokens(message)
+    if message_prompt_tokens is not None:
+        return message_prompt_tokens
+    if step is None or step.llm_usage is None:
+        return None
+    return int(step.llm_usage.prompt_tokens)
 
 
 def _resolve_summary_model_name(
@@ -89,12 +100,41 @@ def _get_latest_prompt_tokens(
     prompt_messages: List[tuple[state.Message, Optional[state.Step]]],
 ) -> Optional[int]:
     for message, step in reversed(prompt_messages):
-        if message.llm_usage is not None:
-            return int(message.llm_usage.prompt_tokens)
-        if step is None or step.llm_usage is None:
-            continue
-        return int(step.llm_usage.prompt_tokens)
+        prompt_tokens = _get_pair_prompt_tokens(message, step)
+        if prompt_tokens is not None:
+            return prompt_tokens
     return None
+
+
+def _is_primary_cut_boundary(
+    message: state.Message,
+    step: Optional[state.Step],
+) -> bool:
+    if step is not None and step.type == state.StepType.INPUT_MESSAGE:
+        return True
+    return step is None and message.role == models.Role.USER
+
+
+def _is_fallback_cut_boundary(
+    message: state.Message,
+    step: Optional[state.Step],
+) -> bool:
+    if step is None:
+        return False
+    return step.type in VALID_FALLBACK_BOUNDARY_STEP_TYPES
+
+
+def _is_prompt_visible_summary_pair(
+    message: state.Message,
+    step: Optional[state.Step],
+) -> bool:
+    if step is None:
+        return True
+    return step.type in (
+        state.StepType.OUTPUT_MESSAGE,
+        state.StepType.INPUT_MESSAGE,
+        state.StepType.CONTEXT_COMPACTION,
+    )
 
 
 def _build_compaction_prompt_usage_delta(
@@ -256,6 +296,8 @@ def build_summary_message_text(
             if previous_summary:
                 previous_summaries.append(previous_summary)
                 continue
+        if not _is_prompt_visible_summary_pair(message, step):
+            continue
         live_messages.append(message)
 
     transcript = serialize_messages_to_transcript(live_messages)
@@ -303,6 +345,8 @@ def _split_summary_inputs(
             if previous_summary:
                 previous_summaries.append(previous_summary)
                 continue
+        if not _is_prompt_visible_summary_pair(message, step):
+            continue
         live_messages.append(message)
     transcript = serialize_messages_to_transcript(live_messages)
     previous_summary = previous_summaries[-1] if previous_summaries else None
@@ -584,41 +628,46 @@ def select_compaction_cut_index(
     if input_token_limit is None or input_token_limit <= 0:
         return max(1, len(prompt_messages) - 1)
 
+    latest_prompt_tokens = _get_latest_prompt_tokens(prompt_messages)
+    if latest_prompt_tokens is None:
+        return max(1, len(prompt_messages) - 1)
+
     keep_recent_budget = max(
         1, int(float(input_token_limit) * settings.keep_recent_ratio)
     )
-    accumulated_tokens = 0
-    newer_prompt_tokens: Optional[int] = None
+    target_cut_prompt_tokens = max(0, latest_prompt_tokens - keep_recent_budget)
+    primary_candidates: List[tuple[int, int]] = []
+    fallback_candidates: List[tuple[int, int]] = []
+    latest_cut_prompt_tokens: Optional[int] = None
 
-    for index in range(len(prompt_messages) - 1, -1, -1):
-        message, _ = prompt_messages[index]
-        prompt_tokens = _get_message_prompt_tokens(message)
-        if prompt_tokens is None:
+    for index, (message, step) in enumerate(prompt_messages):
+        prompt_tokens = _get_pair_prompt_tokens(message, step)
+        if prompt_tokens is not None:
+            latest_cut_prompt_tokens = prompt_tokens
             continue
-        if newer_prompt_tokens is None:
-            accumulated_tokens = prompt_tokens
-            newer_prompt_tokens = prompt_tokens
-        else:
-            accumulated_tokens += max(0, newer_prompt_tokens - prompt_tokens)
-            newer_prompt_tokens = prompt_tokens
+        if index <= 0 or latest_cut_prompt_tokens is None:
+            continue
+        if _is_primary_cut_boundary(message, step):
+            primary_candidates.append((index, latest_cut_prompt_tokens))
+            continue
+        if _is_fallback_cut_boundary(message, step):
+            fallback_candidates.append((index, latest_cut_prompt_tokens))
 
-        if accumulated_tokens < keep_recent_budget:
-            continue
-        primary_index = _find_boundary_index(
-            prompt_messages,
-            start_index=index,
-            allowed_step_types=VALID_PRIMARY_BOUNDARY_STEP_TYPES,
-        )
-        if primary_index is not None:
-            return _adjust_cut_index_for_tool_round(prompt_messages, primary_index)
-        fallback_index = _find_boundary_index(
-            prompt_messages,
-            start_index=index,
-            allowed_step_types=VALID_FALLBACK_BOUNDARY_STEP_TYPES,
-        )
-        if fallback_index is not None:
-            return _adjust_cut_index_for_tool_round(prompt_messages, fallback_index)
-    return max(1, len(prompt_messages) - 1)
+    candidate_pool = primary_candidates or fallback_candidates
+    if not candidate_pool:
+        return max(1, len(prompt_messages) - 1)
+
+    target_or_lower_candidates = [
+        candidate
+        for candidate in candidate_pool
+        if candidate[1] <= target_cut_prompt_tokens
+    ]
+    if target_or_lower_candidates:
+        selected_index, _ = max(target_or_lower_candidates, key=lambda item: item[1])
+        return _adjust_cut_index_for_tool_round(prompt_messages, selected_index)
+
+    selected_index, _ = min(candidate_pool, key=lambda item: item[1])
+    return _adjust_cut_index_for_tool_round(prompt_messages, selected_index)
 
 
 def _find_boundary_index(

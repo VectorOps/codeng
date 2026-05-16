@@ -104,9 +104,6 @@ def serialize_messages_to_transcript(messages: List[state.Message]) -> str:
         if message.text.strip():
             lines.append(f"[{role_name}]")
             lines.append(message.text.strip())
-        if message.thinking_content:
-            lines.append(f"[{role_name} thinking]")
-            lines.append(message.thinking_content.strip())
         if message.tool_call_requests:
             lines.append("[Assistant tool calls]")
             tool_lines = []

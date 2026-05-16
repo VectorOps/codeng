@@ -16,7 +16,6 @@ def _estimate_text_tokens(text: Optional[str]) -> int:
 
 def estimate_message_tokens(message: state.Message) -> int:
     total = _estimate_text_tokens(message.text)
-    total += _estimate_text_tokens(message.thinking_content)
     for req in message.tool_call_requests:
         total += _estimate_text_tokens(req.name)
         total += _estimate_text_tokens(json.dumps(req.arguments, sort_keys=True))

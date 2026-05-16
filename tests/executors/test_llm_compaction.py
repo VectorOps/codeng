@@ -224,15 +224,7 @@ def test_select_compaction_cut_index_uses_llm_usage_deltas_for_tail_budget() -> 
     prompt_messages = [
         (
             state.Message(role=models.Role.USER, text="older user"),
-            state.Step(
-                execution_id=state.NodeExecution(
-                    node="llm-node",
-                    input_message_ids=[],
-                    status=state.RunStatus.RUNNING,
-                ).id,
-                type=state.StepType.INPUT_MESSAGE,
-                is_complete=True,
-            ),
+            None,
         ),
         (
             state.Message(
@@ -255,15 +247,7 @@ def test_select_compaction_cut_index_uses_llm_usage_deltas_for_tail_budget() -> 
         ),
         (
             state.Message(role=models.Role.USER, text="recent user"),
-            state.Step(
-                execution_id=state.NodeExecution(
-                    node="llm-node",
-                    input_message_ids=[],
-                    status=state.RunStatus.RUNNING,
-                ).id,
-                type=state.StepType.INPUT_MESSAGE,
-                is_complete=True,
-            ),
+            None,
         ),
         (
             state.Message(
@@ -286,15 +270,7 @@ def test_select_compaction_cut_index_uses_llm_usage_deltas_for_tail_budget() -> 
         ),
         (
             state.Message(role=models.Role.USER, text="latest user"),
-            state.Step(
-                execution_id=state.NodeExecution(
-                    node="llm-node",
-                    input_message_ids=[],
-                    status=state.RunStatus.RUNNING,
-                ).id,
-                type=state.StepType.INPUT_MESSAGE,
-                is_complete=True,
-            ),
+            None,
         ),
     ]
 
@@ -345,15 +321,7 @@ def test_select_compaction_cut_index_skips_trailing_messages_without_usage() -> 
         ),
         (
             trailing_user,
-            state.Step(
-                execution_id=state.NodeExecution(
-                    node="llm-node",
-                    input_message_ids=[],
-                    status=state.RunStatus.RUNNING,
-                ).id,
-                type=state.StepType.INPUT_MESSAGE,
-                is_complete=True,
-            ),
+            None,
         ),
     ]
 
@@ -363,7 +331,226 @@ def test_select_compaction_cut_index_skips_trailing_messages_without_usage() -> 
         input_token_limit=10000,
     )
 
-    assert cut_index == 1
+    assert cut_index == 2
+
+
+def test_select_compaction_cut_index_targets_final_cutpoint() -> None:
+    prompt_messages = [
+        (
+            state.Message(role=models.Role.USER, text="user-1"),
+            None,
+        ),
+        (
+            state.Message(
+                role=models.Role.ASSISTANT,
+                text="assistant-1",
+                llm_usage=state.LLMUsageStats(
+                    prompt_tokens=1000,
+                    completion_tokens=40,
+                ),
+            ),
+            state.Step(
+                execution_id=state.NodeExecution(
+                    node="llm-node",
+                    input_message_ids=[],
+                    status=state.RunStatus.RUNNING,
+                ).id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                is_complete=True,
+            ),
+        ),
+        (
+            state.Message(role=models.Role.USER, text="user-2"),
+            None,
+        ),
+        (
+            state.Message(
+                role=models.Role.ASSISTANT,
+                text="assistant-2",
+                llm_usage=state.LLMUsageStats(
+                    prompt_tokens=2200,
+                    completion_tokens=40,
+                ),
+            ),
+            state.Step(
+                execution_id=state.NodeExecution(
+                    node="llm-node",
+                    input_message_ids=[],
+                    status=state.RunStatus.RUNNING,
+                ).id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                is_complete=True,
+            ),
+        ),
+        (
+            state.Message(role=models.Role.USER, text="user-3"),
+            None,
+        ),
+        (
+            state.Message(
+                role=models.Role.ASSISTANT,
+                text="assistant-3",
+                llm_usage=state.LLMUsageStats(
+                    prompt_tokens=3100,
+                    completion_tokens=40,
+                ),
+            ),
+            state.Step(
+                execution_id=state.NodeExecution(
+                    node="llm-node",
+                    input_message_ids=[],
+                    status=state.RunStatus.RUNNING,
+                ).id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                is_complete=True,
+            ),
+        ),
+        (
+            state.Message(role=models.Role.USER, text="user-4"),
+            None,
+        ),
+        (
+            state.Message(
+                role=models.Role.ASSISTANT,
+                text="assistant-4",
+                llm_usage=state.LLMUsageStats(
+                    prompt_tokens=4200,
+                    completion_tokens=40,
+                ),
+            ),
+            state.Step(
+                execution_id=state.NodeExecution(
+                    node="llm-node",
+                    input_message_ids=[],
+                    status=state.RunStatus.RUNNING,
+                ).id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                is_complete=True,
+            ),
+        ),
+    ]
+
+    cut_index = service_mod.select_compaction_cut_index(
+        prompt_messages,
+        CompactionSettings(keep_recent_ratio=0.1),
+        input_token_limit=10000,
+    )
+
+    assert cut_index == 6
+
+
+def test_select_compaction_cut_index_uses_step_usage_when_message_usage_missing() -> (
+    None
+):
+    assistant_step = state.Step(
+        execution_id=state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ).id,
+        type=state.StepType.OUTPUT_MESSAGE,
+        llm_usage=state.LLMUsageStats(
+            prompt_tokens=1200,
+            completion_tokens=40,
+        ),
+        is_complete=True,
+    )
+    recent_step = state.Step(
+        execution_id=state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ).id,
+        type=state.StepType.OUTPUT_MESSAGE,
+        llm_usage=state.LLMUsageStats(
+            prompt_tokens=2800,
+            completion_tokens=40,
+        ),
+        is_complete=True,
+    )
+    prompt_messages = [
+        (state.Message(role=models.Role.USER, text="older user"), None),
+        (
+            state.Message(role=models.Role.ASSISTANT, text="older assistant"),
+            assistant_step,
+        ),
+        (state.Message(role=models.Role.USER, text="recent user"), None),
+        (
+            state.Message(role=models.Role.ASSISTANT, text="recent assistant"),
+            recent_step,
+        ),
+    ]
+
+    cut_index = service_mod.select_compaction_cut_index(
+        prompt_messages,
+        CompactionSettings(keep_recent_ratio=0.1),
+        input_token_limit=10000,
+    )
+
+    assert cut_index == 2
+
+
+def test_split_summary_inputs_excludes_tool_request_steps_and_thinking_content() -> (
+    None
+):
+    tool_request = state.ToolCallReq(
+        id="call-1",
+        name="exec",
+        arguments={"cmd": "echo hi"},
+    )
+    tool_response = state.ToolCallResp(
+        id="call-1",
+        name="exec",
+        result={"stdout": "hi"},
+    )
+    output_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="assistant reply",
+        thinking_content="hidden reasoning",
+        tool_call_requests=[tool_request],
+        tool_call_responses=[tool_response],
+    )
+    tool_request_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="",
+        tool_call_requests=[tool_request],
+        tool_call_responses=[tool_response],
+    )
+    summarized_messages = [
+        (
+            output_message,
+            state.Step(
+                execution_id=state.NodeExecution(
+                    node="llm-node",
+                    input_message_ids=[],
+                    status=state.RunStatus.RUNNING,
+                ).id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                is_complete=True,
+            ),
+        ),
+        (
+            tool_request_message,
+            state.Step(
+                execution_id=state.NodeExecution(
+                    node="llm-node",
+                    input_message_ids=[],
+                    status=state.RunStatus.RUNNING,
+                ).id,
+                type=state.StepType.TOOL_REQUEST,
+                is_complete=True,
+            ),
+        ),
+    ]
+
+    previous_summary, transcript = service_mod._split_summary_inputs(
+        summarized_messages
+    )
+
+    assert previous_summary is None
+    assert "hidden reasoning" not in transcript
+    assert transcript.count("[Assistant tool calls]") == 1
+    assert transcript.count("[Tool results]") == 1
 
 
 @pytest.mark.asyncio
