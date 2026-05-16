@@ -246,7 +246,11 @@ def is_compaction_summary_step(step: Optional[state.Step]) -> bool:
 def collect_prompt_messages(
     execution: state.NodeExecution,
 ) -> List[tuple[state.Message, Optional[state.Step]]]:
-    prompt_messages = list(runner_base.iter_execution_messages(execution))
+    prompt_messages = [
+        (message, step)
+        for message, step in runner_base.iter_execution_messages(execution)
+        if _is_prompt_visible_summary_pair(message, step)
+    ]
     for index in range(len(prompt_messages) - 1, -1, -1):
         message, step = prompt_messages[index]
         if step is None or step.type != state.StepType.CONTEXT_COMPACTION:

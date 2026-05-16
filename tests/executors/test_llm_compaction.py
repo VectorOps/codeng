@@ -220,6 +220,78 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
     ]
 
 
+def test_collect_prompt_messages_excludes_auxiliary_tool_request_steps() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    tool_request = state.ToolCallReq(
+        id="call-1",
+        name="exec",
+        arguments={"cmd": "echo hi"},
+    )
+    tool_response = state.ToolCallResp(
+        id="call-1",
+        name="exec",
+        result={"stdout": "hi"},
+    )
+    output_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="assistant reply",
+        tool_call_requests=[tool_request],
+        tool_call_responses=[tool_response],
+    )
+    tool_request_message = state.Message(
+        role=models.Role.ASSISTANT,
+        text="",
+        tool_call_requests=[tool_request],
+        tool_call_responses=[tool_response],
+    )
+    user_message = state.Message(role=models.Role.USER, text="user follow up")
+    for message in [output_message, tool_request_message, user_message]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=output_message.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.TOOL_REQUEST,
+            message_id=tool_request_message.id,
+            is_complete=True,
+        ),
+    )
+    execution.input_message_ids.append(user_message.id)
+
+    prompt_messages = service_mod.collect_prompt_messages(execution)
+
+    assert [
+        (message.text, step.type if step is not None else None)
+        for message, step in prompt_messages
+    ] == [
+        ("user follow up", None),
+        ("assistant reply", state.StepType.OUTPUT_MESSAGE),
+    ]
+
+
 def test_select_compaction_cut_index_uses_llm_usage_deltas_for_tail_budget() -> None:
     prompt_messages = [
         (
@@ -551,6 +623,150 @@ def test_split_summary_inputs_excludes_tool_request_steps_and_thinking_content()
     assert "hidden reasoning" not in transcript
     assert transcript.count("[Assistant tool calls]") == 1
     assert transcript.count("[Tool results]") == 1
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    previous_execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.FINISHED,
+        ),
+    )
+
+    old_user = state.Message(role=models.Role.USER, text="old user")
+    old_assistant = state.Message(role=models.Role.ASSISTANT, text="old assistant")
+    history.upsert_message(run, old_user)
+    history.upsert_message(run, old_assistant)
+    previous_execution.input_message_ids.append(old_user.id)
+    old_output_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=previous_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=old_assistant.id,
+            llm_usage=state.LLMUsageStats(
+                prompt_tokens=1000,
+                completion_tokens=40,
+            ),
+            is_complete=True,
+        ),
+    )
+
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            previous_id=previous_execution.id,
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    summary_message = state.Message(
+        role=models.Role.SYSTEM,
+        text="The conversation history before this point was compacted into the following summary:\n\n<summary>\nold summary\n</summary>",
+    )
+    history.upsert_message(run, summary_message)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary_message.id,
+            state=service_mod.CompactionSummaryState(
+                compacted_step_ids=[old_output_step.id],
+                compacted_message_ids=[old_user.id, old_assistant.id],
+                prompt_tokens_before=1000,
+                prompt_tokens_after=100,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+
+    recent_user = state.Message(role=models.Role.USER, text="recent user")
+    recent_assistant = state.Message(
+        role=models.Role.ASSISTANT,
+        text="recent assistant",
+        llm_usage=state.LLMUsageStats(
+            prompt_tokens=1500,
+            completion_tokens=40,
+        ),
+    )
+    history.upsert_message(run, recent_user)
+    history.upsert_message(run, recent_assistant)
+    execution.input_message_ids.append(recent_user.id)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=recent_assistant.id,
+            llm_usage=recent_assistant.llm_usage,
+            is_complete=True,
+        ),
+    )
+
+    captured_texts: list[str] = []
+
+    async def _fake_generate_summary_message_text(
+        credential_manager,
+        summarized_messages,
+        settings,
+        current_model,
+        current_temperature,
+        current_reasoning_effort,
+        provider_options,
+    ):
+        captured_texts.extend([message.text for message, _ in summarized_messages])
+        return (
+            "summary",
+            state.LLMUsageStats(
+                prompt_tokens=111,
+                completion_tokens=50,
+            ),
+        )
+
+    monkeypatch.setattr(
+        service_mod,
+        "select_compaction_cut_index",
+        lambda *args, **kwargs: 2,
+    )
+    monkeypatch.setattr(
+        service_mod,
+        "generate_summary_message_text",
+        _fake_generate_summary_message_text,
+    )
+
+    preparation = CompactionPreparationResult(
+        estimated_context_tokens=1500,
+        input_token_limit=2000,
+        should_compact=True,
+        settings=CompactionSettings(trigger_threshold_ratio=0.5, keep_recent_ratio=0.1),
+        current_model="chatgpt/gpt-5.4",
+    )
+
+    compaction_step = await service_mod.maybe_compact_execution_history(
+        history,
+        StubProject().credentials,
+        execution,
+        preparation,
+    )
+
+    assert compaction_step is not None
+    assert captured_texts == [summary_message.text, "recent user"]
 
 
 @pytest.mark.asyncio
