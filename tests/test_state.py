@@ -2,6 +2,7 @@ from uuid import uuid4
 
 from vocode import models, state
 from vocode.history.manager import HistoryManager
+from vocode.history import models as history_models
 from vocode.runner.base import iter_execution_messages
 
 
@@ -650,3 +651,179 @@ def test_upsert_step_moves_existing_step_between_node_executions() -> None:
 
     assert step.id not in execution1.step_ids
     assert step.id in execution2.step_ids
+
+
+def test_insert_step_splices_between_existing_visible_steps() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    step1 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+    step2 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
+    )
+    step3 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+
+    inserted = state.Step(
+        execution_id=execution.id,
+        type=state.StepType.CONTEXT_COMPACTION,
+        is_auxiliary=True,
+    )
+    result = history.insert_step(
+        run,
+        inserted,
+        parent_step_id=step1.id,
+        child_step_id=step2.id,
+    )
+
+    assert result.changed is True
+    assert result.mutation_kind == history_models.HistoryMutationKind.INSERT
+    assert run.step_ids == [step1.id, inserted.id, step2.id, step3.id]
+    assert execution.step_ids == [step1.id, step2.id, step3.id, inserted.id]
+    assert run.get_step(inserted.id).parent_step_id == step1.id
+    assert run.get_step(step2.id).parent_step_id == inserted.id
+    assert run.get_active_branch().head_step_id == step3.id
+    assert run.get_active_branch().base_step_id == step1.id
+
+
+def test_insert_step_supports_cross_execution_splice_on_active_branch() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution1 = _make_node_execution(run, "node-1")
+    step1 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+    step2 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+    execution2 = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-1",
+            previous_id=execution1.id,
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    step3 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution2.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+
+    inserted = state.Step(
+        execution_id=execution2.id,
+        type=state.StepType.CONTEXT_COMPACTION,
+        is_auxiliary=True,
+    )
+    result = history.insert_step(
+        run,
+        inserted,
+        parent_step_id=step1.id,
+        child_step_id=step2.id,
+    )
+
+    assert result.changed is True
+    assert run.step_ids == [step1.id, inserted.id, step2.id, step3.id]
+    assert run.get_active_branch().head_step_id == step3.id
+    assert execution1.step_ids == [step1.id, step2.id]
+    assert execution2.step_ids == [step3.id, inserted.id]
+    assert run.get_step(step2.id).parent_step_id == inserted.id
+
+
+def test_insert_step_before_root_updates_branch_base() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    root = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+    child = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
+    )
+
+    inserted = state.Step(
+        execution_id=execution.id,
+        type=state.StepType.CONTEXT_COMPACTION,
+        is_auxiliary=True,
+    )
+    history.insert_step(
+        run,
+        inserted,
+        parent_step_id=None,
+        child_step_id=root.id,
+    )
+
+    assert run.step_ids == [inserted.id, root.id, child.id]
+    assert run.get_active_branch().base_step_id == inserted.id
+    assert run.get_active_branch().head_step_id == child.id
+
+
+def test_insert_step_rejects_non_matching_child_parent_relationship() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    step1 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+    step2 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+        ),
+    )
+
+    inserted = state.Step(
+        execution_id=execution.id,
+        type=state.StepType.CONTEXT_COMPACTION,
+    )
+
+    try:
+        history.insert_step(
+            run,
+            inserted,
+            parent_step_id=None,
+            child_step_id=step2.id,
+        )
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "Child step is not attached" in str(exc)

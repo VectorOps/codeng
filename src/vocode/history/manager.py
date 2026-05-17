@@ -296,6 +296,60 @@ class HistoryManager:
         )
         return self.upsert_node_execution(execution, forked_execution)
 
+    def insert_step(
+        self,
+        execution: state.WorkflowExecution,
+        new_step: state.Step,
+        *,
+        parent_step_id: Optional[UUID] = None,
+        child_step_id: Optional[UUID] = None,
+    ) -> history_models.HistoryMutationResult:
+        before_step_ids = execution.get_step_ids()
+        target_execution = execution.get_node_execution(new_step.execution_id)
+        if target_execution.branch_id is None:
+            target_execution.branch_id = execution.active_branch_id
+        if target_execution.branch_id is None:
+            raise ValueError("Target execution does not belong to a branch")
+        branch = execution.get_branch(target_execution.branch_id)
+        original_head_step_id = branch.head_step_id
+        original_base_step_id = branch.base_step_id
+        child_step: Optional[state.Step] = None
+        if child_step_id is not None:
+            child_step = execution.get_step(child_step_id)
+            if child_step.parent_step_id != parent_step_id:
+                raise ValueError(
+                    "Child step is not attached to the requested insertion parent"
+                )
+        new_step.parent_step_id = parent_step_id
+        persisted_step = self.upsert_step(execution, new_step)
+        upserted_step_ids = [persisted_step.id]
+        upserted_steps = [persisted_step]
+        if child_step is not None:
+            child_step.parent_step_id = persisted_step.id
+            updated_child_step = self.upsert_step(execution, child_step)
+            upserted_step_ids.append(updated_child_step.id)
+            upserted_steps.append(updated_child_step)
+            branch.head_step_id = original_head_step_id
+            if original_base_step_id == child_step.id and parent_step_id is None:
+                branch.base_step_id = persisted_step.id
+            else:
+                branch.base_step_id = original_base_step_id
+            if execution.active_branch_id == branch.id:
+                self._refresh_step_ids(execution)
+        after_step_ids = execution.get_step_ids()
+        return history_models.HistoryMutationResult(
+            changed=before_step_ids != after_step_ids,
+            mutation_kind=history_models.HistoryMutationKind.INSERT,
+            active_branch_id=execution.active_branch_id,
+            removed_step_ids=self.compute_removed_step_ids(
+                before_step_ids,
+                after_step_ids,
+            ),
+            upserted_step_ids=upserted_step_ids,
+            upserted_steps=upserted_steps,
+            branch_summaries=self.list_branch_summaries(execution),
+        )
+
     def fork_from_step(
         self,
         execution: state.WorkflowExecution,

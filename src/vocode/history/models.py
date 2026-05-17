@@ -13,6 +13,7 @@ from vocode import state
 class HistoryMutationKind(str, Enum):
     FORK = "fork"
     SWITCH_BRANCH = "switch_branch"
+    INSERT = "insert"
 
 
 class HistoryBranchSummary(BaseModel):

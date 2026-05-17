@@ -1174,3 +1174,131 @@ async def test_maybe_compact_execution_history_persists_debug_payload_when_enabl
     assert compaction_step is not None
     assert compaction_step.debug is not None
     assert compaction_step.debug["response"]["response_id"] == "resp_compaction_debug"
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_execution_history_splices_summary_before_retained_cross_execution_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    first_execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.FINISHED,
+        ),
+    )
+    old_user = state.Message(role=models.Role.USER, text="old user")
+    history.upsert_message(run, old_user)
+    first_execution.input_message_ids.append(old_user.id)
+
+    summary_execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            previous_id=first_execution.id,
+            input_message_ids=[],
+            status=state.RunStatus.FINISHED,
+        ),
+    )
+    old_summary_message = state.Message(role=models.Role.ASSISTANT, text="summary")
+    retained_old_output = state.Message(
+        role=models.Role.ASSISTANT,
+        text="retained old output",
+        llm_usage=state.LLMUsageStats(
+            prompt_tokens=1000,
+            completion_tokens=20,
+        ),
+    )
+    history.upsert_message(run, old_summary_message)
+    history.upsert_message(run, retained_old_output)
+    old_summary_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=summary_execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=old_summary_message.id,
+            state=service_mod.CompactionSummaryState(
+                prompt_tokens_before=100,
+                prompt_tokens_after=10,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+    retained_old_step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=summary_execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=retained_old_output.id,
+            llm_usage=retained_old_output.llm_usage,
+            is_complete=True,
+        ),
+    )
+
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            previous_id=summary_execution.id,
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    recent_user = state.Message(role=models.Role.USER, text="recent user")
+    history.upsert_message(run, recent_user)
+    execution.input_message_ids.append(recent_user.id)
+
+    async def _fake_generate_summary_message_text(*args, **kwargs):
+        return (
+            "new summary",
+            state.LLMUsageStats(
+                prompt_tokens=111,
+                completion_tokens=50,
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(
+        service_mod,
+        "select_compaction_cut_index",
+        lambda *args, **kwargs: 1,
+    )
+    monkeypatch.setattr(
+        service_mod,
+        "generate_summary_message_text",
+        _fake_generate_summary_message_text,
+    )
+
+    compaction_step = await service_mod.maybe_compact_execution_history(
+        history,
+        StubProject().credentials,
+        execution,
+        CompactionPreparationResult(
+            estimated_context_tokens=1000,
+            input_token_limit=2000,
+            should_compact=True,
+            settings=CompactionSettings(
+                trigger_threshold_ratio=0.5,
+                keep_recent_ratio=0.1,
+            ),
+            current_model="chatgpt/gpt-5.4",
+        ),
+    )
+
+    assert compaction_step is not None
+    assert run.step_ids == [
+        old_summary_step.id,
+        compaction_step.id,
+        retained_old_step.id,
+    ]
+    assert run.get_step(retained_old_step.id).parent_step_id == compaction_step.id
+    assert run.get_active_branch().head_step_id == retained_old_step.id

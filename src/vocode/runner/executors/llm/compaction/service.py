@@ -533,14 +533,17 @@ async def maybe_compact_execution_history(
     )
     boundary_parent_step_id: Optional[UUID] = None
     first_retained_step: Optional[state.Step] = None
-    for _, step in summarized_pairs:
-        if step is not None:
-            boundary_parent_step_id = step.parent_step_id
-            break
     for _, step in remaining_pairs:
         if step is not None:
             first_retained_step = step
             break
+    if first_retained_step is not None:
+        boundary_parent_step_id = first_retained_step.parent_step_id
+    else:
+        for _, step in reversed(summarized_pairs):
+            if step is not None:
+                boundary_parent_step_id = step.id
+                break
     actual_prompt_tokens_after = _get_summary_output_tokens(summary_usage)
     summary_state = CompactionSummaryState(
         prompt_tokens_before=actual_prompt_tokens_before,
@@ -594,14 +597,15 @@ async def maybe_compact_execution_history(
         is_auxiliary=True,
         is_final=True,
     )
-    persisted_step = history.upsert_step(workflow_execution, compaction_step)
-    if first_retained_step is not None:
-        first_retained_step.parent_step_id = persisted_step.id
-        history.upsert_step(workflow_execution, first_retained_step)
-        if persisted_step.id in execution.step_ids:
-            execution.step_ids.remove(persisted_step.id)
-        retained_index = execution.step_ids.index(first_retained_step.id)
-        execution.step_ids.insert(retained_index, persisted_step.id)
+    mutation_result = history.insert_step(
+        workflow_execution,
+        compaction_step,
+        parent_step_id=boundary_parent_step_id,
+        child_step_id=(
+            first_retained_step.id if first_retained_step is not None else None
+        ),
+    )
+    persisted_step = mutation_result.upserted_steps[0]
     execution.state = LLMExecutionState(
         selected_outcome=selected_outcome,
         compaction=LLMExecutionCompactionState(
