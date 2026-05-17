@@ -187,7 +187,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         self,
         inp: runner_base.ExecutorInput,
     ) -> List[tuple[state.Message, Optional[state.Step]]]:
-        return collect_prompt_messages(inp.execution)
+        return collect_prompt_messages(self.project.history, inp.execution)
 
     def _prepare_compaction(
         self,

@@ -9,7 +9,6 @@ import connect
 
 from vocode import models, state
 from vocode.logger import logger
-from vocode.runner import base as runner_base
 from .. import debug_capture as debug_capture_mod
 from .estimation import estimate_context_tokens
 from .estimation import get_threshold_context_tokens
@@ -246,11 +245,12 @@ def is_compaction_summary_step(step: Optional[state.Step]) -> bool:
 
 
 def collect_prompt_messages(
+    history: Any,
     execution: state.NodeExecution,
 ) -> List[tuple[state.Message, Optional[state.Step]]]:
     prompt_messages = [
         (message, step)
-        for message, step in runner_base.iter_execution_messages(execution)
+        for message, step in history.iter_execution_message_pairs(execution)
         if _is_prompt_visible_summary_pair(message, step)
     ]
     for index in range(len(prompt_messages) - 1, -1, -1):
@@ -434,7 +434,7 @@ async def maybe_compact_execution_history(
 ) -> Optional[state.Step]:
     if not preparation.should_compact:
         return None
-    prompt_messages = collect_prompt_messages(execution)
+    prompt_messages = collect_prompt_messages(history, execution)
     if len(prompt_messages) < 2:
         return None
 

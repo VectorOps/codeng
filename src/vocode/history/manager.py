@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Optional
 from uuid import UUID
 
@@ -11,6 +12,65 @@ from . import models as history_models
 
 
 class HistoryManager:
+    def _iter_message_pairs_for_step_ids(
+        self,
+        execution: state.NodeExecution,
+        visible_step_ids: list[UUID],
+    ) -> Iterator[tuple[state.Message, Optional[state.Step]]]:
+        workflow_execution = execution._workflow_execution
+        if workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        chain: list[state.NodeExecution] = []
+        current: Optional[state.NodeExecution] = execution
+        while current is not None:
+            chain.append(current)
+            current = current.previous
+        ordered_chain = list(reversed(chain))
+        ordered_execution_ids = {exec_item.id for exec_item in ordered_chain}
+        visible_steps = [
+            workflow_execution.get_step(step_id)
+            for step_id in visible_step_ids
+            if workflow_execution.get_step(step_id).execution_id
+            in ordered_execution_ids
+        ]
+        visible_steps_by_execution_id: dict[UUID, list[state.Step]] = {}
+        visible_step_ids_by_execution_id: dict[UUID, set[UUID]] = {}
+        for step in visible_steps:
+            execution_steps = visible_steps_by_execution_id.get(step.execution_id)
+            if execution_steps is None:
+                execution_steps = []
+                visible_steps_by_execution_id[step.execution_id] = execution_steps
+            execution_steps.append(step)
+            execution_step_ids = visible_step_ids_by_execution_id.get(step.execution_id)
+            if execution_step_ids is None:
+                execution_step_ids = set()
+                visible_step_ids_by_execution_id[step.execution_id] = execution_step_ids
+            execution_step_ids.add(step.id)
+        visible_input_message_ids = {
+            step.message_id
+            for step in visible_steps
+            if step.type == state.StepType.INPUT_MESSAGE and step.message_id is not None
+        }
+        for exec_item in ordered_chain:
+            for message in exec_item.input_messages:
+                if message.id in visible_input_message_ids:
+                    continue
+                yield message, None
+            for step in visible_steps_by_execution_id.get(exec_item.id, []):
+                if step.message is None:
+                    continue
+                yield step.message, step
+            visible_step_ids_for_execution = visible_step_ids_by_execution_id.get(
+                exec_item.id, set()
+            )
+            for step_id in exec_item.step_ids:
+                if step_id in visible_step_ids_for_execution:
+                    continue
+                step = workflow_execution.get_step(step_id)
+                if step.message is None:
+                    continue
+                yield step.message, step
+
     def reverse_apply_patch_from_step(
         self,
         execution: state.WorkflowExecution,
@@ -84,6 +144,28 @@ class HistoryManager:
     ) -> state.Message:
         execution.messages_by_id[message.id] = message
         return message
+
+    def iter_visible_message_pairs(
+        self,
+        execution: state.WorkflowExecution,
+    ) -> Iterator[tuple[state.Message, state.Step]]:
+        branch = self._ensure_default_branch(execution)
+        for step_id in self._compute_branch_step_ids(execution, branch.id):
+            step = execution.get_step(step_id)
+            if step.message is None:
+                continue
+            yield step.message, step
+
+    def iter_execution_message_pairs(
+        self,
+        execution: state.NodeExecution,
+    ) -> Iterator[tuple[state.Message, Optional[state.Step]]]:
+        workflow_execution = execution._workflow_execution
+        if workflow_execution is None:
+            raise ValueError("NodeExecution is not attached to a workflow execution")
+        branch = self._ensure_default_branch(workflow_execution)
+        visible_step_ids = self._compute_branch_step_ids(workflow_execution, branch.id)
+        yield from self._iter_message_pairs_for_step_ids(execution, visible_step_ids)
 
     def create_branch(
         self,

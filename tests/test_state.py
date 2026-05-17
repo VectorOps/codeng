@@ -25,6 +25,17 @@ def _make_node_execution(
     return history.upsert_node_execution(run, node_execution)
 
 
+def _assert_execution_iteration_matches_history_view(
+    history: HistoryManager,
+    execution: state.NodeExecution,
+) -> None:
+    workflow_texts = [message.text for message, _ in iter_execution_messages(execution)]
+    history_texts = [
+        message.text for message, _ in history.iter_execution_message_pairs(execution)
+    ]
+    assert workflow_texts == history_texts
+
+
 def test_delete_steps_removes_from_workflow_and_node_executions() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="test")
@@ -192,6 +203,143 @@ def test_iter_execution_messages_traverses_previous_chain_in_order() -> None:
 
     texts = [m.text for (m, _t) in iter_execution_messages(exec2)]
     assert texts == ["in-1-a", "in-1-b", "out-1-a", "in-1-c", "in-2-a", "out-2-a"]
+
+
+def test_history_manager_iter_visible_message_pairs_uses_workflow_linear_view() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    user_message = state.Message(role=models.Role.USER, text="user")
+    assistant_message = state.Message(role=models.Role.ASSISTANT, text="assistant")
+    history.upsert_message(run, user_message)
+    history.upsert_message(run, assistant_message)
+    history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=user_message.id,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_message.id,
+        ),
+    )
+
+    texts = [message.text for message, _ in history.iter_visible_message_pairs(run)]
+
+    assert texts == ["user", "assistant"]
+
+
+def test_history_manager_iter_execution_message_pairs_merges_lineage_inputs_with_visible_steps() -> (
+    None
+):
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    initial_message = state.Message(role=models.Role.USER, text="initial")
+    history.upsert_message(run, initial_message)
+    execution1 = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-1",
+            input_message_ids=[initial_message.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    prompt_message = state.Message(role=models.Role.ASSISTANT, text="prompt")
+    history.upsert_message(run, prompt_message)
+    history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution1.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=prompt_message.id,
+        ),
+    )
+    execution2 = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-1",
+            previous_id=execution1.id,
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    updated_message = state.Message(role=models.Role.USER, text="updated")
+    history.upsert_message(run, updated_message)
+    replacement = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution2.id,
+            parent_step_id=run.get_last_step().id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=updated_message.id,
+        ),
+    )
+    texts = [
+        message.text
+        for message, _ in history.iter_execution_message_pairs(replacement.execution)
+    ]
+
+    assert texts == ["initial", "prompt", "updated"]
+
+
+def test_workflow_step_ids_view_matches_history_tree_recalculation() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    message1 = state.Message(role=models.Role.USER, text="one")
+    message2 = state.Message(role=models.Role.ASSISTANT, text="two")
+    message3 = state.Message(role=models.Role.USER, text="three")
+    summary = state.Message(role=models.Role.ASSISTANT, text="summary")
+    for message in [message1, message2, message3, summary]:
+        history.upsert_message(run, message)
+    step1 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message1.id,
+        ),
+    )
+    step2 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message2.id,
+        ),
+    )
+    step3 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message3.id,
+        ),
+    )
+    history.insert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary.id,
+            is_auxiliary=True,
+        ),
+        parent_step_id=step2.id,
+        child_step_id=step3.id,
+    )
+
+    assert run.get_step_ids() == history._compute_branch_step_ids(
+        run, run.get_active_branch().id
+    )
+    _assert_execution_iteration_matches_history_view(history, execution)
 
 
 def test_delete_node_execution_removes_execution_and_child_steps() -> None:
@@ -429,6 +577,7 @@ def test_switch_branch_changes_active_projection() -> None:
     assert run.step_ids == [step1.id, step3.id]
     assert exec1.step_ids == [step1.id, step2.id]
     assert exec2.step_ids == [step3.id]
+    _assert_execution_iteration_matches_history_view(history, exec2)
 
     history.switch_branch(run, branch1_id)
 
@@ -438,6 +587,7 @@ def test_switch_branch_changes_active_projection() -> None:
     assert exec1.step_ids == [step1.id, step2.id]
     assert exec2.step_ids == [step3.id]
     assert branch2.head_step_id == step3.id
+    _assert_execution_iteration_matches_history_view(history, exec1)
 
 
 def test_history_manager_fork_from_step_creates_new_branch_head() -> None:
@@ -480,6 +630,7 @@ def test_history_manager_fork_from_step_creates_new_branch_head() -> None:
     assert replacement.execution_id != execution.id
     assert replacement.execution.branch_id == result.created_branch_id
     assert replacement.execution.step_ids == [replacement.id]
+    _assert_execution_iteration_matches_history_view(history, replacement.execution)
 
 
 def test_edit_user_input_preserves_visible_history_and_execution_chain() -> None:
@@ -567,6 +718,7 @@ def test_edit_user_input_preserves_visible_history_and_execution_chain() -> None
         "old output",
         "new user input",
     ]
+    _assert_execution_iteration_matches_history_view(history, replacement_execution)
 
 
 def test_upsert_step_updates_existing_step_without_duplicate_node_step_ids() -> None:
@@ -699,6 +851,7 @@ def test_insert_step_splices_between_existing_visible_steps() -> None:
     assert run.get_step(step2.id).parent_step_id == inserted.id
     assert run.get_active_branch().head_step_id == step3.id
     assert run.get_active_branch().base_step_id == step1.id
+    _assert_execution_iteration_matches_history_view(history, execution)
 
 
 def test_insert_step_supports_cross_execution_splice_on_active_branch() -> None:
@@ -755,6 +908,7 @@ def test_insert_step_supports_cross_execution_splice_on_active_branch() -> None:
     assert execution1.step_ids == [step1.id, step2.id]
     assert execution2.step_ids == [step3.id, inserted.id]
     assert run.get_step(step2.id).parent_step_id == inserted.id
+    _assert_execution_iteration_matches_history_view(history, execution2)
 
 
 def test_insert_step_before_root_updates_branch_base() -> None:
@@ -791,6 +945,91 @@ def test_insert_step_before_root_updates_branch_base() -> None:
     assert run.step_ids == [inserted.id, root.id, child.id]
     assert run.get_active_branch().base_step_id == inserted.id
     assert run.get_active_branch().head_step_id == child.id
+    _assert_execution_iteration_matches_history_view(history, execution)
+
+
+def test_iteration_consistency_survives_branch_switch_edit_and_insert_sequence() -> (
+    None
+):
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    initial_message = state.Message(role=models.Role.USER, text="initial")
+    history.upsert_message(run, initial_message)
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="node-1",
+            input_message_ids=[initial_message.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    prompt = state.Message(role=models.Role.ASSISTANT, text="prompt")
+    user1 = state.Message(role=models.Role.USER, text="user1")
+    output1 = state.Message(role=models.Role.ASSISTANT, text="output1")
+    for message in [prompt, user1, output1]:
+        history.upsert_message(run, message)
+    prompt_step = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=prompt.id,
+        ),
+    )
+    user1_step = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=user1.id,
+        ),
+    )
+    output1_step = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=output1.id,
+        ),
+    )
+    fork_input_message = state.Message(role=models.Role.USER, text="fork-input")
+    history.upsert_message(run, fork_input_message)
+    branch_result = history.fork_from_step(
+        run,
+        prompt_step.id,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=fork_input_message.id,
+        ),
+        base_step_id=user1_step.id,
+    )
+    fork_execution = run.get_step(branch_result.upserted_step_ids[0]).execution
+    edit_result = history.edit_user_input(
+        run,
+        branch_result.upserted_step_ids[0],
+        "fork-input-edited",
+    )
+    edited_execution = run.get_step(edit_result.upserted_step_ids[0]).execution
+    inserted_message = state.Message(role=models.Role.ASSISTANT, text="inserted")
+    history.upsert_message(run, inserted_message)
+    history.insert_step(
+        run,
+        state.Step(
+            execution_id=edited_execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=inserted_message.id,
+            is_auxiliary=True,
+        ),
+        parent_step_id=prompt_step.id,
+        child_step_id=run.get_step(edit_result.upserted_step_ids[0]).id,
+    )
+
+    assert run.get_step_ids() == history._compute_branch_step_ids(
+        run, run.get_active_branch().id
+    )
+    _assert_execution_iteration_matches_history_view(history, edited_execution)
 
 
 def test_insert_step_rejects_non_matching_child_parent_relationship() -> None:

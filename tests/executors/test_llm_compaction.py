@@ -137,7 +137,7 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
         ),
     )
 
-    prompt_messages = service_mod.collect_prompt_messages(current_execution)
+    prompt_messages = service_mod.collect_prompt_messages(history, current_execution)
 
     assert [message.text for message, _ in prompt_messages] == [
         "summary",
@@ -216,7 +216,7 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
         ),
     )
 
-    prompt_messages = service_mod.collect_prompt_messages(execution)
+    prompt_messages = service_mod.collect_prompt_messages(history, execution)
 
     assert [message.text for message, _ in prompt_messages] == [
         "second summary",
@@ -285,7 +285,7 @@ def test_collect_prompt_messages_excludes_auxiliary_tool_request_steps() -> None
     )
     execution.input_message_ids.append(user_message.id)
 
-    prompt_messages = service_mod.collect_prompt_messages(execution)
+    prompt_messages = service_mod.collect_prompt_messages(history, execution)
 
     assert [
         (message.text, step.type if step is not None else None)
@@ -293,6 +293,127 @@ def test_collect_prompt_messages_excludes_auxiliary_tool_request_steps() -> None
     ] == [
         ("user follow up", None),
         ("assistant reply", state.StepType.OUTPUT_MESSAGE),
+    ]
+
+
+def test_collect_prompt_messages_preserves_tail_after_inserted_latest_compaction() -> (
+    None
+):
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    msg1 = state.Message(role=models.Role.USER, text="msg-1")
+    msg2 = state.Message(role=models.Role.ASSISTANT, text="msg-2")
+    summary1 = state.Message(role=models.Role.ASSISTANT, text="summary-1")
+    summary2 = state.Message(role=models.Role.ASSISTANT, text="summary-2")
+    msg3 = state.Message(role=models.Role.USER, text="msg-3")
+    msg4 = state.Message(role=models.Role.ASSISTANT, text="msg-4")
+    summary3 = state.Message(role=models.Role.ASSISTANT, text="summary-3")
+    for message in [msg1, msg2, summary1, summary2, msg3, msg4, summary3]:
+        history.upsert_message(run, message)
+
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=msg1.id,
+            is_complete=True,
+        ),
+    )
+    step2 = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=msg2.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary1.id,
+            state=service_mod.CompactionSummaryState(
+                prompt_tokens_before=100,
+                prompt_tokens_after=50,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary2.id,
+            state=service_mod.CompactionSummaryState(
+                prompt_tokens_before=50,
+                prompt_tokens_after=25,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+    step5 = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=msg3.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=msg4.id,
+            is_complete=True,
+        ),
+    )
+    history.insert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary3.id,
+            state=service_mod.CompactionSummaryState(
+                prompt_tokens_before=25,
+                prompt_tokens_after=10,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+        parent_step_id=step5.parent_step_id,
+        child_step_id=step5.id,
+    )
+
+    prompt_messages = service_mod.collect_prompt_messages(history, execution)
+
+    assert [message.text for message, _ in prompt_messages] == [
+        "summary-3",
+        "msg-3",
+        "msg-4",
     ]
 
 
@@ -992,7 +1113,7 @@ async def test_maybe_compact_execution_history_adjusts_retained_tail_usage(
         _fake_generate_summary_message_text,
     )
 
-    prompt_messages = service_mod.collect_prompt_messages(execution)
+    prompt_messages = service_mod.collect_prompt_messages(history, execution)
     estimated_context_tokens = estimation_mod.estimate_context_tokens(prompt_messages)
     preparation = CompactionPreparationResult(
         estimated_context_tokens=estimated_context_tokens,

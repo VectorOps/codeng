@@ -801,8 +801,132 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
     assert messages[0].content[0].text == "summary checkpoint"
     assert isinstance(messages[1], connect.UserMessage)
     assert messages[1].content == "recent user"
+
+
+def test_build_connect_messages_preserves_tail_after_inserted_latest_compaction() -> (
+    None
+):
+    history = HistoryManager()
+    cfg = LLMNode(
+        name="llm-node",
+        model="test-model",
+        confirmation=models.Confirmation.AUTO,
+    )
+
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    msg1 = state.Message(role=models.Role.USER, text="msg-1")
+    msg2 = state.Message(role=models.Role.ASSISTANT, text="msg-2")
+    summary1 = state.Message(role=models.Role.ASSISTANT, text="summary-1")
+    summary2 = state.Message(role=models.Role.ASSISTANT, text="summary-2")
+    msg3 = state.Message(role=models.Role.USER, text="msg-3")
+    msg4 = state.Message(role=models.Role.ASSISTANT, text="msg-4")
+    summary3 = state.Message(role=models.Role.ASSISTANT, text="summary-3")
+    for message in [msg1, msg2, summary1, summary2, msg3, msg4, summary3]:
+        history.upsert_message(run, message)
+
+    step1 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=msg1.id,
+            is_complete=True,
+        ),
+    )
+    step2 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=msg2.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary1.id,
+            state=CompactionSummaryState(
+                prompt_tokens_before=100,
+                prompt_tokens_after=50,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary2.id,
+            state=CompactionSummaryState(
+                prompt_tokens_before=50,
+                prompt_tokens_after=25,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+    )
+    step5 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=msg3.id,
+            is_complete=True,
+        ),
+    )
+    step6 = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=msg4.id,
+            is_complete=True,
+        ),
+    )
+    history.insert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.CONTEXT_COMPACTION,
+            message_id=summary3.id,
+            state=CompactionSummaryState(
+                prompt_tokens_before=25,
+                prompt_tokens_after=10,
+                trigger_threshold_ratio=0.5,
+            ),
+            is_complete=True,
+        ),
+        parent_step_id=step5.parent_step_id,
+        child_step_id=step5.id,
+    )
+
+    executor = LLMExecutor(config=cfg, project=StubProject())
+
+    _, messages = executor.build_connect_messages(
+        executor._iter_prompt_messages(ExecutorInput(execution=execution, run=run))
+    )
+
+    assert len(messages) == 3
+    assert isinstance(messages[0], connect.AssistantMessage)
+    assert messages[0].content[0].text == "summary-3"
+    assert isinstance(messages[1], connect.UserMessage)
+    assert messages[1].content == "msg-3"
     assert isinstance(messages[2], connect.AssistantMessage)
-    assert messages[2].content[0].text == "recent assistant"
+    assert messages[2].content[0].text == "msg-4"
 
 
 def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() -> None:
