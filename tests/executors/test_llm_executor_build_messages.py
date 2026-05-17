@@ -655,7 +655,6 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
         type=state.StepType.CONTEXT_COMPACTION,
         message_id=summary_message.id,
         state=CompactionSummaryState(
-            compacted_step_ids=[],
             prompt_tokens_before=1200,
             prompt_tokens_after=400,
             trigger_threshold_ratio=0.5,
@@ -693,8 +692,6 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
     }
     assert payload["steps_by_id"][str(step.id)]["type"] == "context_compaction"
     assert payload["steps_by_id"][str(step.id)]["state"] == {
-        "compacted_step_ids": [],
-        "compacted_message_ids": [],
         "prompt_tokens_before": 1200,
         "prompt_tokens_after": 400,
         "summary_input_tokens": None,
@@ -764,8 +761,6 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[old_user.id, old_assistant.id],
                 prompt_tokens_before=100,
                 prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
@@ -843,8 +838,6 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=first_summary.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[],
                 prompt_tokens_before=100,
                 prompt_tokens_after=50,
                 trigger_threshold_ratio=0.5,
@@ -870,8 +863,6 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=second_summary.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[middle_user.id],
                 prompt_tokens_before=50,
                 prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
@@ -963,8 +954,6 @@ def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary(
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[old_user.id, old_assistant.id],
                 prompt_tokens_before=100,
                 prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,

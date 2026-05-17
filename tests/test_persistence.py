@@ -268,8 +268,6 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[old_user.id],
                 prompt_tokens_before=120,
                 prompt_tokens_after=30,
                 trigger_threshold_ratio=0.5,
@@ -313,7 +311,6 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
         payload["steps_by_id"][str(compaction_step.id)]["state"]
     )
     assert restored_compaction_step.type == state.StepType.CONTEXT_COMPACTION
-    assert restored_compaction_state.compacted_message_ids == [old_user.id]
     assert restored_compaction_state.prompt_tokens_before == 120
     assert restored_compaction_state.prompt_tokens_after == 30
     assert restored_compaction_state.trigger_threshold_ratio == 0.5

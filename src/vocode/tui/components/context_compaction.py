@@ -30,13 +30,8 @@ class ContextCompactionComponent(tui_renderable_component.RenderableComponentBas
         if summary_state is None:
             return rich_text.Text("Context compacted.", style="dim")
 
-        summarized_count = len(summary_state.compacted_step_ids)
         text = rich_text.Text(style="dim")
         text.append("Compaction complete", style="cyan")
-        text.append("  ")
-        text.append(f"{summarized_count} step")
-        if summarized_count != 1:
-            text.append("s")
         if summary_state.prompt_tokens_before is not None:
             text.append("  ")
             text.append(f"{summary_state.prompt_tokens_before}", style="yellow")

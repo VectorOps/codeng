@@ -1154,8 +1154,6 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[old_user.id],
                 prompt_tokens_before=100,
                 prompt_tokens_after=2,
                 trigger_threshold_ratio=0.5,
@@ -1310,6 +1308,7 @@ async def test_llm_executor_persists_compaction_step_before_request(
     assert "prompt_tokens_after" in log_message
     assert "summary_input_tokens" in log_message
     assert "summary_output_tokens" in log_message
+    assert "prompt_tokens_before" in log_message
 
     assert len(captured_requests) == 2
     summary_request = captured_requests[0]
@@ -1447,10 +1446,8 @@ def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() ->
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[],
-                tokens_before=100,
-                tokens_after_estimate=2,
+                prompt_tokens_before=100,
+                prompt_tokens_after=2,
                 trigger_threshold_ratio=0.5,
             ),
             is_complete=True,
@@ -1890,7 +1887,6 @@ async def test_llm_executor_repeated_compaction_uses_update_mode_prompt(
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=prior_summary.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[],
                 prompt_tokens_before=10,
                 prompt_tokens_after=5,
                 trigger_threshold_ratio=0.5,

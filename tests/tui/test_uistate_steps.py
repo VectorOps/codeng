@@ -419,7 +419,6 @@ async def test_tui_state_renders_context_compaction_as_condensed_event() -> None
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary_message.id,
             state=CompactionSummaryState(
-                compacted_step_ids=[uuid4(), uuid4()],
                 prompt_tokens_before=120,
                 prompt_tokens_after=45,
                 trigger_threshold_ratio=0.5,
@@ -432,7 +431,6 @@ async def test_tui_state_renders_context_compaction_as_condensed_event() -> None
     await ui_state.terminal.render()
     output = buffer.getvalue()
     assert "Compaction complete" in output
-    assert "2 steps" in output
     assert "120 -> 45 tokens" in output
     assert "raw hidden summary" not in output
 

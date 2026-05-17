@@ -96,7 +96,7 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
         ),
     )
 
-    current_execution = history.upsert_node_execution(
+    summary_execution = history.upsert_node_execution(
         run,
         state.NodeExecution(
             workflow_execution=run,
@@ -112,12 +112,10 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
         run,
         state.Step(
             workflow_execution=run,
-            execution_id=current_execution.id,
+            execution_id=summary_execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary_message.id,
             state=service_mod.CompactionSummaryState(
-                compacted_step_ids=[old_output_step.id],
-                compacted_message_ids=[old_input.id, old_output.id],
                 prompt_tokens_before=100,
                 prompt_tokens_after=10,
                 trigger_threshold_ratio=0.5,
@@ -128,7 +126,16 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
 
     recent_input = state.Message(role=models.Role.USER, text="recent input")
     history.upsert_message(run, recent_input)
-    current_execution.input_message_ids.append(recent_input.id)
+    current_execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            previous_id=summary_execution.id,
+            input_message_ids=[recent_input.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
 
     prompt_messages = service_mod.collect_prompt_messages(current_execution)
 
@@ -166,8 +173,6 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=first_summary.id,
             state=service_mod.CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[],
                 prompt_tokens_before=100,
                 prompt_tokens_after=60,
                 trigger_threshold_ratio=0.5,
@@ -193,8 +198,6 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=second_summary.id,
             state=service_mod.CompactionSummaryState(
-                compacted_step_ids=[],
-                compacted_message_ids=[middle_user.id],
                 prompt_tokens_before=60,
                 prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
@@ -662,7 +665,7 @@ async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_
         ),
     )
 
-    execution = history.upsert_node_execution(
+    summary_execution = history.upsert_node_execution(
         run,
         state.NodeExecution(
             workflow_execution=run,
@@ -682,12 +685,10 @@ async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_
         run,
         state.Step(
             workflow_execution=run,
-            execution_id=execution.id,
+            execution_id=summary_execution.id,
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary_message.id,
             state=service_mod.CompactionSummaryState(
-                compacted_step_ids=[old_output_step.id],
-                compacted_message_ids=[old_user.id, old_assistant.id],
                 prompt_tokens_before=1000,
                 prompt_tokens_after=100,
                 trigger_threshold_ratio=0.5,
@@ -707,7 +708,16 @@ async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_
     )
     history.upsert_message(run, recent_user)
     history.upsert_message(run, recent_assistant)
-    execution.input_message_ids.append(recent_user.id)
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            previous_id=summary_execution.id,
+            input_message_ids=[recent_user.id],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
     history.upsert_step(
         run,
         state.Step(
@@ -875,7 +885,6 @@ async def test_maybe_compact_execution_history_records_summary_usage(
     assert summary_state.prompt_tokens_after == 45
     assert summary_state.summary_input_tokens == 321
     assert summary_state.summary_output_tokens == 45
-    assert summary_state.compacted_message_ids
     assert isinstance(execution.state, service_mod.LLMExecutionState)
     assert execution.state.compaction is not None
     assert execution.state.compaction.latest_compaction_step_id == compaction_step.id

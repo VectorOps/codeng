@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 from typing import List, Optional
+from uuid import UUID
 
 import connect
 
@@ -253,35 +254,11 @@ def collect_prompt_messages(
         if _is_prompt_visible_summary_pair(message, step)
     ]
     for index in range(len(prompt_messages) - 1, -1, -1):
-        message, step = prompt_messages[index]
-        if step is None or step.type != state.StepType.CONTEXT_COMPACTION:
-            continue
-        summary_state = get_compaction_summary_state(step)
-        if summary_state is None:
-            continue
-        compacted_step_ids = set(summary_state.compacted_step_ids)
-        compacted_message_ids = set(summary_state.compacted_message_ids)
-        rebuilt_messages: List[tuple[state.Message, Optional[state.Step]]] = [
-            (message, step)
-        ]
-        for retained_message, retained_step in prompt_messages:
-            if retained_message.id in compacted_message_ids:
-                continue
-            if (
-                retained_step is not None
-                and retained_step.type == state.StepType.CONTEXT_COMPACTION
-            ):
-                if retained_message.id != message.id:
-                    continue
-            if retained_step is None:
-                rebuilt_messages.append((retained_message, retained_step))
-                continue
-            if step is not None and retained_step.id == step.id:
-                continue
-            if retained_step.id in compacted_step_ids:
-                continue
-            rebuilt_messages.append((retained_message, retained_step))
-        return rebuilt_messages
+        _, step = prompt_messages[index]
+        if step is not None and step.type == state.StepType.CONTEXT_COMPACTION:
+            summary_pair = prompt_messages[index]
+            tail_pairs = prompt_messages[index + 1 :]
+            return [summary_pair] + tail_pairs
     return prompt_messages
 
 
@@ -471,13 +448,6 @@ async def maybe_compact_execution_history(
     summarized_pairs = prompt_messages[:summarize_count]
     summarized_messages = list(summarized_pairs)
     remaining_pairs = prompt_messages[summarize_count:]
-    compacted_step_ids = [
-        step.id
-        for _, step in summarized_pairs
-        if step is not None and step.id is not None
-    ]
-    if not compacted_step_ids:
-        return None
 
     workflow_execution = execution._workflow_execution
     if workflow_execution is None:
@@ -561,11 +531,18 @@ async def maybe_compact_execution_history(
         remaining_pairs,
         prompt_token_delta,
     )
-    final_pairs = [(summary_message, None)] + remaining_pairs
+    boundary_parent_step_id: Optional[UUID] = None
+    first_retained_step: Optional[state.Step] = None
+    for _, step in summarized_pairs:
+        if step is not None:
+            boundary_parent_step_id = step.parent_step_id
+            break
+    for _, step in remaining_pairs:
+        if step is not None:
+            first_retained_step = step
+            break
     actual_prompt_tokens_after = _get_summary_output_tokens(summary_usage)
     summary_state = CompactionSummaryState(
-        compacted_step_ids=compacted_step_ids,
-        compacted_message_ids=[message.id for message, _ in summarized_messages],
         prompt_tokens_before=actual_prompt_tokens_before,
         prompt_tokens_after=actual_prompt_tokens_after,
         summary_input_tokens=(
@@ -576,6 +553,7 @@ async def maybe_compact_execution_history(
         ),
         trigger_threshold_ratio=preparation.settings.trigger_threshold_ratio,
     )
+    final_pairs = [(summary_message, None)] + remaining_pairs
     logger.info(
         "Context compaction finished",
         status="completed",
@@ -606,6 +584,7 @@ async def maybe_compact_execution_history(
     compaction_step = state.Step(
         workflow_execution=workflow_execution,
         execution_id=execution.id,
+        parent_step_id=boundary_parent_step_id,
         type=state.StepType.CONTEXT_COMPACTION,
         message_id=summary_message.id,
         state=summary_state,
@@ -616,6 +595,13 @@ async def maybe_compact_execution_history(
         is_final=True,
     )
     persisted_step = history.upsert_step(workflow_execution, compaction_step)
+    if first_retained_step is not None:
+        first_retained_step.parent_step_id = persisted_step.id
+        history.upsert_step(workflow_execution, first_retained_step)
+        if persisted_step.id in execution.step_ids:
+            execution.step_ids.remove(persisted_step.id)
+        retained_index = execution.step_ids.index(first_retained_step.id)
+        execution.step_ids.insert(retained_index, persisted_step.id)
     execution.state = LLMExecutionState(
         selected_outcome=selected_outcome,
         compaction=LLMExecutionCompactionState(
