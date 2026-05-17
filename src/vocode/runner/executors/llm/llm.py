@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from vocode import state, models
 from vocode.logger import logger
+from . import debug_capture as debug_capture_mod
 from . import helpers as llm_helpers
 from .compaction import collect_prompt_messages
 from .compaction import CompactionSummaryGenerationError
@@ -807,6 +808,7 @@ class LLMExecutor(runner_base.BaseExecutor):
             attempt = 0
             assistant_partial = ""
             final_response: Optional[connect.AssistantMessage] = None
+            debug_request_payload: Optional[Dict[str, Any]] = None
 
             while True:
                 try:
@@ -825,6 +827,17 @@ class LLMExecutor(runner_base.BaseExecutor):
                             else None
                         ),
                     )
+                    if debug_capture_mod.should_capture_debug_prompt_response(
+                        self.project.settings
+                    ):
+                        debug_request_payload = (
+                            debug_capture_mod.build_debug_request_payload(
+                                request,
+                                system_prompt,
+                                connect_messages,
+                                tools,
+                            )
+                        )
                     options = connect.RequestOptions(
                         provider_options=dict(cfg.extra or {}),
                     )
@@ -1099,6 +1112,14 @@ class LLMExecutor(runner_base.BaseExecutor):
                     None,
                 ),
             )
+            step_debug: Optional[Dict[str, Any]] = None
+            if debug_capture_mod.should_capture_debug_prompt_response(
+                self.project.settings
+            ):
+                step_debug = debug_capture_mod.build_step_debug_payload(
+                    debug_request_payload,
+                    final_response,
+                )
 
             if (
                 len(outcome_names) > 1
@@ -1227,6 +1248,8 @@ class LLMExecutor(runner_base.BaseExecutor):
                     outcome_name=final_outcome_name,
                     step_state=step_state,
                 )
+                if step_debug is not None:
+                    message_step.debug = step_debug
                 yield message_step
                 return
 
@@ -1270,5 +1293,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 outcome_name=final_outcome_name,
                 step_state=step_state,
             )
+            if step_debug is not None:
+                message_step.debug = step_debug
             yield message_step
             return

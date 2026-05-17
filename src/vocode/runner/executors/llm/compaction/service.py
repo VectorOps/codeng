@@ -9,6 +9,7 @@ import connect
 from vocode import models, state
 from vocode.logger import logger
 from vocode.runner import base as runner_base
+from .. import debug_capture as debug_capture_mod
 from .estimation import estimate_context_tokens
 from .estimation import get_threshold_context_tokens
 from .models import CompactionPreparationResult
@@ -392,6 +393,16 @@ async def generate_summary_message_text(
             else None
         ),
     )
+    debug_request_payload = None
+    if debug_capture_mod.should_capture_debug_prompt_response(
+        getattr(credential_manager, "project_settings", None)
+    ):
+        debug_request_payload = debug_capture_mod.build_debug_request_payload(
+            request,
+            resolve_compaction_system_prompt(settings),
+            request.messages,
+            None,
+        )
     try:
         async with connect.AsyncLLMClient(
             credential_manager=credential_manager
@@ -437,10 +448,20 @@ async def generate_summary_message_text(
     ).strip()
     if not summary_text:
         return build_summary_message_text(summarized_messages, settings), None
-    return build_summary_message_envelope(summary_text, settings), _build_summary_usage(
-        response,
-        summary_model,
-    )
+    summary_body = build_summary_message_envelope(summary_text, settings)
+    if debug_request_payload is not None:
+        summary_body = "\n\n".join(
+            [
+                summary_body,
+                "<debug_llm_payload>",
+                debug_capture_mod.build_debug_text_payload(
+                    debug_request_payload,
+                    response,
+                ),
+                "</debug_llm_payload>",
+            ]
+        )
+    return summary_body, _build_summary_usage(response, summary_model)
 
 
 async def maybe_compact_execution_history(

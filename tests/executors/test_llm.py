@@ -514,6 +514,86 @@ async def test_llm_executor_with_connect_mock_response(
 
 
 @pytest.mark.asyncio
+async def test_llm_executor_captures_debug_prompt_and_response_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            _stream_with_text("debug response"),
+            **kwargs,
+        ),
+    )
+
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            debugging=vocode_settings.DebuggingSettings(
+                capture_llm_payload=True
+            )
+        )
+    )
+    node = LLMNode(
+        name="node-debug-capture",
+        type="llm",
+        model="gpt-3.5-turbo",
+        system="You are a test assistant.",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-debug-capture", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    final_message_step = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert final_message_step.debug is not None
+    request_debug = final_message_step.debug["request"]
+    response_debug = final_message_step.debug["response"]
+    assert request_debug["messages"] == [{"role": "user", "content": "Hi"}]
+    assert response_debug["content"] == [{"type": "text", "text": "debug response"}]
+    assert response_debug["usage"]["input_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_llm_executor_does_not_capture_debug_prompt_and_response_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: FakeAsyncLLMClient(
+            _stream_with_text("debug response"),
+            **kwargs,
+        ),
+    )
+
+    project = StubProject()
+    node = LLMNode(
+        name="node-debug-default-off",
+        type="llm",
+        model="gpt-3.5-turbo",
+    )
+    executor = LLMExecutor(config=node, project=project)
+
+    run, execution = _build_execution_with_input("node-debug-default-off", "Hi")
+    inp = ExecutorInput(execution=execution, run=run)
+
+    steps: List[state.Step] = []
+    async for step in executor.run(inp):
+        steps.append(step)
+
+    final_message_step = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE][
+        -1
+    ]
+    assert final_message_step.debug is None
+
+
+@pytest.mark.asyncio
 async def test_llm_executor_init_starts_node_mcp_sources_and_refreshes_cache() -> None:
     project = StubProject(
         settings=vocode_settings.Settings(
@@ -1426,8 +1506,8 @@ def test_compaction_transcript_serializes_tool_calls_and_results() -> None:
 
     assert "[Assistant]" in transcript
     assert "I will inspect the repo" in transcript
-    assert "[Assistant thinking]" in transcript
-    assert "Need to inspect llm files" in transcript
+    assert "[Assistant thinking]" not in transcript
+    assert "Need to inspect llm files" not in transcript
     assert "[Assistant tool calls]" in transcript
     assert (
         '- read_files({"path": "src/vocode/runner/executors/llm/llm.py"})' in transcript
@@ -1465,7 +1545,7 @@ def test_compaction_transcript_preserves_full_message_content() -> None:
     transcript = serialize_messages_to_transcript([message])
 
     assert long_text in transcript
-    assert long_thinking in transcript
+    assert long_thinking not in transcript
     assert json.dumps(long_argument, sort_keys=True) in transcript
     assert json.dumps(long_result, sort_keys=True) in transcript
     assert "..." not in transcript

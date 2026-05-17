@@ -5,6 +5,7 @@ import pytest
 
 from vocode import models
 from vocode import state
+from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
 from vocode.runner.executors.llm.compaction import estimation as estimation_mod
 from vocode.runner.executors.llm.compaction import service as service_mod
@@ -1005,3 +1006,60 @@ async def test_maybe_compact_execution_history_adjusts_retained_tail_usage(
     assert retained_step.llm_usage is not None
     assert retained_step.llm_usage.prompt_tokens == 900 - expected_delta
     assert retained_step.llm_usage.completion_tokens == 30
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_message_text_captures_debug_payload_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = connect.AssistantMessage(
+        provider="openai",
+        model="gpt-5.4",
+        api_family="openai-responses",
+        content=[connect.TextBlock(text="condensed summary")],
+        finish_reason="stop",
+        usage=connect.Usage(
+            input_tokens=123,
+            output_tokens=17,
+            total_tokens=140,
+            completeness="final",
+        ),
+        response_id="resp_debug",
+        request_id="req_debug",
+    )
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: _FakeAsyncLLMClient(response, **kwargs),
+    )
+
+    project = StubProject(
+        settings=vocode_settings.Settings(
+            debugging=vocode_settings.DebuggingSettings(
+                capture_llm_payload=True
+            )
+        )
+    )
+    project.credentials.project_settings = project.settings
+    summarized_messages = [
+        (state.Message(role=models.Role.USER, text="hello"), None),
+    ]
+
+    summary_text, summary_usage = await service_mod.generate_summary_message_text(
+        project.credentials,
+        summarized_messages,
+        CompactionSettings(),
+        current_model="openai/gpt-5.4",
+        current_temperature=None,
+        current_reasoning_effort=None,
+        provider_options={},
+    )
+
+    assert summary_usage is not None
+    assert summary_usage.prompt_tokens == 123
+    assert "<debug_llm_payload>" in summary_text
+    assert '"response_id": "resp_debug"' in summary_text
+    assert (
+        '"system_prompt": "You are maintaining a continuation checkpoint for a coding workflow.'
+        in summary_text
+    )

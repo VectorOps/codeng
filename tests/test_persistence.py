@@ -320,6 +320,46 @@ def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None
     assert restored_compaction_step.execution is restored_execution
 
 
+def test_codec_roundtrip_preserves_step_debug_payload() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    assistant_message = state.Message(role=models.Role.ASSISTANT, text="hello")
+    history.upsert_message(run, assistant_message)
+    debug_payload = {
+        "request": {
+            "system_prompt": "sys",
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        "response": {
+            "content": [{"type": "text", "text": "hello"}],
+            "usage": {"input_tokens": 5, "output_tokens": 1},
+        },
+    }
+    step = history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=assistant_message.id,
+            debug=debug_payload,
+            is_complete=True,
+        ),
+    )
+
+    restored = persistence_codec.loads_gzip(persistence_codec.dumps_gzip(run))
+
+    assert restored.get_step(step.id).debug == debug_payload
+
+
 @pytest.mark.asyncio
 async def test_state_manager_flushes_to_expected_session_layout(tmp_path):
     session_id = uuid.uuid4().hex

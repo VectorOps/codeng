@@ -316,6 +316,10 @@ class Step(BaseModel):
     llm_usage: Optional[LLMUsageStats] = Field(
         default=None, description="LLM usage stats for this step, if any."
     )
+    debug: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Optional JSON-safe debug payload for this step.",
+    )
     is_complete: bool = Field(
         default=True,
         description=(

@@ -193,6 +193,10 @@ class LoggingSettings(vars_mod.BaseVarModel):
     )
 
 
+class DebuggingSettings(vars_mod.BaseVarModel):
+    capture_llm_payload: bool = False
+
+
 class ShellMode(str, Enum):
     direct = "direct"
     shell = "shell"
@@ -478,6 +482,7 @@ class Settings(vars_mod.BaseVarModel):
     know_enabled: bool = True
     process: Optional[ProcessSettings] = Field(default=None)
     logging: Optional[LoggingSettings] = Field(default_factory=LoggingSettings)
+    debugging: Optional[DebuggingSettings] = Field(default=None)
     persistence: Optional[PersistenceSettings] = Field(default=None)
     tui: Optional[TUIOptions] = Field(default=None)
     internal_http: Optional[InternalHTTPSettings] = Field(default=None)
