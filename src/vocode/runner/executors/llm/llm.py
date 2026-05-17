@@ -214,6 +214,9 @@ class LLMExecutor(runner_base.BaseExecutor):
             current_model=self.config.model,
             current_temperature=self.config.temperature,
             current_reasoning_effort=self.config.reasoning_effort,
+            capture_debug_payload=debug_capture_mod.should_capture_debug_prompt_response(
+                self.project.settings
+            ),
             provider_options=dict(self.config.extra or {}),
         )
 
@@ -361,6 +364,7 @@ class LLMExecutor(runner_base.BaseExecutor):
         usage: Optional[state.LLMUsageStats] = None,
         tool_call_requests: Optional[List[state.ToolCallReq]] = None,
         tool_call_responses: Optional[List[state.ToolCallResp]] = None,
+        debug: Optional[Dict[str, Any]] = None,
         is_complete: bool = False,
         outcome_name: Optional[str] = None,
         step_state: Optional[BaseModel] = None,
@@ -394,6 +398,8 @@ class LLMExecutor(runner_base.BaseExecutor):
         }
         if usage is not None:
             update["llm_usage"] = usage
+        if debug is not None:
+            update["debug"] = debug
         if outcome_name is not None:
             update["outcome_name"] = outcome_name
         if step_state is not None:
@@ -1244,12 +1250,11 @@ class LLMExecutor(runner_base.BaseExecutor):
                     text=assistant_text,
                     usage=usage_stats,
                     tool_call_requests=tool_call_reqs or None,
+                    debug=step_debug,
                     is_complete=True,
                     outcome_name=final_outcome_name,
                     step_state=step_state,
                 )
-                if step_debug is not None:
-                    message_step.debug = step_debug
                 yield message_step
                 return
 
@@ -1289,11 +1294,10 @@ class LLMExecutor(runner_base.BaseExecutor):
                 text=assistant_text,
                 usage=usage_stats,
                 tool_call_requests=None,
+                debug=step_debug,
                 is_complete=True,
                 outcome_name=final_outcome_name,
                 step_state=step_state,
             )
-            if step_debug is not None:
-                message_step.debug = step_debug
             yield message_step
             return

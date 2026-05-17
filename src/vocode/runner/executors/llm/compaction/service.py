@@ -365,11 +365,12 @@ async def generate_summary_message_text(
     current_model: Optional[str],
     current_temperature: Optional[float],
     current_reasoning_effort: Optional[str],
+    capture_debug_payload: bool,
     provider_options: dict[str, Any],
-) -> tuple[str, Optional[state.LLMUsageStats]]:
+) -> tuple[str, Optional[state.LLMUsageStats], Optional[Dict[str, Any]]]:
     previous_summary, transcript = _split_summary_inputs(summarized_messages)
     if current_model is None:
-        return build_summary_message_text(summarized_messages, settings), None
+        return build_summary_message_text(summarized_messages, settings), None, None
     summary_model = settings.summary_model or current_model
     summary_provider = settings.summary_provider or None
     summary_temperature = (
@@ -394,9 +395,7 @@ async def generate_summary_message_text(
         ),
     )
     debug_request_payload = None
-    if debug_capture_mod.should_capture_debug_prompt_response(
-        getattr(credential_manager, "project_settings", None)
-    ):
+    if capture_debug_payload:
         debug_request_payload = debug_capture_mod.build_debug_request_payload(
             request,
             resolve_compaction_system_prompt(settings),
@@ -433,7 +432,7 @@ async def generate_summary_message_text(
                 summary_model=summary_model,
                 summary_provider=summary_provider,
             ) from exc
-        return build_summary_message_text(summarized_messages, settings), None
+        return build_summary_message_text(summarized_messages, settings), None, None
     except Exception as exc:
         logger.warning(
             "Compaction summary generation failed",
@@ -442,26 +441,20 @@ async def generate_summary_message_text(
             summarized_messages_count=len(summarized_messages),
             err=exc,
         )
-        return build_summary_message_text(summarized_messages, settings), None
+        return build_summary_message_text(summarized_messages, settings), None, None
     summary_text = "".join(
         block.text for block in response.content if block.type == "text"
     ).strip()
     if not summary_text:
-        return build_summary_message_text(summarized_messages, settings), None
+        return build_summary_message_text(summarized_messages, settings), None, None
     summary_body = build_summary_message_envelope(summary_text, settings)
+    debug_payload = None
     if debug_request_payload is not None:
-        summary_body = "\n\n".join(
-            [
-                summary_body,
-                "<debug_llm_payload>",
-                debug_capture_mod.build_debug_text_payload(
-                    debug_request_payload,
-                    response,
-                ),
-                "</debug_llm_payload>",
-            ]
+        debug_payload = debug_capture_mod.build_step_debug_payload(
+            debug_request_payload,
+            response,
         )
-    return summary_body, _build_summary_usage(response, summary_model)
+    return summary_body, _build_summary_usage(response, summary_model), debug_payload
 
 
 async def maybe_compact_execution_history(
@@ -533,14 +526,17 @@ async def maybe_compact_execution_history(
     )
 
     try:
-        summary_text, summary_usage = await generate_summary_message_text(
-            credential_manager,
-            summarized_messages,
-            preparation.settings,
-            preparation.current_model,
-            preparation.current_temperature,
-            preparation.current_reasoning_effort,
-            preparation.provider_options,
+        summary_text, summary_usage, summary_debug = (
+            await generate_summary_message_text(
+                credential_manager,
+                summarized_messages,
+                preparation.settings,
+                preparation.current_model,
+                preparation.current_temperature,
+                preparation.current_reasoning_effort,
+                preparation.capture_debug_payload,
+                preparation.provider_options,
+            )
         )
     except CompactionSummaryGenerationError as exc:
         logger.warning(
@@ -622,6 +618,7 @@ async def maybe_compact_execution_history(
         message_id=summary_message.id,
         state=summary_state,
         llm_usage=summary_usage,
+        debug=summary_debug,
         is_complete=True,
         is_auxiliary=True,
         is_final=True,

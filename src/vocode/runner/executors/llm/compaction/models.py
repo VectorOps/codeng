@@ -52,4 +52,5 @@ class CompactionPreparationResult(BaseModel):
     current_model: Optional[str] = None
     current_temperature: Optional[float] = None
     current_reasoning_effort: Optional[str] = None
+    capture_debug_payload: bool = False
     provider_options: Dict[str, Any] = Field(default_factory=dict)

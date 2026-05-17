@@ -729,6 +729,7 @@ async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_
         current_model,
         current_temperature,
         current_reasoning_effort,
+        capture_debug_payload,
         provider_options,
     ):
         captured_texts.extend([message.text for message, _ in summarized_messages])
@@ -738,6 +739,7 @@ async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_
                 prompt_tokens=111,
                 completion_tokens=50,
             ),
+            None,
         )
 
     monkeypatch.setattr(
@@ -967,6 +969,7 @@ async def test_maybe_compact_execution_history_adjusts_retained_tail_usage(
                 prompt_tokens=111,
                 completion_tokens=50,
             ),
+            None,
         )
 
     monkeypatch.setattr(
@@ -1035,31 +1038,130 @@ async def test_generate_summary_message_text_captures_debug_payload_when_enabled
 
     project = StubProject(
         settings=vocode_settings.Settings(
-            debugging=vocode_settings.DebuggingSettings(
-                capture_llm_payload=True
-            )
+            debugging=vocode_settings.DebuggingSettings(capture_llm_payload=True)
         )
     )
-    project.credentials.project_settings = project.settings
     summarized_messages = [
         (state.Message(role=models.Role.USER, text="hello"), None),
     ]
 
-    summary_text, summary_usage = await service_mod.generate_summary_message_text(
-        project.credentials,
-        summarized_messages,
-        CompactionSettings(),
-        current_model="openai/gpt-5.4",
-        current_temperature=None,
-        current_reasoning_effort=None,
-        provider_options={},
+    summary_text, summary_usage, summary_debug = (
+        await service_mod.generate_summary_message_text(
+            project.credentials,
+            summarized_messages,
+            CompactionSettings(),
+            current_model="openai/gpt-5.4",
+            current_temperature=None,
+            current_reasoning_effort=None,
+            capture_debug_payload=True,
+            provider_options={},
+        )
     )
 
     assert summary_usage is not None
     assert summary_usage.prompt_tokens == 123
-    assert "<debug_llm_payload>" in summary_text
-    assert '"response_id": "resp_debug"' in summary_text
+    assert "<debug_llm_payload>" not in summary_text
+    assert summary_debug is not None
+    assert summary_debug["response"]["response_id"] == "resp_debug"
     assert (
-        '"system_prompt": "You are maintaining a continuation checkpoint for a coding workflow.'
-        in summary_text
+        summary_debug["request"]["system_prompt"]
+        == "You are maintaining a continuation checkpoint for a coding workflow. Produce a compact but precise summary another LLM can resume from safely. Preserve exact file paths, tool names, identifiers, node names, outcome names, and error text when relevant. Do not invent progress."
     )
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_execution_history_persists_debug_payload_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = history.upsert_node_execution(
+        run,
+        state.NodeExecution(
+            workflow_execution=run,
+            node="llm-node",
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+
+    first_user = state.Message(role=models.Role.USER, text="first user")
+    first_assistant = state.Message(role=models.Role.ASSISTANT, text="first assistant")
+    recent_user = state.Message(role=models.Role.USER, text="recent user")
+    for message in [first_user, first_assistant, recent_user]:
+        history.upsert_message(run, message)
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=first_user.id,
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=first_assistant.id,
+            llm_usage=state.LLMUsageStats(
+                prompt_tokens=1000,
+                completion_tokens=100,
+            ),
+            is_complete=True,
+        ),
+    )
+    history.upsert_step(
+        run,
+        state.Step(
+            workflow_execution=run,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=recent_user.id,
+            is_complete=True,
+        ),
+    )
+
+    response = connect.AssistantMessage(
+        provider="chatgpt",
+        model="chatgpt/gpt-5.4",
+        api_family="responses",
+        content=[connect.TextBlock(text="condensed summary")],
+        finish_reason="stop",
+        usage=connect.Usage(
+            input_tokens=321,
+            output_tokens=45,
+            total_tokens=366,
+            completeness="final",
+        ),
+        response_id="resp_compaction_debug",
+        request_id="req_compaction_debug",
+    )
+    monkeypatch.setattr(
+        connect,
+        "AsyncLLMClient",
+        lambda *args, **kwargs: _FakeAsyncLLMClient(response, **kwargs),
+    )
+
+    preparation = CompactionPreparationResult(
+        estimated_context_tokens=1000,
+        input_token_limit=2000,
+        should_compact=True,
+        settings=CompactionSettings(trigger_threshold_ratio=0.5, keep_recent_ratio=0.1),
+        current_model="chatgpt/gpt-5.4",
+        capture_debug_payload=True,
+    )
+
+    compaction_step = await service_mod.maybe_compact_execution_history(
+        history,
+        StubProject().credentials,
+        execution,
+        preparation,
+    )
+
+    assert compaction_step is not None
+    assert compaction_step.debug is not None
+    assert compaction_step.debug["response"]["response_id"] == "resp_compaction_debug"
