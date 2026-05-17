@@ -292,11 +292,7 @@ def build_summary_message_text(
     previous_summaries: List[str] = []
     live_messages: List[state.Message] = []
     for message, step in summarized_messages:
-        if (
-            message.role == models.Role.SYSTEM
-            and step is not None
-            and step.type == state.StepType.CONTEXT_COMPACTION
-        ):
+        if step is not None and step.type == state.StepType.CONTEXT_COMPACTION:
             previous_summary = extract_wrapped_summary_text(message.text)
             if previous_summary:
                 previous_summaries.append(previous_summary)
@@ -341,11 +337,7 @@ def _split_summary_inputs(
     previous_summaries: List[str] = []
     live_messages: List[state.Message] = []
     for message, step in summarized_messages:
-        if (
-            message.role == models.Role.SYSTEM
-            and step is not None
-            and step.type == state.StepType.CONTEXT_COMPACTION
-        ):
+        if step is not None and step.type == state.StepType.CONTEXT_COMPACTION:
             previous_summary = extract_wrapped_summary_text(message.text)
             if previous_summary:
                 previous_summaries.append(previous_summary)
@@ -553,7 +545,7 @@ async def maybe_compact_execution_history(
         )
         raise
     summary_message = state.Message(
-        role=models.Role.SYSTEM,
+        role=models.Role.ASSISTANT,
         text=summary_text,
     )
     history.upsert_message(workflow_execution, summary_message)

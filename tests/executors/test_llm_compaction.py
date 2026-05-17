@@ -106,7 +106,7 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
             status=state.RunStatus.RUNNING,
         ),
     )
-    summary_message = state.Message(role=models.Role.SYSTEM, text="summary")
+    summary_message = state.Message(role=models.Role.ASSISTANT, text="summary")
     history.upsert_message(run, summary_message)
     history.upsert_step(
         run,
@@ -151,9 +151,9 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
         ),
     )
 
-    first_summary = state.Message(role=models.Role.SYSTEM, text="first summary")
+    first_summary = state.Message(role=models.Role.ASSISTANT, text="first summary")
     middle_user = state.Message(role=models.Role.USER, text="middle user")
-    second_summary = state.Message(role=models.Role.SYSTEM, text="second summary")
+    second_summary = state.Message(role=models.Role.ASSISTANT, text="second summary")
     final_user = state.Message(role=models.Role.USER, text="final user")
     for message in [first_summary, middle_user, second_summary, final_user]:
         history.upsert_message(run, message)
@@ -674,7 +674,7 @@ async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_
     )
 
     summary_message = state.Message(
-        role=models.Role.SYSTEM,
+        role=models.Role.ASSISTANT,
         text="The conversation history before this point was compacted into the following summary:\n\n<summary>\nold summary\n</summary>",
     )
     history.upsert_message(run, summary_message)

@@ -528,9 +528,7 @@ async def test_llm_executor_captures_debug_prompt_and_response_when_enabled(
 
     project = StubProject(
         settings=vocode_settings.Settings(
-            debugging=vocode_settings.DebuggingSettings(
-                capture_llm_payload=True
-            )
+            debugging=vocode_settings.DebuggingSettings(capture_llm_payload=True)
         )
     )
     node = LLMNode(
@@ -1131,7 +1129,7 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
 
     old_user = state.Message(role=models.Role.USER, text="x" * 200)
     summary = state.Message(
-        role=models.Role.SYSTEM,
+        role=models.Role.ASSISTANT,
         text="summary",
     )
     recent_user = state.Message(role=models.Role.USER, text="tail")
@@ -1317,11 +1315,12 @@ async def test_llm_executor_persists_compaction_step_before_request(
     summary_request = captured_requests[0]
     assert "Transcript to compact:" in summary_request.messages[0].content
     request = captured_requests[1]
-    assert request.system_prompt is not None
-    assert "<summary>" in request.system_prompt
-    assert len(request.messages) == 1
+    assert request.system_prompt == "You are a test assistant."
+    assert len(request.messages) == 2
     assert isinstance(request.messages[0], connect.AssistantMessage)
-    assert request.messages[0].content[0].text == "tail-2"
+    assert "<summary>" in request.messages[0].content[0].text
+    assert isinstance(request.messages[1], connect.AssistantMessage)
+    assert request.messages[1].content[0].text == "tail-2"
 
 
 @pytest.mark.asyncio
@@ -1435,7 +1434,7 @@ def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() ->
         ),
     )
 
-    summary = state.Message(role=models.Role.SYSTEM, text="persisted summary")
+    summary = state.Message(role=models.Role.ASSISTANT, text="persisted summary")
     recent_user = state.Message(role=models.Role.USER, text="recent user")
     for message in [summary, recent_user]:
         history.upsert_message(run, message)
@@ -1473,11 +1472,12 @@ def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() ->
         executor._iter_prompt_messages(inp)
     )
 
-    assert system_prompt is not None
-    assert "persisted summary" in system_prompt
-    assert len(messages) == 1
-    assert isinstance(messages[0], connect.UserMessage)
-    assert messages[0].content == "recent user"
+    assert system_prompt == "You are a test assistant."
+    assert len(messages) == 2
+    assert isinstance(messages[0], connect.AssistantMessage)
+    assert messages[0].content[0].text == "persisted summary"
+    assert isinstance(messages[1], connect.UserMessage)
+    assert messages[1].content == "recent user"
 
 
 def test_compaction_transcript_serializes_tool_calls_and_results() -> None:
@@ -1871,7 +1871,7 @@ async def test_llm_executor_repeated_compaction_uses_update_mode_prompt(
     )
 
     prior_summary = state.Message(
-        role=models.Role.SYSTEM,
+        role=models.Role.ASSISTANT,
         text=(
             "The conversation history before this point was compacted into the following summary:\n\n"
             "<summary>\n## Goal\nEarlier summary\n</summary>"

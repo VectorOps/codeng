@@ -643,7 +643,7 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
 
     assert cfg.compaction == CompactionSettings()
     summary_message = state.Message(
-        role=models.Role.SYSTEM,
+        role=models.Role.ASSISTANT,
         text="summary checkpoint",
     )
     step = state.Step(
@@ -726,7 +726,7 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
     old_user = state.Message(role=models.Role.USER, text="old user")
     old_assistant = state.Message(role=models.Role.ASSISTANT, text="old assistant")
     summary = state.Message(
-        role=models.Role.SYSTEM,
+        role=models.Role.ASSISTANT,
         text="summary checkpoint",
     )
     recent_user = state.Message(role=models.Role.USER, text="recent user")
@@ -800,12 +800,14 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
         executor._iter_prompt_messages(ExecutorInput(execution=execution, run=run))
     )
 
-    assert system_prompt == "base system\n\nsummary checkpoint"
-    assert len(messages) == 2
-    assert isinstance(messages[0], connect.UserMessage)
-    assert messages[0].content == "recent user"
-    assert isinstance(messages[1], connect.AssistantMessage)
-    assert messages[1].content[0].text == "recent assistant"
+    assert system_prompt == "base system"
+    assert len(messages) == 3
+    assert isinstance(messages[0], connect.AssistantMessage)
+    assert messages[0].content[0].text == "summary checkpoint"
+    assert isinstance(messages[1], connect.UserMessage)
+    assert messages[1].content == "recent user"
+    assert isinstance(messages[2], connect.AssistantMessage)
+    assert messages[2].content[0].text == "recent assistant"
 
 
 def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() -> None:
@@ -826,9 +828,9 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
         ),
     )
 
-    first_summary = state.Message(role=models.Role.SYSTEM, text="first summary")
+    first_summary = state.Message(role=models.Role.ASSISTANT, text="first summary")
     middle_user = state.Message(role=models.Role.USER, text="middle user")
-    second_summary = state.Message(role=models.Role.SYSTEM, text="second summary")
+    second_summary = state.Message(role=models.Role.ASSISTANT, text="second summary")
     final_user = state.Message(role=models.Role.USER, text="final user")
     for msg in [first_summary, middle_user, second_summary, final_user]:
         history.upsert_message(run, msg)
@@ -894,10 +896,12 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
         executor._iter_prompt_messages(ExecutorInput(execution=execution, run=run))
     )
 
-    assert system_prompt == "second summary"
-    assert len(messages) == 1
-    assert isinstance(messages[0], connect.UserMessage)
-    assert messages[0].content == "final user"
+    assert system_prompt is None
+    assert len(messages) == 2
+    assert isinstance(messages[0], connect.AssistantMessage)
+    assert messages[0].content[0].text == "second summary"
+    assert isinstance(messages[1], connect.UserMessage)
+    assert messages[1].content == "final user"
 
 
 def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary() -> (
@@ -924,7 +928,7 @@ def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary(
     old_user = state.Message(role=models.Role.USER, text="old user")
     old_assistant = state.Message(role=models.Role.ASSISTANT, text="old assistant")
     summary = state.Message(
-        role=models.Role.SYSTEM,
+        role=models.Role.ASSISTANT,
         text="summary checkpoint",
     )
     recent_user = state.Message(role=models.Role.USER, text="recent user")
@@ -985,7 +989,9 @@ def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary(
         executor._iter_prompt_messages(inp)
     )
 
-    assert system_prompt == "base system\n\nsummary checkpoint"
-    assert len(messages) == 1
-    assert isinstance(messages[0], connect.UserMessage)
-    assert messages[0].content == "recent user"
+    assert system_prompt == "base system"
+    assert len(messages) == 2
+    assert isinstance(messages[0], connect.AssistantMessage)
+    assert messages[0].content[0].text == "summary checkpoint"
+    assert isinstance(messages[1], connect.UserMessage)
+    assert messages[1].content == "recent user"
