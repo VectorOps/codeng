@@ -116,7 +116,6 @@ def test_collect_prompt_messages_drops_compacted_input_messages() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary_message.id,
             state=service_mod.CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=10,
                 trigger_threshold_ratio=0.5,
             ),
@@ -173,7 +172,6 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=first_summary.id,
             state=service_mod.CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=60,
                 trigger_threshold_ratio=0.5,
             ),
@@ -198,7 +196,6 @@ def test_collect_prompt_messages_uses_latest_summary_boundary_only() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=second_summary.id,
             state=service_mod.CompactionSummaryState(
-                prompt_tokens_before=60,
                 prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
             ),
@@ -349,7 +346,6 @@ def test_collect_prompt_messages_preserves_tail_after_inserted_latest_compaction
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary1.id,
             state=service_mod.CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=50,
                 trigger_threshold_ratio=0.5,
             ),
@@ -364,7 +360,6 @@ def test_collect_prompt_messages_preserves_tail_after_inserted_latest_compaction
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary2.id,
             state=service_mod.CompactionSummaryState(
-                prompt_tokens_before=50,
                 prompt_tokens_after=25,
                 trigger_threshold_ratio=0.5,
             ),
@@ -398,7 +393,6 @@ def test_collect_prompt_messages_preserves_tail_after_inserted_latest_compaction
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary3.id,
             state=service_mod.CompactionSummaryState(
-                prompt_tokens_before=25,
                 prompt_tokens_after=10,
                 trigger_threshold_ratio=0.5,
             ),
@@ -810,7 +804,6 @@ async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary_message.id,
             state=service_mod.CompactionSummaryState(
-                prompt_tokens_before=1000,
                 prompt_tokens_after=100,
                 trigger_threshold_ratio=0.5,
             ),
@@ -1002,7 +995,6 @@ async def test_maybe_compact_execution_history_records_summary_usage(
     summary_state = service_mod.CompactionSummaryState.model_validate(
         compaction_step.state.model_dump(mode="python")
     )
-    assert summary_state.prompt_tokens_before == 1000
     assert summary_state.prompt_tokens_after == 45
     assert summary_state.summary_input_tokens == 321
     assert summary_state.summary_output_tokens == 45
@@ -1134,6 +1126,8 @@ async def test_maybe_compact_execution_history_adjusts_retained_tail_usage(
     expected_keep_recent_budget = int(2000 * 0.1)
     expected_delta = 900 - (expected_keep_recent_budget + 50)
     assert retained_assistant.llm_usage is not None
+    assert retained_assistant.orig_llm_usage is not None
+    assert retained_assistant.orig_llm_usage.prompt_tokens == 900
     assert retained_assistant.llm_usage.prompt_tokens == 900 - expected_delta
     assert retained_assistant.llm_usage.completion_tokens == 30
     assert retained_step.llm_usage is not None
@@ -1345,7 +1339,6 @@ async def test_maybe_compact_execution_history_splices_summary_before_retained_c
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=old_summary_message.id,
             state=service_mod.CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=10,
                 trigger_threshold_ratio=0.5,
             ),

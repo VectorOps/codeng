@@ -32,7 +32,6 @@ def test_persistence_round_trip_preserves_step_owned_compaction_state() -> None:
         type=state.StepType.CONTEXT_COMPACTION,
         message_id=summary_message.id,
         state=CompactionSummaryState(
-            prompt_tokens_before=120,
             prompt_tokens_after=45,
             trigger_threshold_ratio=0.5,
         ),
@@ -61,12 +60,10 @@ def test_persistence_round_trip_preserves_step_owned_compaction_state() -> None:
             "latest_compaction_step_id": str(step.id),
             "compaction_count": 1,
             "last_compaction_tokens_before": 120,
-            "last_compaction_actual_prompt_tokens_before": None,
             "last_compaction_summary_input_tokens": None,
         },
     }
     assert payload["steps_by_id"][str(step.id)]["state"] == {
-        "prompt_tokens_before": 120,
         "prompt_tokens_after": 45,
         "summary_input_tokens": None,
         "summary_output_tokens": None,

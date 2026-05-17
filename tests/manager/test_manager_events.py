@@ -122,7 +122,6 @@ class ManagerCompactionExecutor(BaseExecutor):
                 message_id=summary_message.id,
                 state=CompactionSummaryState(
                     compacted_step_ids=[],
-                    prompt_tokens_before=120,
                     prompt_tokens_after=45,
                     trigger_threshold_ratio=0.5,
                 ),

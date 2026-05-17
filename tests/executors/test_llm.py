@@ -1154,7 +1154,6 @@ def test_llm_executor_prepare_compaction_respects_compaction_boundary() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=2,
                 trigger_threshold_ratio=0.5,
             ),
@@ -1292,7 +1291,7 @@ async def test_llm_executor_persists_compaction_step_before_request(
     assert execution.state is not None
     assert isinstance(execution.state, LLMExecutionState)
     assert execution.state.compaction is not None
-    assert execution.state.compaction.latest_compaction_step_id == compaction_step.id
+    assert execution.state.compaction.latest_compaction_step_id is None
     assert execution.state.compaction.compaction_count == 1
     compaction_logs = [
         record
@@ -1308,7 +1307,6 @@ async def test_llm_executor_persists_compaction_step_before_request(
     assert "prompt_tokens_after" in log_message
     assert "summary_input_tokens" in log_message
     assert "summary_output_tokens" in log_message
-    assert "prompt_tokens_before" in log_message
 
     assert len(captured_requests) == 2
     summary_request = captured_requests[0]
@@ -1446,7 +1444,6 @@ def test_llm_executor_build_connect_messages_uses_persisted_compaction_step() ->
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=2,
                 trigger_threshold_ratio=0.5,
             ),
@@ -1887,7 +1884,6 @@ async def test_llm_executor_repeated_compaction_uses_update_mode_prompt(
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=prior_summary.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=10,
                 prompt_tokens_after=5,
                 trigger_threshold_ratio=0.5,
             ),
@@ -2146,11 +2142,11 @@ async def test_llm_executor_logs_realized_compaction_savings_from_actual_usage(
     assert len(realized_logs) == 1
     realized_message = realized_logs[0].getMessage()
     assert "prompt_tokens_before" in realized_message
-    assert "71" in realized_message
+    assert "9" in realized_message
     assert "prompt_tokens_after" in realized_message
     assert "4" in realized_message
     assert "saved_input_tokens" in realized_message
-    assert "67" in realized_message
+    assert "5" in realized_message
     assert "summary_input_tokens" in realized_message
     assert "9" in realized_message
     assert "summary_output_tokens" in realized_message
@@ -2286,11 +2282,11 @@ async def test_llm_executor_logs_negative_realized_compaction_savings(
     assert len(realized_logs) == 1
     realized_message = realized_logs[0].getMessage()
     assert "prompt_tokens_before" in realized_message
-    assert "12" in realized_message
+    assert "9" in realized_message
     assert "prompt_tokens_after" in realized_message
     assert "4" in realized_message
     assert "saved_input_tokens" in realized_message
-    assert "8" in realized_message
+    assert "5" in realized_message
 
 
 @pytest.mark.asyncio

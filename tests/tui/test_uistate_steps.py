@@ -419,7 +419,7 @@ async def test_tui_state_renders_context_compaction_as_condensed_event() -> None
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary_message.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=120,
+                summary_input_tokens=120,
                 prompt_tokens_after=45,
                 trigger_threshold_ratio=0.5,
             ),

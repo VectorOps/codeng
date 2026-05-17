@@ -387,6 +387,8 @@ class LLMExecutor(runner_base.BaseExecutor):
             message.text = text
             message.tool_call_requests = tool_call_requests or []
             message.tool_call_responses = tool_call_responses or []
+            if usage is not None and message.orig_llm_usage is None:
+                message.orig_llm_usage = usage.model_copy(deep=True)
             message.llm_usage = usage
             if workflow_execution is not None:
                 history.upsert_message(workflow_execution, message)
@@ -671,7 +673,11 @@ class LLMExecutor(runner_base.BaseExecutor):
             )
         if compaction_summary_state is None:
             return
-        prompt_tokens_before = compaction_summary_state.prompt_tokens_before
+        prompt_tokens_before = (
+            int(compaction_step.llm_usage.prompt_tokens)
+            if compaction_step is not None and compaction_step.llm_usage is not None
+            else None
+        )
         prompt_tokens_after = compaction_summary_state.prompt_tokens_after
         if prompt_tokens_before is None or prompt_tokens_after is None:
             return
@@ -684,7 +690,6 @@ class LLMExecutor(runner_base.BaseExecutor):
             summary_input_tokens=compaction_summary_state.summary_input_tokens,
             summary_output_tokens=compaction_summary_state.summary_output_tokens,
         )
-        compaction_state.last_compaction_actual_prompt_tokens_before = None
         compaction_state.last_compaction_summary_input_tokens = None
         compaction_state.latest_compaction_step_id = None
         execution_state.compaction = compaction_state

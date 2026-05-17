@@ -655,7 +655,6 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
         type=state.StepType.CONTEXT_COMPACTION,
         message_id=summary_message.id,
         state=CompactionSummaryState(
-            prompt_tokens_before=1200,
             prompt_tokens_after=400,
             trigger_threshold_ratio=0.5,
         ),
@@ -686,13 +685,11 @@ def test_llm_node_compaction_defaults_and_state_models_roundtrip() -> None:
             "latest_compaction_step_id": str(step.id),
             "compaction_count": 1,
             "last_compaction_tokens_before": None,
-            "last_compaction_actual_prompt_tokens_before": None,
             "last_compaction_summary_input_tokens": None,
         },
     }
     assert payload["steps_by_id"][str(step.id)]["type"] == "context_compaction"
     assert payload["steps_by_id"][str(step.id)]["state"] == {
-        "prompt_tokens_before": 1200,
         "prompt_tokens_after": 400,
         "summary_input_tokens": None,
         "summary_output_tokens": None,
@@ -761,7 +758,6 @@ def test_build_connect_messages_uses_latest_compaction_boundary() -> None:
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
             ),
@@ -858,7 +854,6 @@ def test_build_connect_messages_preserves_tail_after_inserted_latest_compaction(
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary1.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=50,
                 trigger_threshold_ratio=0.5,
             ),
@@ -872,7 +867,6 @@ def test_build_connect_messages_preserves_tail_after_inserted_latest_compaction(
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary2.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=50,
                 prompt_tokens_after=25,
                 trigger_threshold_ratio=0.5,
             ),
@@ -904,7 +898,6 @@ def test_build_connect_messages_preserves_tail_after_inserted_latest_compaction(
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary3.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=25,
                 prompt_tokens_after=10,
                 trigger_threshold_ratio=0.5,
             ),
@@ -962,7 +955,6 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=first_summary.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=50,
                 trigger_threshold_ratio=0.5,
             ),
@@ -987,7 +979,6 @@ def test_build_connect_messages_uses_latest_of_multiple_compaction_boundaries() 
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=second_summary.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=50,
                 prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
             ),
@@ -1078,7 +1069,6 @@ def test_build_connect_messages_does_not_leak_compacted_messages_after_boundary(
             type=state.StepType.CONTEXT_COMPACTION,
             message_id=summary.id,
             state=CompactionSummaryState(
-                prompt_tokens_before=100,
                 prompt_tokens_after=20,
                 trigger_threshold_ratio=0.5,
             ),

@@ -170,6 +170,8 @@ def _apply_compaction_prompt_usage_delta(
     for message, step in remaining_pairs:
         message_usage = message.llm_usage
         if message_usage is not None:
+            if message.orig_llm_usage is None:
+                message.orig_llm_usage = message_usage.model_copy(deep=True)
             message_usage.prompt_tokens = max(
                 0,
                 int(message_usage.prompt_tokens) - prompt_token_delta,
@@ -546,7 +548,6 @@ async def maybe_compact_execution_history(
                 break
     actual_prompt_tokens_after = _get_summary_output_tokens(summary_usage)
     summary_state = CompactionSummaryState(
-        prompt_tokens_before=actual_prompt_tokens_before,
         prompt_tokens_after=actual_prompt_tokens_after,
         summary_input_tokens=(
             int(summary_usage.prompt_tokens) if summary_usage is not None else None
@@ -612,7 +613,6 @@ async def maybe_compact_execution_history(
             latest_compaction_step_id=persisted_step.id,
             compaction_count=compaction_count + 1,
             last_compaction_tokens_before=preparation.estimated_context_tokens,
-            last_compaction_actual_prompt_tokens_before=actual_prompt_tokens_before,
             last_compaction_summary_input_tokens=(
                 int(summary_usage.prompt_tokens) if summary_usage is not None else None
             ),

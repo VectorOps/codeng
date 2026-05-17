@@ -158,6 +158,10 @@ class Message(BaseModel):
         default=None,
         description="LLM usage stats for this message, if any.",
     )
+    orig_llm_usage: Optional[LLMUsageStats] = Field(
+        default=None,
+        description="Original LLM usage stats before any compaction adjustments.",
+    )
     state: Optional[SerializeAsAny[BaseModel]] = Field(
         default=None,
         description="Any internal state that is maintained by the message owner.",

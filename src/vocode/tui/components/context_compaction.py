@@ -32,9 +32,9 @@ class ContextCompactionComponent(tui_renderable_component.RenderableComponentBas
 
         text = rich_text.Text(style="dim")
         text.append("Compaction complete", style="cyan")
-        if summary_state.prompt_tokens_before is not None:
+        if summary_state.summary_input_tokens is not None:
             text.append("  ")
-            text.append(f"{summary_state.prompt_tokens_before}", style="yellow")
+            text.append(f"{summary_state.summary_input_tokens}", style="yellow")
             if summary_state.prompt_tokens_after is not None:
                 text.append(" -> ")
                 text.append(
