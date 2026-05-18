@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import logging
 import asyncio
-from typing import Optional, cast
-import time
-import uuid
+from typing import Optional
 
 import vocode.error_reporting as error_reporting
 from vocode import input_manager
 from vocode import settings as vocode_settings
 from vocode import models
 from vocode import state
-from vocode import ui_events
 from vocode.logger import get_log_manager_internal, init_log_manager, logger
 from vocode.project import Project
 from vocode.runner import proto as runner_proto
@@ -19,6 +16,13 @@ from vocode.auth import ServerAuthenticationSession
 from .mcp_session import ServerMCPAuthenticationSession
 
 from .base import BaseManager, RunnerFrame
+from .history_packets import HistoryMutationPacketEmitter
+from .interfaces import UIManager
+from .know_progress_bridge import KnowProgressBridge
+from .message_controller import UIMessageController
+from .progress_emitter import ProgressEmitter
+from .runner_event_controller import RunnerEventController
+from .ui_event_bridge import ProjectUIEventBridge
 from .helpers import BaseEndpoint, IncomingPacketRouter, RpcHelper
 from . import proto as manager_proto
 from .autocomplete import AutocompleteManager
@@ -51,9 +55,29 @@ class UIServer:
         self._log_manager = init_log_manager()
         self._auth_session: Optional[ServerAuthenticationSession] = None
         self._mcp_auth_session: Optional[ServerMCPAuthenticationSession] = None
-        self._progress_last_sent_at_by_id: dict[str, float] = {}
-        self._know_repo_label_by_id: dict[str, str] = {}
-        self._emit_branch_packets = False
+        self._history_packet_emitter = HistoryMutationPacketEmitter(self)
+        self._progress_emitter = ProgressEmitter(self)
+        self._know_progress_bridge = KnowProgressBridge(
+            project=self._manager.project,
+            progress_emitter=self._progress_emitter,
+        )
+        self._message_controller = UIMessageController(
+            manager=self._manager,
+            commands=self._commands,
+            autocomplete=self._autocomplete,
+            packet_sender=self,
+            emit_history_mutation=self.emit_history_mutation,
+        )
+        self._ui_event_bridge = ProjectUIEventBridge(
+            project=self._manager.project,
+            packet_sender=self,
+        )
+        self._runner_event_controller = RunnerEventController(
+            manager=self._manager,
+            packet_sender=self,
+            publish_workflow_start_error=self._publish_workflow_start_error,
+            status=self._status,
+        )
 
         self._router.register(
             manager_proto.BasePacketKind.USER_INPUT,
@@ -75,6 +99,10 @@ class UIServer:
     def _next_packet_id(self) -> int:
         self._push_msg_id += 1
         return self._push_msg_id
+
+    def _set_status(self, status: manager_proto.UIServerStatus) -> None:
+        self._status = status
+        self._runner_event_controller.status = status
 
     def _apply_logging_settings(self) -> None:
         project_settings = self._manager.project.settings
@@ -107,7 +135,7 @@ class UIServer:
             logging.getLogger(logger_name).setLevel(override_level)
 
     @property
-    def manager(self) -> BaseManager:
+    def manager(self) -> UIManager:
         return self._manager
 
     @property
@@ -192,92 +220,19 @@ class UIServer:
         return session
 
     def enable_branch_packets(self) -> None:
-        self._emit_branch_packets = True
-
-    def _build_branch_summaries(
-        self,
-        result,
-    ) -> list[manager_proto.BranchSummary]:
-        return [
-            manager_proto.BranchSummary(
-                branch_id=str(branch.id),
-                head_step_id=(
-                    str(branch.head_step_id)
-                    if branch.head_step_id is not None
-                    else None
-                ),
-                base_step_id=(
-                    str(branch.base_step_id)
-                    if branch.base_step_id is not None
-                    else None
-                ),
-                label=branch.label,
-                created_at=branch.created_at,
-                is_active=branch.is_active,
-            )
-            for branch in result.branch_summaries
-        ]
+        self._history_packet_emitter.emit_branch_packets = True
 
     async def emit_history_mutation(
         self,
         frame: RunnerFrame,
         result,
     ) -> None:
-        execution = frame.runner.execution
-        if result.removed_step_ids:
-            await self.send_packet(
-                manager_proto.StepDeletedPacket(
-                    step_ids=[str(step_id) for step_id in result.removed_step_ids]
-                )
-            )
-        for upsert_step in result.upserted_steps:
-            packet = manager_proto.RunnerReqPacket(
-                workflow_id=frame.workflow_name,
-                workflow_name=execution.workflow_name,
-                workflow_execution_id=str(execution.id),
-                step=upsert_step,
-                input_required=False,
-                display=None,
-            )
-            await self.send_packet(packet)
-        if not self._emit_branch_packets:
-            return
-        if result.active_branch_id is not None:
-            await self.send_packet(
-                manager_proto.BranchChangedPacket(
-                    workflow_execution_id=str(execution.id),
-                    active_branch_id=str(result.active_branch_id),
-                    created_branch_id=(
-                        str(result.created_branch_id)
-                        if result.created_branch_id is not None
-                        else None
-                    ),
-                )
-            )
-        if result.branch_summaries:
-            await self.send_packet(
-                manager_proto.BranchListPacket(
-                    workflow_execution_id=str(execution.id),
-                    branches=self._build_branch_summaries(result),
-                )
-            )
-        await self.send_packet(
-            manager_proto.HistoryViewDiffPacket(
-                workflow_execution_id=str(execution.id),
-                removed_step_ids=[str(step_id) for step_id in result.removed_step_ids],
-                upserted_step_ids=[
-                    str(step_id) for step_id in result.upserted_step_ids
-                ],
-            )
-        )
+        await self._history_packet_emitter.emit(frame, result)
 
     async def _recv_loop(self) -> None:
         while True:
             envelope = await self._endpoint.recv()
             await self.on_ui_packet(envelope)
-
-    async def _on_project_ui_event(self, event: ui_events.ProjectUIEvent) -> None:
-        await self.send_packet(manager_proto.UIEventPacket(event=event))
 
     async def _publish_workflow_start_error(
         self,
@@ -305,7 +260,7 @@ class UIServer:
         self._apply_logging_settings()
 
         project = self._manager.project
-        project.subscribe_ui_events(self._on_project_ui_event)
+        self._ui_event_bridge.start()
 
         settings = project.settings
         enable_know_progress = False
@@ -333,7 +288,7 @@ class UIServer:
                 )
                 previous_default_cb = project.know.default_progress_callback
                 project.know.default_progress_callback = (
-                    self._make_knowlt_progress_callback(
+                    self._know_progress_bridge.make_progress_callback(
                         progress_id=progress_id,
                         title="Indexing repositories",
                     )
@@ -346,9 +301,9 @@ class UIServer:
             else:
                 await self._manager.start()
         except Exception:
-            project.unsubscribe_ui_events(self._on_project_ui_event)
+            self._ui_event_bridge.stop()
             raise
-        self._status = manager_proto.UIServerStatus.RUNNING
+        self._set_status(manager_proto.UIServerStatus.RUNNING)
 
         self._recv_task = asyncio.create_task(self._recv_loop())
 
@@ -373,12 +328,8 @@ class UIServer:
         on_complete: Optional[manager_proto.ProgressOnComplete] = None,
         complete_message: Optional[str] = None,
     ) -> None:
-        resolved_id = progress_id
-        if resolved_id is None:
-            resolved_id = f"progress:{uuid.uuid4().hex}"
-        packet = manager_proto.ProgressPacket(
-            progress_id=resolved_id,
-            status=manager_proto.ProgressStatus.START,
+        await self._progress_emitter.emit_start(
+            progress_id=progress_id,
             title=title,
             message=message,
             mode=mode,
@@ -386,94 +337,6 @@ class UIServer:
             on_complete=on_complete,
             complete_message=complete_message,
         )
-        await self.send_packet(packet)
-        self._progress_last_sent_at_by_id.pop(resolved_id, None)
-
-    def _make_knowlt_progress_callback(
-        self,
-        *,
-        progress_id: str,
-        title: str,
-        message: Optional[str] = None,
-        unit: Optional[str] = "files",
-    ):
-        def _cb(evt) -> None:
-            async def _emit() -> None:
-                try:
-                    processed = float(evt.processed_files)
-                except Exception:
-                    processed = None
-                try:
-                    total_files = float(evt.total_files)
-                except Exception:
-                    total_files = None
-                try:
-                    elapsed = float(evt.elapsed_seconds)
-                except Exception:
-                    elapsed = None
-
-                mode = manager_proto.ProgressMode.INDETERMINATE
-                bar_type = manager_proto.ProgressBarType.PULSE
-                total = None
-                if total_files is not None and total_files > 0:
-                    total = total_files
-                    mode = manager_proto.ProgressMode.DETERMINISTIC
-                    bar_type = manager_proto.ProgressBarType.BAR
-
-                try:
-                    repo_id = str(evt.repo_id)
-                except Exception:
-                    repo_id = None
-
-                label = None
-                if repo_id:
-                    label = self._know_repo_label_by_id.get(repo_id)
-                    if not label:
-                        try:
-                            repo_list = await self._manager.project.know.pm.data.repo.get_by_ids(
-                                [repo_id]
-                            )
-                        except Exception:
-                            repo_list = None
-                        if repo_list:
-                            repo = repo_list[0]
-                            root = repo.root_path or ""
-                            if root:
-                                label = f"{repo.name} ({root})"
-                            else:
-                                label = repo.name
-                            self._know_repo_label_by_id[repo_id] = label
-
-                resolved_message = message
-                if resolved_message is None:
-                    if label:
-                        resolved_message = label
-                    elif repo_id is not None:
-                        resolved_message = repo_id
-
-                await self.emit_progress_update(
-                    progress_id=progress_id,
-                    title=title,
-                    message=resolved_message,
-                    mode=mode,
-                    bar_type=bar_type,
-                    completed=processed,
-                    total=total,
-                    unit=unit,
-                    done=(
-                        True
-                        if (
-                            processed is not None
-                            and total is not None
-                            and processed >= total
-                        )
-                        else None
-                    ),
-                )
-
-            asyncio.create_task(_emit())
-
-        return _cb
 
     async def refresh_know_repo_with_progress(self, repo) -> None:
         progress_id = f"know:scan:{repo.name}"
@@ -485,7 +348,7 @@ class UIServer:
             bar_type=manager_proto.ProgressBarType.PULSE,
             on_complete=manager_proto.ProgressOnComplete.HIDE,
         )
-        cb = self._make_knowlt_progress_callback(
+        cb = self._know_progress_bridge.make_progress_callback(
             progress_id=progress_id,
             title="Indexing repository",
             message=repo.name,
@@ -505,7 +368,7 @@ class UIServer:
             bar_type=manager_proto.ProgressBarType.PULSE,
             on_complete=manager_proto.ProgressOnComplete.HIDE,
         )
-        cb = self._make_knowlt_progress_callback(
+        cb = self._know_progress_bridge.make_progress_callback(
             progress_id=progress_id,
             title="Indexing repositories",
             message=None,
@@ -522,14 +385,11 @@ class UIServer:
         on_complete: Optional[manager_proto.ProgressOnComplete] = None,
         complete_message: Optional[str] = None,
     ) -> None:
-        packet = manager_proto.ProgressPacket(
+        await self._progress_emitter.emit_end(
             progress_id=progress_id,
-            status=manager_proto.ProgressStatus.END,
-            done=True,
             on_complete=on_complete,
             complete_message=complete_message,
         )
-        await self.send_packet(packet)
 
     async def emit_progress_update(
         self,
@@ -547,35 +407,26 @@ class UIServer:
         complete_message: Optional[str] = None,
         min_interval_s: float = 0.25,
     ) -> None:
-        now = time.monotonic()
-        last = self._progress_last_sent_at_by_id.get(progress_id)
-        if last is not None and (now - last) < min_interval_s:
-            return
-        self._progress_last_sent_at_by_id[progress_id] = now
-
-        packet = manager_proto.ProgressPacket(
+        await self._progress_emitter.emit_update(
             progress_id=progress_id,
-            status=manager_proto.ProgressStatus.UPDATE,
             title=title,
             message=message,
-            mode=mode if mode is not None else manager_proto.ProgressMode.DETERMINISTIC,
-            bar_type=(
-                bar_type if bar_type is not None else manager_proto.ProgressBarType.BAR
-            ),
+            mode=mode,
+            bar_type=bar_type,
             completed=completed,
             total=total,
             unit=unit,
             done=done,
             on_complete=on_complete,
             complete_message=complete_message,
+            min_interval_s=min_interval_s,
         )
-        await self.send_packet(packet)
 
     async def stop(self) -> None:
         if not self._started:
             return
 
-        self._status = manager_proto.UIServerStatus.IDLE
+        self._set_status(manager_proto.UIServerStatus.IDLE)
 
         if self._recv_task is not None:
             self._recv_task.cancel()
@@ -588,375 +439,43 @@ class UIServer:
         self._rpc.cancel_all()
         await self._manager.project.input_manager.reset()
 
-        self._manager.project.unsubscribe_ui_events(self._on_project_ui_event)
+        self._ui_event_bridge.stop()
 
         await self._manager.stop()
         self._started = False
 
     # Runner event handling
-    async def _handle_runner_step_event(
-        self,
-        frame: RunnerFrame,
-        event: runner_proto.RunEventReq,
-    ) -> Optional[runner_proto.RunEventResp]:
-        execution = event.execution
-        step = event.step
-        if step is None:
-            return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.NOOP,
-                message=None,
-            )
-
-        message = step.message
-
-        display: Optional[manager_proto.RunnerReqDisplayOpts] = None
-        node_name = step.execution.node
-        node_by_name = frame.runner.workflow.graph.node_by_name
-        node = node_by_name.get(node_name)
-        if node is not None and (
-            node.alert
-            or node.collapse is not None
-            or node.collapse_lines is not None
-            or not node.visible
-            or node.tool_collapse is not None
-        ):
-            display = manager_proto.RunnerReqDisplayOpts(
-                collapse=node.collapse,
-                collapse_lines=node.collapse_lines,
-                visible=node.visible,
-                tool_collapse=node.tool_collapse,
-                alert=node.alert,
-            )
-
-        input_title: Optional[str] = None
-        input_subtitle: Optional[str] = None
-
-        needs_confirmation = False
-        if step.type == state.StepType.TOOL_REQUEST and message is not None:
-            for tool_req in message.tool_call_requests:
-                if tool_req.status == state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
-                    needs_confirmation = True
-                    break
-
-        input_required = False
-        if step.type in (state.StepType.PROMPT, state.StepType.PROMPT_CONFIRM):
-            input_required = True
-            if step.type == state.StepType.PROMPT_CONFIRM:
-                input_title = "Press enter to confirm or provide a reply"
-            else:
-                input_title = "Input"
-        elif step.type == state.StepType.TOOL_REQUEST and needs_confirmation:
-            input_required = True
-            input_title = "Please confirm the tool call"
-            input_subtitle = (
-                "Empty line confirms, any text to reject with a message. "
-                "Tip: type /aa to auto-approve similar calls for this session"
-            )
-
-        packet = manager_proto.RunnerReqPacket(
-            workflow_id=frame.workflow_name,
-            workflow_name=execution.workflow_name,
-            workflow_execution_id=str(execution.id),
-            step=step,
-            input_required=input_required,
-            display=display,
-        )
-        await self.send_packet(packet)
-
-        if not input_required:
-            if step.type == state.StepType.TOOL_REQUEST and not needs_confirmation:
-                return runner_proto.RunEventResp(
-                    resp_type=runner_proto.RunEventResponseType.APPROVE,
-                    message=None,
-                )
-
-            return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.NOOP,
-                message=None,
-            )
-
-        prompt_packet = manager_proto.InputPromptPacket(
-            title=input_title,
-            subtitle=input_subtitle,
-        )
-        await self.send_packet(prompt_packet)
-
-        return runner_proto.RunEventResp(
-            resp_type=runner_proto.RunEventResponseType.NOOP,
-            message=None,
-        )
-
-    async def _handle_runner_status_event(
-        self,
-        frame: RunnerFrame,
-        event: runner_proto.RunEventReq,
-    ) -> Optional[runner_proto.RunEventResp]:
-        # If we stopped running, cancel all input waiters
-        stats = event.stats
-        if stats is not None and stats.status in (
-            state.RunnerStatus.STOPPED,
-            state.RunnerStatus.FINISHED,
-        ):
-            prompt_packet = manager_proto.InputPromptPacket()
-            await self.send_packet(prompt_packet)
-
-        # Generate runner stack summary
-        runners: list[manager_proto.RunnerStackFrame] = []
-        active_node_started_at = None
-        last_user_input_at = None
-        active_workflow_usage: Optional[state.LLMUsageStats] = None
-        last_step_usage: Optional[state.LLMUsageStats] = None
-        for runner_frame in self._manager.runner_stack:
-            stats = runner_frame.last_stats
-            if stats is None:
-                continue
-            execution = runner_frame.runner.execution
-            node_name = ""
-            node_execution_id = None
-            node_started_at = None
-            stats_execution_id = stats.current_node_execution_id
-            if stats_execution_id is not None:
-                node_execution = execution.node_executions.get(stats_execution_id)
-                if node_execution is not None:
-                    if node_execution.step_ids:
-                        first_step = execution.get_step(node_execution.step_ids[0])
-                        node_started_at = first_step.created_at
-                    node_name = node_execution.node
-                    node_execution_id = str(node_execution.id)
-            runners.append(
-                manager_proto.RunnerStackFrame(
-                    workflow_name=execution.workflow_name,
-                    workflow_execution_id=str(execution.id),
-                    node_name=node_name,
-                    node_execution_id=node_execution_id,
-                    status=stats.status,
-                )
-            )
-            if node_started_at is not None:
-                active_node_started_at = node_started_at
-            if execution.last_user_input_at is not None:
-                last_user_input_at = execution.last_user_input_at
-            if execution.llm_usage is not None:
-                active_workflow_usage = execution.llm_usage
-            if execution.last_step_llm_usage is not None:
-                last_step_usage = execution.last_step_llm_usage
-
-        # Send stack packet
-        state_packet = manager_proto.UIServerStatePacket(
-            status=self._status,
-            runners=runners,
-            active_node_started_at=active_node_started_at,
-            last_user_input_at=last_user_input_at,
-            active_workflow_llm_usage=active_workflow_usage,
-            last_step_llm_usage=last_step_usage,
-            project_llm_usage=self._manager.project.llm_usage,
-        )
-        await self.send_packet(state_packet)
-        return runner_proto.RunEventResp(
-            resp_type=runner_proto.RunEventResponseType.NOOP,
-            message=None,
-        )
-
-    async def _handle_runner_start_workflow_event(
-        self,
-        frame: RunnerFrame,
-        event: runner_proto.RunEventReq,
-    ):
-        payload = event.start_workflow
-        if payload is None:
-            return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.MESSAGE,
-                message=state.Message(
-                    role=models.Role.SYSTEM,
-                    text="Start-workflow event is missing payload.",
-                ),
-            )
-        try:
-            await self._manager.start_workflow(
-                payload.workflow_name,
-                initial_message=payload.initial_message,
-            )
-        except Exception as ex:
-            await self._publish_workflow_start_error(payload.workflow_name, ex)
-            return runner_proto.RunEventResp(
-                resp_type=runner_proto.RunEventResponseType.MESSAGE,
-                message=state.Message(
-                    role=models.Role.SYSTEM,
-                    text=f"Failed to start workflow '{payload.workflow_name}': {ex}",
-                ),
-            )
-
-        # We don't expect anything to be passed to next iteration
-        return None
-
     async def on_runner_event(
         self,
         frame: RunnerFrame,
         event: runner_proto.RunEventReq,
     ) -> Optional[runner_proto.RunEventResp]:
-        if event.kind == runner_proto.RunEventReqKind.STATUS:
-            return await self._handle_runner_status_event(frame, event)
-
-        if event.kind == runner_proto.RunEventReqKind.START_WORKFLOW:
-            return await self._handle_runner_start_workflow_event(frame, event)
-
-        return await self._handle_runner_step_event(frame, event)
+        return await self._runner_event_controller.handle(frame, event)
 
     # UI packets handling
     async def _on_user_input_packet(
         self,
         envelope: manager_proto.BasePacketEnvelope,
     ) -> Optional[manager_proto.BasePacket]:
-        payload = envelope.payload
-        if payload.kind != manager_proto.BasePacketKind.USER_INPUT:
-            return None
-
-        message = payload.message
-        text = message.text
-
-        if text.startswith("/") and len(text) > 1:
-            handled = await self._commands.execute(self, text[1:])
-            if not handled:
-                await self.send_text_message(
-                    f"Unknown command: /{text[1:].split(maxsplit=1)[0]}"
-                )
-            return None
-
-        runner = self._manager.current_runner
-        if runner is not None and runner.status != state.RunnerStatus.STOPPED:
-            accepted = await self._manager.project.input_manager.publish(
-                message,
-                queue=False,
-                input_type=input_manager.INPUT_TYPE_INTERACTIVE,
-            )
-            if accepted:
-                prompt_packet = manager_proto.InputPromptPacket()
-                await self.send_packet(prompt_packet)
-                return None
-
-        accepted = await self._manager.project.input_manager.publish(
-            message,
-            queue=False,
-            input_type=input_manager.INPUT_TYPE_INTERACTIVE,
-        )
-        if accepted:
-            prompt_packet = manager_proto.InputPromptPacket()
-            await self.send_packet(prompt_packet)
-            return None
-
-        if runner is not None and runner.status == state.RunnerStatus.STOPPED:
-            res = await self._manager.edit_history_with_text(
-                text,
-                resume=False,
-            )
-            if res.changed:
-                frame = self._manager.runner_stack[-1]
-                await self.emit_history_mutation(frame, res)
-            if res.changed:
-                await self._manager.continue_current_runner()
-            if not res.changed:
-                await self.send_text_message(
-                    "Unable to edit history: no previous user input to replace."
-                )
-            return None
-
-        await self.send_text_message("Input was rejected: no active input request.")
-
-        return None
+        return await self._message_controller.handle(self, envelope)
 
     async def _on_autocomplete_packet(
         self,
         envelope: manager_proto.BasePacketEnvelope,
     ) -> Optional[manager_proto.BasePacket]:
-        payload = envelope.payload
-        if payload.kind != manager_proto.BasePacketKind.AUTOCOMPLETE_REQ:
-            return None
-        req = cast(manager_proto.AutocompleteReqPacket, payload)
-        items = await self._autocomplete.get_completions(
-            self,
-            req.text,
-            req.row,
-            req.col,
-        )
-        resp_items = [
-            manager_proto.AutocompleteItem(
-                title=item.title,
-                replace_start=item.replace_start,
-                replace_text=item.replace_text,
-                insert_text=item.insert_text,
-            )
-            for item in items
-        ]
-        resp = manager_proto.AutocompleteRespPacket(items=resp_items)
-        await self.send_packet(resp)
-        return None
+        return await self._message_controller.handle(self, envelope)
 
     async def _on_stop_packet(
         self,
         envelope: manager_proto.BasePacketEnvelope,
     ) -> Optional[manager_proto.BasePacket]:
-        payload = envelope.payload
-        if payload.kind != manager_proto.BasePacketKind.STOP_REQ:
-            return None
-        await self._manager.stop_current_runner()
-        return None
+        return await self._message_controller.handle(self, envelope)
 
     async def _on_log_req_packet(
         self,
         envelope: manager_proto.BasePacketEnvelope,
     ) -> Optional[manager_proto.BasePacket]:
-        payload = envelope.payload
-        if payload.kind != manager_proto.BasePacketKind.LOG_REQ:
-            return None
-        req = cast(manager_proto.LogReqPacket, payload)
-        manager = get_log_manager_internal()
-        if manager is None:
-            return manager_proto.LogRespPacket(offset=req.offset, total=0, entries=[])
-        records = manager.get_logs()
-        total = len(records)
-        if req.offset < 0:
-            offset = 0
-        else:
-            offset = req.offset
-        if offset > total:
-            offset = total
-        limit = req.limit
-        if limit is None:
-            end = total
-        else:
-            if limit < 0:
-                limit = 0
-            end = offset + limit
-        if end > total:
-            end = total
-        entries: list[manager_proto.LogEntry] = []
-        for index in range(offset, end):
-            record = records[index]
-            level = manager_proto.LogLevel.INFO
-            if record.level <= logging.DEBUG:
-                level = manager_proto.LogLevel.DEBUG
-            elif record.level <= logging.INFO:
-                level = manager_proto.LogLevel.INFO
-            elif record.level <= logging.WARNING:
-                level = manager_proto.LogLevel.WARNING
-            elif record.level <= logging.ERROR:
-                level = manager_proto.LogLevel.ERROR
-            else:
-                level = manager_proto.LogLevel.CRITICAL
-            entry = manager_proto.LogEntry(
-                index=index,
-                logger_name=record.logger_name,
-                level=level,
-                level_name=record.level_name,
-                message=record.message,
-                created=record.created,
-            )
-            entries.append(entry)
-        return manager_proto.LogRespPacket(
-            offset=offset,
-            total=total,
-            entries=entries,
-        )
+        return await self._message_controller.handle(self, envelope)
 
     async def on_ui_packet(self, envelope: manager_proto.BasePacketEnvelope) -> bool:
         logger.debug("UIServer.on_ui_packet", pack=envelope)
