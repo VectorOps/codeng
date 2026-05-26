@@ -375,6 +375,37 @@ def _is_relative_path(p: str) -> bool:
     return not os.path.isabs(norm)
 
 
+def _drop_blank_context_lines(chunk: Chunk) -> Optional[Chunk]:
+    pat_index = 0
+    removed_pat_indices: List[int] = []
+    new_items: List[NeedleItem] = []
+    for item in chunk.items:
+        if item.type == NeedleType.ANCHOR:
+            new_items.append(item)
+            continue
+        if item.type == NeedleType.CONTEXT and item.text == "":
+            removed_pat_indices.append(pat_index)
+        else:
+            new_items.append(item)
+        pat_index += 1
+
+    if not removed_pat_indices:
+        return None
+
+    new_edits: List[EditGroup] = []
+    for edit in chunk.edits:
+        shift = sum(1 for idx in removed_pat_indices if idx < edit.start_pat_index)
+        new_edits.append(
+            EditGroup(
+                start_pat_index=edit.start_pat_index - shift,
+                del_count=edit.del_count,
+                additions=list(edit.additions),
+            )
+        )
+
+    return Chunk(items=new_items, edits=new_edits, start_line=chunk.start_line)
+
+
 def parse_v4a_patch(text: str) -> Tuple[Patch, List[PatchError]]:
     """
     Best-effort, resilient V4A parser.
@@ -1003,6 +1034,14 @@ def build_commits(
             ok, matched, _hint, _ins, replacement, end_idx = try_match_at(start)
             if ok:
                 return start, end_idx, replacement, None
+
+        chunk_without_blank_context = _drop_blank_context_lines(chunk)
+        if chunk_without_blank_context is not None:
+            return find_chunk_linear(
+                file_lines,
+                chunk_without_blank_context,
+                start_min=start_min,
+            )
 
         # Failure: quote the unmatched block the user provided
         block_quote = render_chunk_block(chunk)

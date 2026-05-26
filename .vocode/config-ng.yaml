@@ -7,13 +7,13 @@ variables:
   LLM_ARCHITECT_REASONING: medium
 # OpenAI
   LLM_DISCOVERY_MODEL:
-    value: chatgpt/gpt-5-mini
+    value: chatgpt/gpt-5.4-mini
     type: llm_models
   LLM_ARCHITECT_MODEL:
     value: chatgpt/gpt-5.4
     type: llm_models
   LLM_CODER_MODEL:
-    value: chatgpt/gpt-5-mini
+    value: chatgpt/gpt-5.4-mini
     type: llm_models
   LLM_DIFF_FORMAT: v4a
 # Gemini

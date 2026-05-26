@@ -590,6 +590,85 @@ def test_handles_missing_empty_line_in_context():
     assert statuses == {"src/missing_blank.py": FileApplyStatus.Update}
 
 
+def test_handles_extra_empty_line_in_patch_context():
+    patch_text = """*** Begin Patch
+*** Update File: src/extra_blank.py
+ header1
+
+ line2
+- old
++ new
+ footer1
+*** End Patch"""
+    initial = {"src/extra_blank.py": "header1\nline2\n old\nfooter1\n"}
+    statuses, errs, writes, deletes, _ = run_patch(patch_text, initial_files=initial)
+    assert errs == []
+    assert deletes == []
+    assert writes["src/extra_blank.py"] == "header1\nline2\n new\nfooter1\n"
+    assert statuses == {"src/extra_blank.py": FileApplyStatus.Update}
+
+
+@pytest.mark.parametrize(
+    "blank_line",
+    ["", " ", "    ", "\t", "\u00a0"],
+)
+def test_blank_context_line_variants_apply(blank_line: str):
+    patch_lines = [
+        "*** Begin Patch",
+        "*** Update File: src/example.cpp",
+        " alpha();",
+        " beta();",
+        blank_line,
+        " gamma();",
+        "-delta();",
+        "+epsilon();",
+        blank_line,
+        " omega();",
+        "*** End Patch",
+    ]
+    patch_text = "\n".join(patch_lines)
+    initial = {
+        "src/example.cpp": (
+            "alpha();\n" "beta();\n" "\n" "gamma();\n" "delta();\n" "\n" "omega();\n"
+        )
+    }
+    statuses, errs, writes, deletes, _ = run_patch(patch_text, initial_files=initial)
+    assert errs == []
+    assert deletes == []
+    assert writes["src/example.cpp"] == (
+        "alpha();\n" "beta();\n" "\n" "gamma();\n" "epsilon();\n" "\n" "omega();\n"
+    )
+    assert statuses == {"src/example.cpp": FileApplyStatus.Update}
+
+
+def test_blank_context_line_variants_apply_with_crlf_patch_text():
+    patch_text = (
+        "*** Begin Patch\r\n"
+        "*** Update File: src/example.cpp\r\n"
+        " alpha();\r\n"
+        " beta();\r\n"
+        "\r\n"
+        " gamma();\r\n"
+        "-delta();\r\n"
+        "+epsilon();\r\n"
+        " \r\n"
+        " omega();\r\n"
+        "*** End Patch"
+    )
+    initial = {
+        "src/example.cpp": (
+            "alpha();\n" "beta();\n" "\n" "gamma();\n" "delta();\n" "\n" "omega();\n"
+        )
+    }
+    statuses, errs, writes, deletes, _ = run_patch(patch_text, initial_files=initial)
+    assert errs == []
+    assert deletes == []
+    assert writes["src/example.cpp"] == (
+        "alpha();\n" "beta();\n" "\n" "gamma();\n" "epsilon();\n" "\n" "omega();\n"
+    )
+    assert statuses == {"src/example.cpp": FileApplyStatus.Update}
+
+
 def test_interleaved_additions_deletions_single_block_applies():
     """
     Multiple interleaved deletions and additions within a single chunk (no @@) should apply.
