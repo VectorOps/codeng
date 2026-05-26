@@ -614,7 +614,7 @@ wheels = [
 [[package]]
 name = "knowlt"
 version = "0.1.0"
-source = { git = "https://github.com/vectorops/knowlt.git?rev=361b1f9#361b1f90baa896555e10371ce17374ffecf2a199" }
+source = { git = "https://github.com/vectorops/knowlt.git?rev=71419e82c4b59de71bb25deb6ecef6bc064a98dc#71419e82c4b59de71bb25deb6ecef6bc064a98dc" }
 dependencies = [
     { name = "click" },
     { name = "devtools" },
@@ -1413,8 +1413,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -1844,7 +1844,7 @@ requires-dist = [
     { name = "gitpython", specifier = "==3.1.46" },
     { name = "json5", specifier = "==0.13.0" },
     { name = "keyring", specifier = "==25.6.0" },
-    { name = "knowlt", git = "https://github.com/vectorops/knowlt.git?rev=361b1f9" },
+    { name = "knowlt", git = "https://github.com/vectorops/knowlt.git?rev=71419e82c4b59de71bb25deb6ecef6bc064a98dc" },
     { name = "pydantic", specifier = "==2.12.5" },
     { name = "pyfiglet", specifier = "==1.0.4" },
     { name = "pytest", specifier = "==9.0.2" },
