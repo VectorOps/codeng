@@ -5,6 +5,7 @@ import typing
 from rich import markup as rich_markup
 
 from vocode.manager import proto as manager_proto
+from vocode.manager.interfaces import UIPacketSender
 
 
 def escape(value: object) -> str:
@@ -50,20 +51,20 @@ def format_help(
     return "\n".join(lines)
 
 
-async def send_rich(server, text: str) -> None:
+async def send_rich(server: UIPacketSender, text: str) -> None:
     await server.send_text_message(
         text,
         text_format=manager_proto.TextMessageFormat.RICH_TEXT,
     )
 
 
-async def send_success(server, message: str) -> None:
+async def send_success(server: UIPacketSender, message: str) -> None:
     await send_rich(server, success(message))
 
 
-async def send_warning(server, message: str) -> None:
+async def send_warning(server: UIPacketSender, message: str) -> None:
     await send_rich(server, warning(message))
 
 
-async def send_error(server, message: str) -> None:
+async def send_error(server: UIPacketSender, message: str) -> None:
     await send_rich(server, error(message))
