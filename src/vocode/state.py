@@ -57,6 +57,12 @@ class StepType(str, Enum):
     WORKFLOW_RESULT = "workflow_result"
 
 
+class UserInputMode(str, Enum):
+    PROMPT_REPLY = "prompt_reply"
+    QUEUE = "queue"
+    STEERING = "steering"
+
+
 class LLMUsageStats(BaseModel):
     """
     Aggregated LLM usage and limits.
@@ -142,6 +148,10 @@ class Message(BaseModel):
     )
     role: Role = Field(..., description="Sender role")
     text: str = Field(..., description="Original message as received/emitted")
+    input_mode: Optional[UserInputMode] = Field(
+        default=None,
+        description="Optional delivery mode metadata for user-submitted input.",
+    )
     thinking_content: Optional[str] = Field(
         default=None,
         description="Optional model reasoning/thinking content (not shown as user-visible text).",

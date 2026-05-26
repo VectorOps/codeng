@@ -35,6 +35,7 @@ class App:
         self._push_msg_id = 0
         self._prompt: PromptMeta | None = None
         self._recv_task: asyncio.Task[None] | None = None
+        self._ui_server_state: manager_proto.UIServerStatePacket | None = None
 
         project = vocode_project.Project.from_base_path(self._project_path)
         tui_tcf.ToolCallFormatterManager.configure(project.settings)
@@ -170,6 +171,7 @@ class App:
         payload = envelope.payload
         if not isinstance(payload, manager_proto.UIServerStatePacket):
             return None
+        self._ui_server_state = payload
         self._state.handle_ui_state(payload)
         return None
 
@@ -237,13 +239,30 @@ class App:
             if not handled:
                 continue
 
+    def _has_running_workflow(self) -> bool:
+        ui_server_state = self._ui_server_state
+        if ui_server_state is None:
+            return False
+        if ui_server_state.status != manager_proto.UIServerStatus.RUNNING:
+            return False
+        return bool(ui_server_state.runners)
+
+    def _resolve_user_input_mode(self, text: str) -> state.UserInputMode:
+        if self._prompt is not None:
+            return state.UserInputMode.PROMPT_REPLY
+        if text.strip() and self._has_running_workflow():
+            return state.UserInputMode.STEERING
+        return state.UserInputMode.PROMPT_REPLY
+
     # UI handlers
     async def on_input(self, text: str) -> None:
+        mode = self._resolve_user_input_mode(text)
         message = state.Message(
             role=models.Role.USER,
             text=text,
+            input_mode=mode,
         )
-        packet = manager_proto.UserInputPacket(message=message)
+        packet = manager_proto.UserInputPacket(message=message, mode=mode)
         envelope = manager_proto.BasePacketEnvelope(
             msg_id=self._next_msg_id(),
             payload=packet,

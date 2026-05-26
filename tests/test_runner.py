@@ -251,6 +251,60 @@ class ToolPromptExecutor(BaseExecutor):
         yield step
 
 
+@ExecutorFactory.register("tool-then-last-input")
+class ToolThenLastInputExecutor(BaseExecutor):
+    async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
+        history = self.project.history
+        execution = inp.execution
+        has_tool_result = False
+        for existing_step in execution.iter_steps():
+            if (
+                existing_step.message is not None
+                and existing_step.message.tool_call_responses
+            ):
+                has_tool_result = True
+                break
+        if not has_tool_result:
+            tool_req = state.ToolCallReq(
+                id="call-test-tool",
+                name="test-tool",
+                arguments={"x": 1},
+            )
+            msg = state.Message(
+                role=models.Role.ASSISTANT,
+                text="with tool",
+                tool_call_requests=[tool_req],
+            )
+        else:
+            latest_user_text = ""
+            for existing_message, existing_step in runner_base.iter_execution_messages(
+                execution
+            ):
+                if existing_step is None:
+                    continue
+                if existing_step.type != state.StepType.INPUT_MESSAGE:
+                    continue
+                if existing_message.role != models.Role.USER:
+                    continue
+                latest_user_text = existing_message.text
+            msg = state.Message(
+                role=models.Role.ASSISTANT,
+                text=latest_user_text,
+            )
+        history.upsert_message(inp.run, msg)
+        step = history.upsert_step(
+            inp.run,
+            state.Step(
+                workflow_execution=inp.run,
+                execution_id=execution.id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                message_id=msg.id,
+                is_complete=True,
+            ),
+        )
+        yield step
+
+
 @ExecutorFactory.register("forward-last-input")
 class ForwardLastInputExecutor(BaseExecutor):
     async def run(self, inp: ExecutorInput) -> AsyncIterator[state.Step]:
@@ -4046,9 +4100,14 @@ async def test_runner_confirmation_wait_uses_only_new_input() -> None:
     async def wait_for_input(
         only_new: bool = False,
         input_type: str | None = None,
+        mode: state.UserInputMode | None = None,
     ) -> state.Message:
         wait_flags.append(only_new)
-        return await original_wait_for_input(only_new=only_new, input_type=input_type)
+        return await original_wait_for_input(
+            only_new=only_new,
+            input_type=input_type,
+            mode=mode,
+        )
 
     project.input_manager.wait_for_input = wait_for_input
 
@@ -4135,9 +4194,14 @@ async def test_runner_tool_confirmation_wait_uses_only_new_input() -> None:
     async def wait_for_input(
         only_new: bool = False,
         input_type: str | None = None,
+        mode: state.UserInputMode | None = None,
     ) -> state.Message:
         wait_flags.append(only_new)
-        return await original_wait_for_input(only_new=only_new, input_type=input_type)
+        return await original_wait_for_input(
+            only_new=only_new,
+            input_type=input_type,
+            mode=mode,
+        )
 
     project.input_manager.wait_for_input = wait_for_input
 
@@ -4188,6 +4252,160 @@ async def test_runner_tool_confirmation_wait_uses_only_new_input() -> None:
         and event.step.message.text == "queued-rejection"
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_runner_injects_steering_before_next_executor_round_after_tool_round() -> (
+    None
+):
+    project = StubProject()
+    project.tools["test-tool"] = RecordingTool()
+    project.project_state.autoapprove.add_tool("test-tool")
+
+    node = models.Node(
+        name="tool-node",
+        type="tool-then-last-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    workflow = DummyWorkflow(name="wf-steering-after-tool", graph=graph)
+
+    accepted = await project.input_manager.publish(
+        state.Message(
+            role=models.Role.USER,
+            text="steer-now",
+            input_mode=state.UserInputMode.STEERING,
+        ),
+        queue=True,
+        input_type=INPUT_TYPE_INTERACTIVE,
+    )
+    assert accepted is True
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(
+            role=models.Role.USER,
+            text="start",
+        ),
+    )
+
+    events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "steer-now"
+        and event.step.message.input_mode == state.UserInputMode.STEERING
+        for event in events
+    )
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.OUTPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "steer-now"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_consume_steering_during_initial_prompt_wait() -> None:
+    node = InputNode(
+        name="input-node",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+        message="Say something",
+    )
+    graph = models.Graph(nodes=[node], edges=[])
+    project = StubProject()
+
+    accepted = await project.input_manager.publish(
+        state.Message(
+            role=models.Role.USER,
+            text="steer-later",
+            input_mode=state.UserInputMode.STEERING,
+        ),
+        queue=True,
+        input_type=INPUT_TYPE_INTERACTIVE,
+    )
+    assert accepted is True
+
+    runner = Runner(
+        workflow=DummyWorkflow(name="wf-steering-prompt-wait", graph=graph),
+        project=project,
+        initial_message=None,
+    )
+
+    agen = runner.run()
+    prompt_seen = False
+
+    async def publish_prompt_reply() -> None:
+        accepted_local = await project.input_manager.publish(
+            state.Message(role=models.Role.USER, text="prompt-reply"),
+            queue=True,
+            input_type=INPUT_TYPE_INTERACTIVE,
+            mode=state.UserInputMode.PROMPT_REPLY,
+        )
+        assert accepted_local is True
+
+    events: list[RunEvent] = []
+    send: RunEventResp | None = None
+    publish_task: asyncio.Task[None] | None = None
+    while True:
+        try:
+            if send is None:
+                event = await agen.__anext__()
+            else:
+                event = await agen.asend(send)
+        except StopAsyncIteration:
+            break
+        events.append(event)
+        if (
+            event.step is not None
+            and event.step.type == state.StepType.PROMPT
+            and not prompt_seen
+        ):
+            prompt_seen = True
+            publish_task = asyncio.create_task(publish_prompt_reply())
+        send = RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        )
+
+    if publish_task is not None:
+        await publish_task
+
+    assert runner.status == state.RunnerStatus.FINISHED
+    assert any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "prompt-reply"
+        for event in events
+    )
+    assert not any(
+        event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.text == "steer-later"
+        for event in events
+    )
+
+    snapshot = await project.input_manager.snapshot()
+    assert [
+        message.text
+        for message in snapshot.queued_messages_by_type[INPUT_TYPE_INTERACTIVE]
+    ] == ["steer-later"]
 
 
 @pytest.mark.asyncio
@@ -4365,6 +4583,74 @@ async def test_runner_initializes_and_finishes_workflow_scoped_mcp_sessions() ->
 
     assert runner.status == state.RunnerStatus.FINISHED
     assert project.mcp.list_sessions() == {}
+
+
+@pytest.mark.asyncio
+async def test_runner_injects_multiple_steering_messages_in_order() -> None:
+    project = StubProject()
+    project.tools["test-tool"] = RecordingTool()
+    project.project_state.autoapprove.add_tool("test-tool")
+
+    node = models.Node(
+        name="tool-node",
+        type="tool-then-last-input",
+        outcomes=[],
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = DummyWorkflow(
+        name="wf-steering-multi",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+
+    assert (
+        await project.input_manager.publish(
+            state.Message(
+                role=models.Role.USER,
+                text="first-steer",
+                input_mode=state.UserInputMode.STEERING,
+            ),
+            queue=True,
+            input_type=INPUT_TYPE_INTERACTIVE,
+        )
+        is True
+    )
+    assert (
+        await project.input_manager.publish(
+            state.Message(
+                role=models.Role.USER,
+                text="second-steer",
+                input_mode=state.UserInputMode.STEERING,
+            ),
+            queue=True,
+            input_type=INPUT_TYPE_INTERACTIVE,
+        )
+        is True
+    )
+
+    runner = Runner(
+        workflow=workflow,
+        project=project,
+        initial_message=state.Message(role=models.Role.USER, text="start"),
+    )
+
+    events = await drive_runner(
+        runner.run(),
+        lambda _event: RunEventResp(
+            resp_type=RunEventResponseType.NOOP,
+            message=None,
+        ),
+        ignore_non_step=True,
+    )
+
+    injected_inputs = [
+        event.step.message.text
+        for event in events
+        if event.step is not None
+        and event.step.type == state.StepType.INPUT_MESSAGE
+        and event.step.message is not None
+        and event.step.message.input_mode == state.UserInputMode.STEERING
+    ]
+    assert injected_inputs == ["first-steer\n\nsecond-steer"]
 
 
 @pytest.mark.asyncio

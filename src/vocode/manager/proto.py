@@ -102,6 +102,13 @@ class UserInputPacket(BaseModel):
         default=BasePacketKind.USER_INPUT
     )
     message: state.Message = Field(...)
+    mode: state.UserInputMode = Field(default=state.UserInputMode.PROMPT_REPLY)
+
+    @model_validator(mode="after")
+    def _sync_message_input_mode(self) -> "UserInputPacket":
+        if self.message.input_mode != self.mode:
+            self.message.input_mode = self.mode
+        return self
 
 
 class UIServerStatus(str, Enum):
@@ -139,6 +146,8 @@ class UIServerStatePacket(BaseModel):
     runners: list[RunnerStackFrame] = Field(default_factory=list)
     active_node_started_at: Optional[datetime] = Field(default=None)
     last_user_input_at: Optional[datetime] = Field(default=None)
+    queued_steering_count: int = Field(default=0)
+    queued_steering_preview: Optional[str] = Field(default=None)
     active_workflow_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)
     last_step_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)
     project_llm_usage: Optional[state.LLMUsageStats] = Field(default=None)

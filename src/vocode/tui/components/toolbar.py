@@ -44,6 +44,8 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._project_llm_usage: vocode_state.LLMUsageStats | None = None
         self._active_node_started_at: datetime.datetime | None = None
         self._last_user_input_at: datetime.datetime | None = None
+        self._queued_steering_count = 0
+        self._queued_steering_preview: str | None = None
         self._notice_text = ""
 
     @property
@@ -74,6 +76,8 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         project_usage: vocode_state.LLMUsageStats | None = None
         active_node_started_at: datetime.datetime | None = None
         last_user_input_at: datetime.datetime | None = None
+        queued_steering_count = 0
+        queued_steering_preview: str | None = None
         if ui_state is not None:
             if ui_state.runners:
                 labels: list[str] = []
@@ -89,6 +93,8 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
                 status = ui_state.runners[-1].status
             active_node_started_at = ui_state.active_node_started_at
             last_user_input_at = ui_state.last_user_input_at
+            queued_steering_count = ui_state.queued_steering_count
+            queued_steering_preview = ui_state.queued_steering_preview
             active_usage = ui_state.active_workflow_llm_usage
             last_step_usage = ui_state.last_step_llm_usage
             project_usage = ui_state.project_llm_usage
@@ -99,6 +105,8 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         self._project_llm_usage = project_usage
         self._active_node_started_at = active_node_started_at
         self._last_user_input_at = last_user_input_at
+        self._queued_steering_count = queued_steering_count
+        self._queued_steering_preview = queued_steering_preview
         self._update_animation()
 
     def _get_status_label(self) -> str:
@@ -244,14 +252,27 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
         usage_parts.append(f"ts: {sent_str} tr: {received_str} ${cost_str}")
         usage_text = " | ".join(usage_parts)
 
-        if not usage_text:
+        steering_text = ""
+        if self._queued_steering_count > 0:
+            steering_text = f"steer: {self._queued_steering_count}"
+            if self._queued_steering_count == 1 and self._queued_steering_preview:
+                steering_text = f'{steering_text} "{self._queued_steering_preview}"'
+
+        right_parts: list[str] = []
+        if steering_text:
+            right_parts.append(steering_text)
+        if usage_text:
+            right_parts.append(usage_text)
+        right_text = " | ".join(right_parts)
+
+        if not right_text:
             base = rich_text.Text(main_text)
         elif not main_text:
-            base = rich_text.Text(usage_text)
+            base = rich_text.Text(right_text)
         else:
             width = console.width
             left = main_text
-            right = usage_text
+            right = right_text
             min_space = 1
             if width <= len(left) + min_space + len(right):
                 full_text = f"{left} {right}"

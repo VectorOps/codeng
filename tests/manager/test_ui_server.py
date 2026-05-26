@@ -784,9 +784,70 @@ async def test_uiserver_status_event_emits_ui_state_packet() -> None:
     assert state_packet.last_step_llm_usage.model_name == "chatgpt/gpt-5.4"
     assert state_packet.last_step_llm_usage.input_token_limit == 1000
 
-    dummy_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await dummy_task
+
+@pytest.mark.asyncio
+async def test_uiserver_status_event_includes_queued_steering_summary() -> None:
+    history = HistoryManager()
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+    await server.start()
+
+    execution = state.WorkflowExecution(workflow_name="wf-ui-steering-state")
+    node_execution = history.upsert_node_execution(
+        execution,
+        state.NodeExecution(
+            node="node-status",
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    stats = runner_proto.RunStats(
+        status=state.RunnerStatus.RUNNING,
+        current_node_name=node_execution.node,
+        current_node_execution_id=node_execution.id,
+    )
+
+    class DummyRunner:
+        def __init__(self, execution: state.WorkflowExecution) -> None:
+            self.execution = execution
+
+    runner = DummyRunner(execution)
+    frame = RunnerFrame(
+        workflow_name=execution.workflow_name,
+        runner=runner,  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+        last_stats=stats,
+    )
+    server.manager._runner_stack.append(frame)
+
+    assert (
+        await project.input_manager.publish(
+            state.Message(
+                role=models.Role.USER,
+                text="refocus on tests and assertions",
+                input_mode=state.UserInputMode.STEERING,
+            ),
+            queue=True,
+            input_type=INPUT_TYPE_INTERACTIVE,
+        )
+        is True
+    )
+
+    event = runner_proto.RunEventReq(
+        kind=runner_proto.RunEventReqKind.STATUS,
+        execution=execution,
+        stats=stats,
+    )
+
+    resp = await server.on_runner_event(frame, event)
+    assert resp is not None
+
+    envelope = await client_endpoint.recv()
+    payload = envelope.payload
+    assert isinstance(payload, manager_proto.UIServerStatePacket)
+    assert payload.queued_steering_count == 1
+    assert payload.queued_steering_preview == "refocus on tests and assertions"
 
 
 @pytest.mark.asyncio
@@ -1271,6 +1332,154 @@ async def test_uiserver_user_input_sends_error_when_no_active_input_request() ->
     resp_envelope = await client_endpoint.recv()
     assert isinstance(resp_envelope.payload, manager_proto.TextMessagePacket)
     assert "Input was rejected" in resp_envelope.payload.text
+
+
+@pytest.mark.asyncio
+async def test_uiserver_queues_steering_input_without_active_waiter() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    user_message = state.Message(role=models.Role.USER, text="steer")
+    packet = manager_proto.UserInputPacket(
+        message=user_message,
+        mode=state.UserInputMode.STEERING,
+    )
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+
+    queued_message = await project.input_manager.poll_queued_input(
+        input_type=INPUT_TYPE_INTERACTIVE,
+        mode=state.UserInputMode.STEERING,
+    )
+
+    assert queued_message is not None
+    assert queued_message.text == "steer"
+    assert queued_message.input_mode == state.UserInputMode.STEERING
+
+
+@pytest.mark.asyncio
+async def test_uiserver_queues_queue_mode_input_without_active_waiter() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    user_message = state.Message(role=models.Role.USER, text="queued")
+    packet = manager_proto.UserInputPacket(
+        message=user_message,
+        mode=state.UserInputMode.QUEUE,
+    )
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+
+    queued_message = await project.input_manager.poll_queued_input(
+        input_type=INPUT_TYPE_INTERACTIVE,
+        mode=state.UserInputMode.QUEUE,
+    )
+
+    assert queued_message is not None
+    assert queued_message.text == "queued"
+    assert queued_message.input_mode == state.UserInputMode.QUEUE
+
+
+@pytest.mark.asyncio
+async def test_uiserver_steering_input_on_stopped_runner_does_not_edit_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    class DummyRunner:
+        def __init__(self) -> None:
+            self.status = state.RunnerStatus.STOPPED
+
+    frame = RunnerFrame(
+        workflow_name="wf-stopped",
+        runner=DummyRunner(),  # type: ignore[arg-type]
+        initial_message=None,
+        agen=None,
+    )
+    server.manager._runner_stack.append(frame)
+
+    called: list[str] = []
+
+    async def fake_edit_history_with_text(
+        self: BaseManager,
+        text: str,
+        *,
+        resume: bool = True,
+    ) -> HistoryMutationResult:
+        _ = resume
+        called.append(text)
+        return HistoryMutationResult(changed=False)
+
+    monkeypatch.setattr(
+        BaseManager, "edit_history_with_text", fake_edit_history_with_text
+    )
+
+    user_message = state.Message(role=models.Role.USER, text="steer while stopped")
+    packet = manager_proto.UserInputPacket(
+        message=user_message,
+        mode=state.UserInputMode.STEERING,
+    )
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+    assert called == []
+
+    queued_message = await project.input_manager.poll_queued_input(
+        input_type=INPUT_TYPE_INTERACTIVE,
+        mode=state.UserInputMode.STEERING,
+    )
+    assert queued_message is not None
+    assert queued_message.text == "steer while stopped"
+
+
+@pytest.mark.asyncio
+async def test_uiserver_prompt_reply_input_keeps_direct_delivery() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    waiter_task = asyncio.create_task(
+        project.input_manager.wait_for_input(
+            input_type=INPUT_TYPE_INTERACTIVE,
+            mode=state.UserInputMode.PROMPT_REPLY,
+        )
+    )
+    await asyncio.sleep(0)
+
+    user_message = state.Message(role=models.Role.USER, text="reply")
+    packet = manager_proto.UserInputPacket(
+        message=user_message,
+        mode=state.UserInputMode.PROMPT_REPLY,
+    )
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+
+    assert handled is True
+
+    published_message = await waiter_task
+    assert published_message.text == "reply"
+    assert published_message.input_mode == state.UserInputMode.PROMPT_REPLY
 
 
 @pytest.mark.asyncio

@@ -565,6 +565,47 @@ class Runner:
             step=response_step,
         )
 
+    def _build_input_step_event(
+        self,
+        execution: state.NodeExecution,
+        message: state.Message,
+    ) -> RunEventReq:
+        self._history.upsert_message(self.execution, message)
+        input_step = state.Step(
+            workflow_execution=self.execution,
+            execution_id=execution.id,
+            type=state.StepType.INPUT_MESSAGE,
+            message_id=message.id,
+        )
+        return RunEventReq(
+            kind=runner_proto.RunEventReqKind.STEP,
+            execution=self.execution,
+            step=self._persist_step(input_step),
+        )
+
+    def _combine_steering_messages(
+        self,
+        messages: list[state.Message],
+    ) -> Optional[state.Message]:
+        if not messages:
+            return None
+        if len(messages) == 1:
+            return messages[0]
+        combined_parts: list[str] = []
+        for message in messages:
+            text = message.text.strip()
+            if not text:
+                continue
+            combined_parts.append(text)
+        combined_text = "\n\n".join(combined_parts)
+        if not combined_text:
+            combined_text = "\n\n".join(message.text for message in messages)
+        return state.Message(
+            role=models.Role.USER,
+            text=combined_text,
+            input_mode=state.UserInputMode.STEERING,
+        )
+
     async def _wait_for_managed_input_response(
         self,
         req: RunEventReq,
@@ -582,6 +623,7 @@ class Runner:
         message = await self.project.input_manager.wait_for_input(
             only_new=only_new,
             input_type=input_type,
+            mode=state.UserInputMode.PROMPT_REPLY,
         )
         managed_resp: Optional[RunEventResp] = None
 
@@ -624,6 +666,26 @@ class Runner:
         if isinstance(node, input_executor.InputNode):
             return input_manager.normalize_input_type(node.accepted_input_type)
         return input_manager.INPUT_TYPE_INTERACTIVE
+
+    async def _drain_steering_input_events(
+        self,
+        execution: Optional[state.NodeExecution],
+    ) -> list[RunEventReq]:
+        if execution is None:
+            return []
+        messages: list[state.Message] = []
+        while True:
+            message = await self.project.input_manager.poll_queued_input(
+                input_type=input_manager.INPUT_TYPE_INTERACTIVE,
+                mode=state.UserInputMode.STEERING,
+            )
+            if message is None:
+                break
+            messages.append(message)
+        combined_message = self._combine_steering_messages(messages)
+        if combined_message is None:
+            return []
+        return [self._build_input_step_event(execution, combined_message)]
 
     async def _init_executors(self) -> None:
         await self.project.on_workflow_started(self.workflow.name)
@@ -712,10 +774,19 @@ class Runner:
             current_runtime_node = runtime_node
             use_resume_step = resume_step
             skip_executor_for_current = skip_executor
+            allow_steering_injection = False
 
             tool_request_steps: dict[str, state.Step] = {}
 
             while True:
+                if allow_steering_injection:
+                    steering_events = await self._drain_steering_input_events(
+                        current_execution
+                    )
+                    for steering_event in steering_events:
+                        _ = yield steering_event
+                    allow_steering_injection = False
+
                 executor = self._executors[current_runtime_node.name]
                 executor_input = ExecutorInput(
                     execution=current_execution, run=self.execution
@@ -884,6 +955,7 @@ class Runner:
                         is_complete=True,
                     )
                     self._persist_step(result_step)
+                    allow_steering_injection = True
                     continue
 
                 if last_complete_step is not None and last_complete_step.type in (
@@ -1104,6 +1176,7 @@ class Runner:
                         )
                         _ = yield event
 
+                    allow_steering_injection = True
                     continue
 
                 confirmation_mode = current_runtime_node.model.confirmation
@@ -1176,6 +1249,7 @@ class Runner:
                         continue
 
                 if loop_current_node:
+                    allow_steering_injection = True
                     continue
 
                 last_complete_step.is_final = True

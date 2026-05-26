@@ -51,6 +51,34 @@ class InputManager:
         self._state_by_type: Dict[str, InputQueueState] = {}
         self._lock = asyncio.Lock()
 
+    def _message_mode_matches(
+        self,
+        message: state.Message,
+        mode: Optional[state.UserInputMode],
+    ) -> bool:
+        if mode is None:
+            return True
+        if mode == state.UserInputMode.PROMPT_REPLY and message.input_mode is None:
+            return True
+        return message.input_mode == mode
+
+    def _pop_matching_queued_message(
+        self,
+        queue_state: InputQueueState,
+        mode: Optional[state.UserInputMode],
+    ) -> Optional[state.Message]:
+        if mode is None:
+            if not queue_state.queued_messages:
+                return None
+            return queue_state.queued_messages.popleft()
+        for index, message in enumerate(queue_state.queued_messages):
+            if not self._message_mode_matches(message, mode):
+                continue
+            matched_message = message
+            del queue_state.queued_messages[index]
+            return matched_message
+        return None
+
     def _get_or_create_state(self, input_type: str) -> InputQueueState:
         queue_state = self._state_by_type.get(input_type)
         if queue_state is None:
@@ -93,8 +121,11 @@ class InputManager:
         *,
         queue: bool,
         input_type: Optional[str] = None,
+        mode: Optional[state.UserInputMode] = None,
     ) -> bool:
         resolved_input_type = normalize_input_type(input_type)
+        if mode is not None:
+            message.input_mode = mode
         async with self._lock:
             queue_state = self._get_or_create_state(resolved_input_type)
             self._prune_done_waiters(queue_state)
@@ -113,21 +144,43 @@ class InputManager:
         self,
         only_new: bool = False,
         input_type: Optional[str] = None,
+        mode: Optional[state.UserInputMode] = None,
     ) -> state.Message:
         resolved_input_type = normalize_input_type(input_type)
         waiter: Optional[asyncio.Future[state.Message]] = None
         async with self._lock:
             queue_state = self._get_or_create_state(resolved_input_type)
             self._prune_done_waiters(queue_state)
-            if not only_new and queue_state.queued_messages:
-                message = queue_state.queued_messages.popleft()
-                return message
+            if not only_new:
+                message = self._pop_matching_queued_message(queue_state, mode)
+                if message is not None:
+                    return message
             loop = asyncio.get_running_loop()
             waiter = loop.create_future()
             queue_state.waiters.append(waiter)
 
         try:
-            return await waiter
+            while True:
+                message = await waiter
+                if self._message_mode_matches(message, mode):
+                    return message
+                accepted = await self.publish(
+                    message,
+                    queue=True,
+                    input_type=resolved_input_type,
+                )
+                if not accepted:
+                    raise RuntimeError("Failed to requeue unmatched input message")
+                async with self._lock:
+                    queue_state = self._state_by_type.get(resolved_input_type)
+                    if queue_state is None:
+                        raise RuntimeError(
+                            "Input queue state disappeared while waiting"
+                        )
+                    self._prune_done_waiters(queue_state)
+                    loop = asyncio.get_running_loop()
+                    waiter = loop.create_future()
+                    queue_state.waiters.append(waiter)
         finally:
             async with self._lock:
                 queue_state = self._state_by_type.get(resolved_input_type)
@@ -137,6 +190,25 @@ class InputManager:
                     queue_state.waiters.remove(waiter)
                 except ValueError:
                     pass
+
+    async def poll_queued_input(
+        self,
+        input_type: Optional[str] = None,
+        mode: Optional[state.UserInputMode] = None,
+    ) -> Optional[state.Message]:
+        async with self._lock:
+            if input_type is not None:
+                resolved_input_type = normalize_input_type(input_type)
+                queue_state = self._state_by_type.get(resolved_input_type)
+                if queue_state is None:
+                    return None
+                return self._pop_matching_queued_message(queue_state, mode)
+            for resolved_input_type in ordered_input_types(self._state_by_type.keys()):
+                queue_state = self._state_by_type[resolved_input_type]
+                matched_message = self._pop_matching_queued_message(queue_state, mode)
+                if matched_message is not None:
+                    return matched_message
+            return None
 
     async def snapshot(self) -> InputManagerState:
         async with self._lock:

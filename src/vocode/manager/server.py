@@ -31,6 +31,30 @@ from .file_path_cache import FilePathCacheService
 class UIServer:
     manager_proto = manager_proto
 
+    @staticmethod
+    def _build_steering_queue_summary(
+        snapshot: input_manager.InputManagerState,
+    ) -> tuple[int, Optional[str]]:
+        queued_messages = list(
+            snapshot.queued_messages_by_type.get(
+                input_manager.INPUT_TYPE_INTERACTIVE,
+                (),
+            )
+        )
+        steering_messages = [
+            message
+            for message in queued_messages
+            if message.input_mode == state.UserInputMode.STEERING
+        ]
+        if not steering_messages:
+            return 0, None
+        preview = steering_messages[0].text.strip()
+        if not preview:
+            preview = None
+        elif len(preview) > 48:
+            preview = f"{preview[:45]}..."
+        return len(steering_messages), preview
+
     def __init__(
         self,
         project: Project,
@@ -145,6 +169,65 @@ class UIServer:
             payload=payload,
         )
         await self._endpoint.send(envelope)
+
+    async def _emit_ui_state_packet(self) -> None:
+        runners: list[manager_proto.RunnerStackFrame] = []
+        active_node_started_at = None
+        last_user_input_at = None
+        active_workflow_usage: Optional[state.LLMUsageStats] = None
+        last_step_usage: Optional[state.LLMUsageStats] = None
+        for runner_frame in self._manager.runner_stack:
+            stats = runner_frame.last_stats
+            if stats is None:
+                continue
+            execution = runner_frame.runner.execution
+            node_name = ""
+            node_execution_id = None
+            node_started_at = None
+            stats_execution_id = stats.current_node_execution_id
+            if stats_execution_id is not None:
+                node_execution = execution.node_executions.get(stats_execution_id)
+                if node_execution is not None:
+                    if node_execution.step_ids:
+                        first_step = execution.get_step(node_execution.step_ids[0])
+                        node_started_at = first_step.created_at
+                    node_name = node_execution.node
+                    node_execution_id = str(node_execution.id)
+            runners.append(
+                manager_proto.RunnerStackFrame(
+                    workflow_name=execution.workflow_name,
+                    workflow_execution_id=str(execution.id),
+                    node_name=node_name,
+                    node_execution_id=node_execution_id,
+                    status=stats.status,
+                )
+            )
+            if node_started_at is not None:
+                active_node_started_at = node_started_at
+            if execution.last_user_input_at is not None:
+                last_user_input_at = execution.last_user_input_at
+            if execution.llm_usage is not None:
+                active_workflow_usage = execution.llm_usage
+            if execution.last_step_llm_usage is not None:
+                last_step_usage = execution.last_step_llm_usage
+
+        input_snapshot = await self._manager.project.input_manager.snapshot()
+        queued_steering_count, queued_steering_preview = (
+            self._build_steering_queue_summary(input_snapshot)
+        )
+
+        state_packet = manager_proto.UIServerStatePacket(
+            status=self._status,
+            runners=runners,
+            active_node_started_at=active_node_started_at,
+            last_user_input_at=last_user_input_at,
+            queued_steering_count=queued_steering_count,
+            queued_steering_preview=queued_steering_preview,
+            active_workflow_llm_usage=active_workflow_usage,
+            last_step_llm_usage=last_step_usage,
+            project_llm_usage=self._manager.project.llm_usage,
+        )
+        await self.send_packet(state_packet)
 
     async def request_text_input(
         self,
@@ -711,58 +794,7 @@ class UIServer:
             prompt_packet = manager_proto.InputPromptPacket()
             await self.send_packet(prompt_packet)
 
-        # Generate runner stack summary
-        runners: list[manager_proto.RunnerStackFrame] = []
-        active_node_started_at = None
-        last_user_input_at = None
-        active_workflow_usage: Optional[state.LLMUsageStats] = None
-        last_step_usage: Optional[state.LLMUsageStats] = None
-        for runner_frame in self._manager.runner_stack:
-            stats = runner_frame.last_stats
-            if stats is None:
-                continue
-            execution = runner_frame.runner.execution
-            node_name = ""
-            node_execution_id = None
-            node_started_at = None
-            stats_execution_id = stats.current_node_execution_id
-            if stats_execution_id is not None:
-                node_execution = execution.node_executions.get(stats_execution_id)
-                if node_execution is not None:
-                    if node_execution.step_ids:
-                        first_step = execution.get_step(node_execution.step_ids[0])
-                        node_started_at = first_step.created_at
-                    node_name = node_execution.node
-                    node_execution_id = str(node_execution.id)
-            runners.append(
-                manager_proto.RunnerStackFrame(
-                    workflow_name=execution.workflow_name,
-                    workflow_execution_id=str(execution.id),
-                    node_name=node_name,
-                    node_execution_id=node_execution_id,
-                    status=stats.status,
-                )
-            )
-            if node_started_at is not None:
-                active_node_started_at = node_started_at
-            if execution.last_user_input_at is not None:
-                last_user_input_at = execution.last_user_input_at
-            if execution.llm_usage is not None:
-                active_workflow_usage = execution.llm_usage
-            if execution.last_step_llm_usage is not None:
-                last_step_usage = execution.last_step_llm_usage
-
-        # Send stack packet
-        state_packet = manager_proto.UIServerStatePacket(
-            status=self._status,
-            runners=runners,
-            active_node_started_at=active_node_started_at,
-            last_user_input_at=last_user_input_at,
-            active_workflow_llm_usage=active_workflow_usage,
-            last_step_llm_usage=last_step_usage,
-            project_llm_usage=self._manager.project.llm_usage,
-        )
-        await self.send_packet(state_packet)
+        await self._emit_ui_state_packet()
         return runner_proto.RunEventResp(
             resp_type=runner_proto.RunEventResponseType.NOOP,
             message=None,
@@ -824,6 +856,7 @@ class UIServer:
 
         message = payload.message
         text = message.text
+        mode = payload.mode
 
         if text.startswith("/") and len(text) > 1:
             handled = await self._commands.execute(self, text[1:])
@@ -834,11 +867,34 @@ class UIServer:
             return None
 
         runner = self._manager.current_runner
+        if mode == state.UserInputMode.STEERING:
+            accepted = await self._manager.project.input_manager.publish(
+                message,
+                queue=True,
+                input_type=input_manager.INPUT_TYPE_INTERACTIVE,
+                mode=mode,
+            )
+            if accepted:
+                await self._emit_ui_state_packet()
+                return None
+
+        if mode == state.UserInputMode.QUEUE:
+            accepted = await self._manager.project.input_manager.publish(
+                message,
+                queue=True,
+                input_type=input_manager.INPUT_TYPE_INTERACTIVE,
+                mode=mode,
+            )
+            if accepted:
+                await self._emit_ui_state_packet()
+                return None
+
         if runner is not None and runner.status != state.RunnerStatus.STOPPED:
             accepted = await self._manager.project.input_manager.publish(
                 message,
                 queue=False,
                 input_type=input_manager.INPUT_TYPE_INTERACTIVE,
+                mode=mode,
             )
             if accepted:
                 prompt_packet = manager_proto.InputPromptPacket()
@@ -849,6 +905,7 @@ class UIServer:
             message,
             queue=False,
             input_type=input_manager.INPUT_TYPE_INTERACTIVE,
+            mode=mode,
         )
         if accepted:
             prompt_packet = manager_proto.InputPromptPacket()

@@ -245,6 +245,94 @@ async def test_input_manager_reset_preserves_queue_and_cancels_waiter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_input_manager_wait_for_input_filters_by_mode_from_queue() -> None:
+    manager = InputManager()
+    steering_message = state.Message(
+        role=models.Role.USER,
+        text="steer",
+        input_mode=state.UserInputMode.STEERING,
+    )
+    prompt_message = state.Message(
+        role=models.Role.USER,
+        text="reply",
+        input_mode=state.UserInputMode.PROMPT_REPLY,
+    )
+
+    assert await manager.publish(steering_message, queue=True) is True
+    assert await manager.publish(prompt_message, queue=True) is True
+
+    received = await manager.wait_for_input(mode=state.UserInputMode.PROMPT_REPLY)
+    snapshot = await manager.snapshot()
+
+    assert received == prompt_message
+    assert [message.text for message in snapshot.queued_messages] == ["steer"]
+
+
+@pytest.mark.asyncio
+async def test_input_manager_publish_sets_message_mode() -> None:
+    manager = InputManager()
+    message = state.Message(role=models.Role.USER, text="steer")
+
+    accepted = await manager.publish(
+        message,
+        queue=True,
+        mode=state.UserInputMode.STEERING,
+    )
+    received = await manager.wait_for_input(mode=state.UserInputMode.STEERING)
+
+    assert accepted is True
+    assert received == message
+    assert received.input_mode == state.UserInputMode.STEERING
+
+
+@pytest.mark.asyncio
+async def test_input_manager_poll_queued_input_returns_only_matching_mode() -> None:
+    manager = InputManager()
+    queued_message = state.Message(
+        role=models.Role.USER,
+        text="queued",
+        input_mode=state.UserInputMode.QUEUE,
+    )
+    steering_message = state.Message(
+        role=models.Role.USER,
+        text="steer",
+        input_mode=state.UserInputMode.STEERING,
+    )
+
+    assert await manager.publish(queued_message, queue=True) is True
+    assert await manager.publish(steering_message, queue=True) is True
+
+    polled = await manager.poll_queued_input(mode=state.UserInputMode.STEERING)
+    snapshot = await manager.snapshot()
+
+    assert polled == steering_message
+    assert [message.text for message in snapshot.queued_messages] == ["queued"]
+
+
+@pytest.mark.asyncio
+async def test_input_manager_poll_queued_input_returns_none_when_mode_missing() -> None:
+    manager = InputManager()
+
+    assert (
+        await manager.publish(
+            state.Message(
+                role=models.Role.USER,
+                text="queued",
+                input_mode=state.UserInputMode.QUEUE,
+            ),
+            queue=True,
+        )
+        is True
+    )
+
+    polled = await manager.poll_queued_input(mode=state.UserInputMode.STEERING)
+    snapshot = await manager.snapshot()
+
+    assert polled is None
+    assert [message.text for message in snapshot.queued_messages] == ["queued"]
+
+
+@pytest.mark.asyncio
 async def test_input_manager_reset_all_clears_queue_and_cancels_waiter() -> None:
     manager = InputManager()
     accepted = await manager.publish(
