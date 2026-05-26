@@ -104,9 +104,23 @@ class WebClientService:
         self,
         request: models.WebClientRequest,
     ) -> models.WebClientResult:
+        effective_settings = self._settings
+        if request.timeout_s is not None:
+            effective_settings = self._settings.model_copy(deep=True)
+            effective_settings.timeout_s = request.timeout_s
+            if (
+                effective_settings.connect_timeout_s is not None
+                and effective_settings.connect_timeout_s > request.timeout_s
+            ):
+                effective_settings.connect_timeout_s = request.timeout_s
+            if (
+                effective_settings.read_timeout_s is not None
+                and effective_settings.read_timeout_s > request.timeout_s
+            ):
+                effective_settings.read_timeout_s = request.timeout_s
         backend = self.resolve_backend()
-        raw = await backend.fetch(request, self._settings)
-        return pipeline.process_raw_content(raw, self._settings)
+        raw = await backend.fetch(request, effective_settings)
+        return pipeline.process_raw_content(raw, effective_settings)
 
     async def fetch_url(
         self,
@@ -120,23 +134,7 @@ class WebClientService:
             headers=headers,
             timeout_s=timeout_s,
         )
-        effective_settings = self._settings
-        if timeout_s is not None:
-            effective_settings = self._settings.model_copy(deep=True)
-            effective_settings.timeout_s = timeout_s
-            if (
-                effective_settings.connect_timeout_s is not None
-                and effective_settings.connect_timeout_s > timeout_s
-            ):
-                effective_settings.connect_timeout_s = timeout_s
-            if (
-                effective_settings.read_timeout_s is not None
-                and effective_settings.read_timeout_s > timeout_s
-            ):
-                effective_settings.read_timeout_s = timeout_s
-        backend = self.resolve_backend()
-        raw = await backend.fetch(request, effective_settings)
-        return pipeline.process_raw_content(raw, effective_settings)
+        return await self.fetch(request)
 
 
 async def fetch_url(

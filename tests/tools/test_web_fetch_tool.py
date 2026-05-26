@@ -19,16 +19,13 @@ from tests.stub_project import StubProject
 async def test_web_fetch_tool_returns_normalized_text_and_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _fake_fetch_url(
+    async def _fake_fetch(
         self,
-        url: str,
-        *,
-        headers=None,
-        timeout_s=None,
+        request: webclient_models.WebClientRequest,
     ) -> webclient_models.WebClientResult:
         return webclient_models.WebClientResult(
-            url=url,
-            final_url=url,
+            url=request.url,
+            final_url=request.url,
             status_code=200,
             content_type="text/plain",
             content_kind=webclient_models.WebContentKind.text,
@@ -36,9 +33,7 @@ async def test_web_fetch_tool_returns_normalized_text_and_metadata(
             metadata={"source": "fake"},
         )
 
-    monkeypatch.setattr(
-        webclient_service.WebClientService, "fetch_url", _fake_fetch_url
-    )
+    monkeypatch.setattr(webclient_service.WebClientService, "fetch", _fake_fetch)
 
     project = StubProject()
     tool = WebFetchTool(project)
@@ -63,18 +58,13 @@ async def test_web_fetch_tool_returns_normalized_text_and_metadata(
 async def test_web_fetch_tool_surfaces_webclient_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _fake_fetch_url(
+    async def _fake_fetch(
         self,
-        url: str,
-        *,
-        headers=None,
-        timeout_s=None,
+        request: webclient_models.WebClientRequest,
     ):
         raise WebClientAccessError("blocked destination")
 
-    monkeypatch.setattr(
-        webclient_service.WebClientService, "fetch_url", _fake_fetch_url
-    )
+    monkeypatch.setattr(webclient_service.WebClientService, "fetch", _fake_fetch)
 
     project = StubProject()
     tool = WebFetchTool(project)
@@ -110,6 +100,67 @@ async def test_web_fetch_tool_openapi_spec_documents_header_support() -> None:
         "description": "Optional HTTP request headers as a string-to-string map.",
         "additionalProperties": {"type": "string"},
     }
+    assert spec["parameters"]["properties"]["method"] == {
+        "type": "string",
+        "description": "Optional HTTP method. Defaults to GET.",
+        "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+    }
+    assert "body" in spec["parameters"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_tool_accepts_post_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_request: webclient_models.WebClientRequest | None = None
+
+    async def _fake_fetch(
+        self,
+        request: webclient_models.WebClientRequest,
+    ) -> webclient_models.WebClientResult:
+        nonlocal captured_request
+        captured_request = request
+        return webclient_models.WebClientResult(
+            url=request.url,
+            final_url=request.url,
+            status_code=200,
+            content_type="application/json",
+            content_kind=webclient_models.WebContentKind.text,
+            text="ok",
+            metadata={},
+        )
+
+    monkeypatch.setattr(webclient_service.WebClientService, "fetch", _fake_fetch)
+
+    project = StubProject()
+    tool = WebFetchTool(project)
+    execution = vocode_state.WorkflowExecution(workflow_name="test")
+    tool_req = tools_base.ToolReq(
+        execution=execution,
+        spec=ToolSpec(name="web_fetch"),
+    )
+
+    resp = await tool.run(
+        tool_req,
+        {
+            "url": "https://example.com/exec",
+            "method": "POST",
+            "headers": {"Authorization": "Bearer token"},
+            "body": {
+                "kind": "text",
+                "content_type": "application/json",
+                "text": '{"ping":"pong"}',
+            },
+        },
+    )
+
+    assert resp is not None
+    assert resp.is_error is False
+    assert captured_request is not None
+    assert captured_request.method == webclient_models.WebClientMethod.post
+    assert captured_request.body is not None
+    assert captured_request.body.kind == "text"
+    assert captured_request.body.content_type == "application/json"
 
 
 def test_web_fetch_tool_policy_defaults_to_empty() -> None:

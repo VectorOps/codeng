@@ -14,8 +14,10 @@ from vocode.webclient import service as webclient_service
 
 class WebFetchArgs(BaseModel):
     url: str
+    method: webclient_models.WebClientMethod = webclient_models.WebClientMethod.get
     headers: Dict[str, str] = Field(default_factory=dict)
     timeout_s: Optional[float] = Field(default=None, gt=0)
+    body: Optional[webclient_models.WebClientRequestBody] = None
 
 
 def _merge_config_dicts(
@@ -111,11 +113,14 @@ class WebFetchTool(tools_base.BaseTool):
                 settings=settings,
                 policy=policy,
             )
-            result = await service.fetch_url(
-                parsed_args.url,
+            request = webclient_service.build_request(
+                url=parsed_args.url,
+                method=parsed_args.method,
                 headers=parsed_args.headers,
                 timeout_s=parsed_args.timeout_s,
+                body=parsed_args.body,
             )
+            result = await service.fetch(request)
             return tools_base.ToolTextResponse(
                 text=result.text,
                 data=_result_to_data(result),
@@ -136,7 +141,7 @@ class WebFetchTool(tools_base.BaseTool):
         return {
             "name": self.name,
             "description": (
-                "Fetch a URL and return a normalized markdown or plain text content."
+                "Send an HTTP request and return normalized markdown or plain text content."
             ),
             "parameters": {
                 "type": "object",
@@ -144,6 +149,11 @@ class WebFetchTool(tools_base.BaseTool):
                     "url": {
                         "type": "string",
                         "description": "HTTP or HTTPS URL to fetch.",
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "Optional HTTP method. Defaults to GET.",
+                        "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
                     },
                     "headers": {
                         "type": "object",
@@ -155,6 +165,55 @@ class WebFetchTool(tools_base.BaseTool):
                     "timeout_s": {
                         "type": "number",
                         "description": "Optional per-call timeout override in seconds.",
+                    },
+                    "body": {
+                        "description": (
+                            "Optional request body. Not allowed for GET or HEAD requests."
+                        ),
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "kind": {
+                                        "type": "string",
+                                        "const": "text",
+                                    },
+                                    "content_type": {
+                                        "type": "string",
+                                        "description": "MIME type for the request body.",
+                                    },
+                                    "text": {
+                                        "type": "string",
+                                        "description": "Text request payload.",
+                                    },
+                                    "encoding": {
+                                        "type": "string",
+                                        "description": "Text encoding. Defaults to utf-8.",
+                                    },
+                                },
+                                "required": ["kind", "content_type", "text"],
+                                "additionalProperties": False,
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "kind": {
+                                        "type": "string",
+                                        "const": "binary",
+                                    },
+                                    "content_type": {
+                                        "type": "string",
+                                        "description": "MIME type for the request body.",
+                                    },
+                                    "data_base64": {
+                                        "type": "string",
+                                        "description": "Base64-encoded binary request payload.",
+                                    },
+                                },
+                                "required": ["kind", "content_type", "data_base64"],
+                                "additionalProperties": False,
+                            },
+                        ],
                     },
                 },
                 "required": ["url"],
