@@ -22,8 +22,10 @@ from .base import BaseManager, RunnerFrame
 from .helpers import BaseEndpoint, IncomingPacketRouter, RpcHelper
 from . import proto as manager_proto
 from .autocomplete import AutocompleteManager
+from .autocomplete_providers import FILESYSTEM_AUTOCOMPLETE_SKIP_DIRS
 from .commands import CommandManager
 from .commands import workflows as workflow_commands
+from .file_path_cache import FilePathCacheService
 
 
 class UIServer:
@@ -47,6 +49,10 @@ class UIServer:
         self._recv_task: Optional[asyncio.Task[None]] = None
         self._started = False
         self._autocomplete = AutocompleteManager()
+        self._file_path_cache = FilePathCacheService(
+            project.base_path,
+            skip_dirs=FILESYSTEM_AUTOCOMPLETE_SKIP_DIRS,
+        )
         self._commands = CommandManager()
         self._log_manager = init_log_manager()
         self._auth_session: Optional[ServerAuthenticationSession] = None
@@ -113,6 +119,10 @@ class UIServer:
     @property
     def commands(self) -> CommandManager:
         return self._commands
+
+    @property
+    def file_path_cache(self) -> FilePathCacheService:
+        return self._file_path_cache
 
     @property
     def logs(self) -> list[object]:
@@ -589,6 +599,7 @@ class UIServer:
         await self._manager.project.input_manager.reset()
 
         self._manager.project.unsubscribe_ui_events(self._on_project_ui_event)
+        self._file_path_cache.shutdown()
 
         await self._manager.stop()
         self._started = False

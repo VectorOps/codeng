@@ -289,11 +289,11 @@ def build_summary_message_text(
     if previous_summaries:
         summary_lines.append("- Previous summary context:")
         for previous_summary in previous_summaries[-1:]:
-            for line in previous_summary.splitlines()[:12]:
+            for line in previous_summary.splitlines():
                 summary_lines.append(f"  {line}")
     if transcript:
         summary_lines.append("- Transcript excerpt:")
-        for line in transcript.splitlines()[:20]:
+        for line in transcript.splitlines():
             summary_lines.append(f"  {line}")
     if not previous_summaries and not transcript:
         summary_lines.append("- No prior conversation context was available.")

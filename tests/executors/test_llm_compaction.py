@@ -744,6 +744,46 @@ def test_split_summary_inputs_excludes_tool_request_steps_and_thinking_content()
     assert transcript.count("[Tool results]") == 1
 
 
+def test_build_summary_message_text_preserves_critical_credentials_in_fallback() -> (
+    None
+):
+    summarized_messages = [
+        (
+            state.Message(
+                role=models.Role.USER,
+                text=(
+                    "Use API key sk-test-123456 and set "
+                    "OPENAI_API_KEY=sk-test-123456 before continuing"
+                ),
+            ),
+            None,
+        ),
+        (
+            state.Message(
+                role=models.Role.ASSISTANT,
+                text="I will continue with that exact key and env var.",
+            ),
+            state.Step(
+                execution_id=state.NodeExecution(
+                    node="llm-node",
+                    input_message_ids=[],
+                    status=state.RunStatus.RUNNING,
+                ).id,
+                type=state.StepType.OUTPUT_MESSAGE,
+                is_complete=True,
+            ),
+        ),
+    ]
+
+    summary_text = service_mod.build_summary_message_text(
+        summarized_messages,
+        CompactionSettings(),
+    )
+
+    assert "sk-test-123456" in summary_text
+    assert "OPENAI_API_KEY=sk-test-123456" in summary_text
+
+
 @pytest.mark.asyncio
 async def test_maybe_compact_execution_history_resummarizes_only_latest_summary_boundary(
     monkeypatch: pytest.MonkeyPatch,
@@ -1189,7 +1229,7 @@ async def test_generate_summary_message_text_captures_debug_payload_when_enabled
     assert summary_debug["response"]["response_id"] == "resp_debug"
     assert (
         summary_debug["request"]["system_prompt"]
-        == "You are maintaining a continuation checkpoint for a coding workflow. Produce a compact but precise summary another LLM can resume from safely. Preserve exact file paths, tool names, identifiers, node names, outcome names, and error text when relevant. Do not invent progress."
+        == "You are maintaining a continuation checkpoint for a coding workflow. Produce a compact but precise summary another LLM can resume from safely. Preserve exact file paths, tool names, identifiers, node names, outcome names, error text, and any credentials or configuration values explicitly provided by the user when relevant. Do not invent progress."
     )
 
 

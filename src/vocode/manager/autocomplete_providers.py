@@ -73,7 +73,7 @@ def _score_filesystem_candidate(candidate: str, needle: str) -> Optional[int]:
 
 
 def _filesystem_autocomplete_items(
-    base_path: Path,
+    paths: list[str],
     needle: str,
     start: int,
     word: str,
@@ -83,25 +83,10 @@ def _filesystem_autocomplete_items(
         return []
 
     matches: list[tuple[int, str]] = []
-    for root, dirnames, filenames in os.walk(base_path):
-        dirnames[:] = [
-            dirname
-            for dirname in dirnames
-            if dirname not in FILESYSTEM_AUTOCOMPLETE_SKIP_DIRS
-        ]
-        root_path = Path(root)
-
-        for dirname in dirnames:
-            rel_dir = (root_path / dirname).relative_to(base_path).as_posix() + "/"
-            score = _score_filesystem_candidate(rel_dir, normalized_needle)
-            if score is not None:
-                matches.append((score, rel_dir))
-
-        for filename in filenames:
-            rel_file = (root_path / filename).relative_to(base_path).as_posix()
-            score = _score_filesystem_candidate(rel_file, normalized_needle)
-            if score is not None:
-                matches.append((score, rel_file))
+    for rel_path in paths:
+        score = _score_filesystem_candidate(rel_path, normalized_needle)
+        if score is not None:
+            matches.append((score, rel_path))
 
     matches.sort(key=lambda item: (item[0], item[1]))
     deduped_paths: list[str] = []
@@ -190,8 +175,9 @@ async def file_autocomplete_provider(
         project = server.manager.project
         items = await _know_autocomplete_items(server, needle, start, word)
         if items is None:
+            paths = await server.file_path_cache.get_paths()
             items = _filesystem_autocomplete_items(
-                project.base_path,
+                paths,
                 needle,
                 start,
                 word,

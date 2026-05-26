@@ -10,7 +10,8 @@ DEFAULT_COMPACTION_SYSTEM_PROMPT = (
     "You are maintaining a continuation checkpoint for a coding workflow. "
     "Produce a compact but precise summary another LLM can resume from safely. "
     "Preserve exact file paths, tool names, identifiers, node names, outcome names, "
-    "and error text when relevant. Do not invent progress."
+    "error text, and any credentials or configuration values explicitly provided by the user when relevant. "
+    "Do not invent progress."
 )
 
 DEFAULT_COMPACTION_INSTRUCTIONS = (
@@ -27,6 +28,7 @@ DEFAULT_COMPACTION_INSTRUCTIONS = (
     "Rules:\n"
     "- Prefer concrete facts over abstraction.\n"
     "- Keep file paths and tool names exact.\n"
+    "- Preserve exact API keys, tokens, environment variable names, auth details, and other configuration values when they are needed to continue the workflow.\n"
     "- Keep error messages exact or minimally trimmed.\n"
     "- Move items to Done only if the transcript shows completion.\n"
     "- Keep Next Steps actionable and short.\n"
@@ -40,13 +42,14 @@ DEFAULT_COMPACTION_UPDATE_INSTRUCTIONS = (
     "- Move completed items from In Progress to Done.\n"
     "- Remove stale Next Steps that are already complete.\n"
     "- Keep persistent constraints and preferences unless contradicted.\n"
-    "- Preserve exact paths, identifiers, tool names, and errors."
+    "- Preserve exact paths, identifiers, tool names, errors, and any credentials or configuration values still required for continuation."
 )
 
 SUMMARY_PROMPT_FOCUS = (
     "Prioritize these details when present:\n"
     "- current user goal\n"
     "- explicit constraints or preferences\n"
+    "- exact credentials, API keys, tokens, environment variable names, and configuration values required to continue\n"
     "- files read or changed\n"
     "- tools used and why\n"
     "- important command or tool outputs\n"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,7 @@ from vocode.manager import (
     autocomplete_providers as _autocomplete_providers,
 )  # noqa: F401
 from vocode.manager.autocomplete import AutocompleteManager, AutocompleteItem
+from vocode.manager.file_path_cache import FilePathCacheService
 from vocode.manager.server import UIServer
 from vocode.manager import helpers as manager_helpers
 from tests.stub_project import StubProject
@@ -141,3 +143,45 @@ async def test_mcp_autocomplete_provider_suggests_subcommands_and_sources() -> N
     assert any(item.insert_text == "remote" for item in sources)
     assert all(item.insert_text != "local" for item in sources)
     assert any(item.insert_text == "local" for item in status_sources)
+
+
+def test_file_path_cache_service_throttles_refreshes() -> None:
+    calls: list[int] = []
+    now = {"value": 100.0}
+
+    def walker(base_path: Path, skip_dirs: set[str]) -> list[str]:
+        _ = base_path, skip_dirs
+        calls.append(len(calls) + 1)
+        return [f"file-{len(calls)}.py"]
+
+    service = FilePathCacheService(
+        Path.cwd(),
+        refresh_interval_s=60.0,
+        walker=walker,
+        time_fn=lambda: now["value"],
+    )
+    try:
+        assert service.get_paths_blocking() == ["file-1.py"]
+        assert service.get_paths_blocking() == ["file-1.py"]
+        now["value"] += 61.0
+        assert service.get_paths_blocking() == ["file-2.py"]
+        assert calls == [1, 2]
+    finally:
+        service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_file_autocomplete_provider_uses_cached_file_path_service(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "alpha.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "beta.py").write_text("b", encoding="utf-8")
+    server_endpoint, _ = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=StubProject(base_path=tmp_path), endpoint=server_endpoint)
+
+    try:
+        items = await server._autocomplete.get_completions(server, "@al", 0, 3)
+    finally:
+        await server.stop()
+
+    assert [item.insert_text for item in items] == ["alpha.txt"]
