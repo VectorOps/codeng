@@ -245,7 +245,13 @@ class App:
             return False
         if ui_server_state.status != manager_proto.UIServerStatus.RUNNING:
             return False
-        return bool(ui_server_state.runners)
+        for runner in ui_server_state.runners:
+            if runner.status not in (
+                state.RunnerStatus.STOPPED,
+                state.RunnerStatus.FINISHED,
+            ):
+                return True
+        return False
 
     def _resolve_user_input_mode(self, text: str) -> state.UserInputMode:
         if self._prompt is not None:

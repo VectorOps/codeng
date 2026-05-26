@@ -120,6 +120,76 @@ async def test_tui_app_sends_prompt_reply_mode_when_prompt_is_active(
 
     assert isinstance(payload, manager_proto.UserInputPacket)
     assert payload.mode == state.UserInputMode.PROMPT_REPLY
+
+
+@pytest.mark.asyncio
+async def test_tui_app_input_after_stopped_runner_is_not_steering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTUIState:
+        def __init__(
+            self,
+            on_input,
+            on_autocomplete_request=None,
+            on_stop=None,
+            on_eof=None,
+            persist_history=False,
+        ) -> None:
+            self._persist_history = persist_history
+
+        def add_markdown(self, markdown: str) -> None:
+            return None
+
+        def set_input_panel_title(
+            self,
+            title: str | None,
+            subtitle: str | None = None,
+        ) -> None:
+            return None
+
+        def handle_ui_state(self, payload) -> None:
+            return None
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    monkeypatch.setattr(tui_uistate, "TUIState", FakeTUIState)
+    monkeypatch.setattr(
+        vocode_project.Project,
+        "from_base_path",
+        classmethod(lambda cls, path: StubProject()),
+    )
+
+    app = App(project_path=tmp_path)
+    await app._handle_packet_ui_state(
+        manager_proto.BasePacketEnvelope(
+            msg_id=1,
+            payload=manager_proto.UIServerStatePacket(
+                status=manager_proto.UIServerStatus.RUNNING,
+                runners=[
+                    manager_proto.RunnerStackFrame(
+                        workflow_name="wf",
+                        workflow_execution_id="exec-1",
+                        node_name="node-1",
+                        status=state.RunnerStatus.STOPPED,
+                    )
+                ],
+            ),
+        )
+    )
+
+    await app.on_input("replace last input")
+
+    envelope = await app._endpoint_server.recv()
+    payload = envelope.payload
+
+    assert isinstance(payload, manager_proto.UserInputPacket)
+    assert payload.mode == state.UserInputMode.PROMPT_REPLY
+    assert payload.message.input_mode == state.UserInputMode.PROMPT_REPLY
     assert payload.message.input_mode == state.UserInputMode.PROMPT_REPLY
 
 
