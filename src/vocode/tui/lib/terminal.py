@@ -59,6 +59,7 @@ class Terminal:
             console if console is not None else rich_console.Console()
         )
         self._components: typing.List[tui_base.Component] = []
+        self._component_set: typing.Set[tui_base.Component] = set()
         self._id_index: typing.Dict[str, tui_base.Component] = {}
         self._dirty_components: typing.Set[tui_base.Component] = set()
         self._animation_components: typing.Set[tui_base.Component] = set()
@@ -128,7 +129,7 @@ class Terminal:
         return self._components
 
     def append_component(self, component: tui_base.Component) -> None:
-        if component in self._components:
+        if component in self._component_set:
             return
         if component.id is not None:
             if component.id in self._id_index:
@@ -136,10 +137,11 @@ class Terminal:
             self._id_index[component.id] = component
         component.terminal = self
         self._components.append(component)
+        self._component_set.add(component)
         self.notify_component(component)
 
     def insert_component(self, index: int, component: tui_base.Component) -> None:
-        if component in self._components:
+        if component in self._component_set:
             return
         if component.id is not None:
             if component.id in self._id_index:
@@ -180,6 +182,7 @@ class Terminal:
 
         component.terminal = self
         self._components.insert(position, component)
+        self._component_set.add(component)
         self.notify_component(component)
 
     def _delete_removed_components(self) -> None:
@@ -188,6 +191,7 @@ class Terminal:
             return
 
         self._components = [c for c in self._components if c not in removed]
+        self._component_set.difference_update(removed)
 
         self._dirty_components.difference_update(removed)
 
@@ -197,7 +201,7 @@ class Terminal:
         removed.clear()
 
     def remove_component(self, component: tui_base.Component) -> None:
-        if component not in self._components:
+        if component not in self._component_set:
             return
 
         self._removed_components.add(component)
@@ -211,7 +215,7 @@ class Terminal:
         component.terminal = None
 
     def register_animation(self, component: tui_base.Component) -> None:
-        if component not in self._components:
+        if component not in self._component_set:
             return
         self._animation_components.add(component)
 
@@ -220,7 +224,7 @@ class Terminal:
             self._animation_components.remove(component)
 
     def notify_component(self, component: tui_base.Component) -> None:
-        if component in self._components:
+        if component in self._component_set:
             self._dirty_components.add(component)
             self._request_auto_render()
 
@@ -235,7 +239,7 @@ class Terminal:
 
     # Focus
     def push_focus(self, component: tui_base.Component) -> None:
-        if component not in self._components:
+        if component not in self._component_set:
             return
         if component in self._focus_stack:
             self._focus_stack.remove(component)

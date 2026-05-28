@@ -910,6 +910,28 @@ def test_insert_component_id_conflict_raises() -> None:
         pass
 
 
+def test_notify_component_keeps_pending_removal_dirty_until_cleanup() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    component = DummyComponent("one")
+    terminal.append_component(component)
+    terminal._dirty_components.clear()
+
+    terminal.remove_component(component)
+
+    assert component in terminal._component_set
+    assert component in terminal._dirty_components
+
+    terminal._delete_removed_components()
+
+    assert component not in terminal._component_set
+    terminal.notify_component(component)
+    assert component not in terminal._dirty_components
+
+
 @pytest.mark.asyncio
 async def test_terminal_initializes_clearing_screen() -> None:
     buffer = io.StringIO()
