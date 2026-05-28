@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 import datetime
+import re
 from rich import console as rich_console
 from rich import text as rich_text
 
@@ -22,6 +23,7 @@ RUNNER_STATUS_LABELS: Final[dict[vocode_state.RunnerStatus, str]] = {
     vocode_state.RunnerStatus.STOPPED: "canceled",
     vocode_state.RunnerStatus.FINISHED: "finished",
 }
+ASCII_WHITESPACE_RE: Final[re.Pattern[str]] = re.compile(r"\s+")
 
 
 class ToolbarComponent(renderable_component.RenderableComponentBase):
@@ -142,6 +144,12 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
             return f"{minutes}m {seconds}s"
         return f"{seconds}s"
 
+    @staticmethod
+    def _format_steering_preview(text: str) -> str:
+        normalized = ASCII_WHITESPACE_RE.sub(" ", text)
+        ascii_text = normalized.encode("ascii", errors="replace").decode("ascii")
+        return ascii_text.strip()
+
     def _update_animation(self, force: bool = False) -> None:
         terminal = self.terminal
         if terminal is None:
@@ -254,9 +262,13 @@ class ToolbarComponent(renderable_component.RenderableComponentBase):
 
         steering_text = ""
         if self._queued_steering_count > 0:
-            steering_text = f"steer: {self._queued_steering_count}"
             if self._queued_steering_count == 1 and self._queued_steering_preview:
-                steering_text = f'{steering_text} "{self._queued_steering_preview}"'
+                preview = self._format_steering_preview(self._queued_steering_preview)
+                steering_text = "steer:"
+                if preview:
+                    steering_text = f'{steering_text} "{preview}"'
+            else:
+                steering_text = f"steer: {self._queued_steering_count}"
 
         right_parts: list[str] = []
         if steering_text:

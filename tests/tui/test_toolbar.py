@@ -219,7 +219,34 @@ def test_toolbar_shows_queued_steering_indicator() -> None:
 
     renderable = toolbar._build_renderable(rich_console.Console())
     rendered_text = str(renderable)
-    assert 'steer: 1 "refocus on tests"' in rendered_text
+    assert 'steer: "refocus on tests"' in rendered_text
+
+
+def test_toolbar_sanitizes_queued_steering_preview_to_single_line_ascii() -> None:
+    ui_state = _make_tui_state_with_console()
+    terminal = ui_state.terminal
+    toolbar = terminal.components[-1]
+
+    execution = state.WorkflowExecution(workflow_name="wf-steering")
+    runner_frame = manager_proto.RunnerStackFrame(
+        workflow_name=execution.workflow_name,
+        workflow_execution_id=str(execution.id),
+        node_name="node-steering",
+        status=state.RunnerStatus.RUNNING,
+    )
+    packet = manager_proto.UIServerStatePacket(
+        status=manager_proto.UIServerStatus.RUNNING,
+        runners=[runner_frame],
+        queued_steering_count=1,
+        queued_steering_preview="line one\nline two cafe\u0301",
+    )
+
+    ui_state.handle_ui_state(packet)
+
+    renderable = toolbar._build_renderable(rich_console.Console())
+    rendered_text = str(renderable)
+    assert 'steer: "line one line two cafe?"' in rendered_text
+    assert "\n" not in rendered_text
 
 
 def test_toolbar_animation_restored_after_autocomplete_pop(
