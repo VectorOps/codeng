@@ -110,7 +110,64 @@ class InputComponent(tui_base.Component):
         width = terminal.console.size.width
         if width <= 0:
             return 0
-        return width
+        style = self.component_style
+        horizontal_extra = 0
+        if style is not None:
+            if style.panel_box is not None or style.panel_style is not None:
+                horizontal_extra += 4
+                if style.panel_padding is not None:
+                    horizontal_extra += (
+                        self._horizontal_padding(style.panel_padding) - 2
+                    )
+            if style.padding_pad is not None:
+                horizontal_extra += self._horizontal_padding(style.padding_pad)
+        return max(width - horizontal_extra, 1)
+
+    def _horizontal_padding(
+        self,
+        pad: int | tuple[int, int] | tuple[int, int, int, int],
+    ) -> int:
+        if isinstance(pad, int):
+            return pad * 2
+        if len(pad) == 2:
+            return pad[1] * 2
+        return pad[1] + pad[3]
+
+    def _vertical_padding(
+        self,
+        pad: int | tuple[int, int] | tuple[int, int, int, int],
+    ) -> int:
+        if isinstance(pad, int):
+            return pad * 2
+        if len(pad) == 2:
+            return pad[0] * 2
+        return pad[0] + pad[2]
+
+    def _get_vertical_chrome_height(self) -> int:
+        style = self.component_style
+        if style is None:
+            return 0
+        extra = 0
+        if style.panel_box is not None or style.panel_style is not None:
+            extra += 2
+            if style.panel_padding is not None:
+                extra += self._vertical_padding(style.panel_padding)
+        if style.padding_pad is not None:
+            extra += self._vertical_padding(style.padding_pad)
+        if style.margin_top is not None and style.margin_top > 0:
+            extra += style.margin_top
+        if style.margin_bottom is not None and style.margin_bottom > 0:
+            extra += style.margin_bottom
+        return extra
+
+    def _lines_to_text(self, lines: tui_base.Lines) -> rich_text.Text:
+        text = rich_text.Text()
+        for index, line in enumerate(lines):
+            if index > 0:
+                text.append("\n")
+            for segment in line:
+                text.append(segment.text, style=segment.style)
+        return text
 
     def _measure_line_height(self, line_index: int, width: int) -> int:
         if width <= 0:
@@ -266,24 +323,45 @@ class InputComponent(tui_base.Component):
         console = terminal.console
         self._update_view_height()
         text = self._build_text_with_cursor()
-        styled = self.apply_style(text)
+        text_rendered = console.render_lines(
+            text,
+            options=options,
+            pad=False,
+            new_lines=False,
+        )
+        width = options.max_width
+        if width is None:
+            width = self._get_render_width()
+        width = self._get_render_width()
+        total_rows, cursor_row = self._measure_display_rows(width)
+        visible_text_lines = text_rendered
+        if self._view_height is not None and self._view_height > 0:
+            content_height = self._view_height - self._get_vertical_chrome_height()
+            if content_height < 1:
+                content_height = 1
+            previous_view_height = self._view_height
+            self._view_height = content_height
+            self._ensure_cursor_visible(total_rows, cursor_row)
+            self._view_height = previous_view_height
+            start_row = self._top_row
+            end_row = start_row + content_height
+            visible_text_lines = text_rendered[start_row:end_row]
+        else:
+            self._ensure_cursor_visible(total_rows, cursor_row)
+
+        visible_text = self._lines_to_text(visible_text_lines)
+        styled = self.apply_style(visible_text)
         rendered = console.render_lines(
             styled,
             options=options,
             pad=False,
             new_lines=False,
         )
-        total_rows = len(rendered)
-        width = options.max_width
-        if width is None:
-            width = self._get_render_width()
-        _, cursor_row = self._measure_display_rows(width)
-        self._ensure_cursor_visible(total_rows, cursor_row)
         if self._view_height is None or self._view_height <= 0:
             return typing.cast(tui_base.Lines, rendered)
         start_row = self._top_row
-        end_row = start_row + self._view_height
-        return typing.cast(tui_base.Lines, rendered[start_row:end_row])
+        _ = start_row
+        return typing.cast(tui_base.Lines, rendered[: self._view_height])
 
     def _build_text_with_cursor(self) -> rich_text.Text:
         full = rich_text.Text()
