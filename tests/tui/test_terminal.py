@@ -11,7 +11,6 @@ from rich import style as rich_style
 
 from vocode import models, state
 from vocode.tui import lib as tui_terminal
-from vocode.tui import styles as tui_styles
 from vocode.tui import uistate as tui_uistate
 from vocode.history.manager import HistoryManager
 from vocode.tui.components import tool_call_req as tool_call_req_component
@@ -543,68 +542,6 @@ def test_input_component_multiline_scroll_and_height_cap() -> None:
 
     assert component.cursor_row == 9
     assert component.scroll_top > 0
-
-
-def test_input_component_wrapped_line_respects_height_cap() -> None:
-    buffer = io.StringIO()
-    console = rich_console.Console(
-        file=buffer,
-        force_terminal=True,
-        color_system=None,
-        width=10,
-        height=9,
-    )
-    terminal = tui_terminal.Terminal(console=console)
-    component = tui_input_component.InputComponent("x" * 100, id="input")
-    terminal.append_component(component)
-
-    rendered = component.render(console.options)
-
-    assert len(rendered) == 6
-    assert component.scroll_top > 0
-
-
-def test_input_component_panel_keeps_borders_and_visible_cursor_when_scrolled() -> None:
-    buffer = io.StringIO()
-    console = rich_console.Console(
-        file=buffer,
-        force_terminal=True,
-        color_system=None,
-        width=20,
-        height=9,
-    )
-    terminal = tui_terminal.Terminal(console=console)
-    lines = "\n".join(str(i) for i in range(10))
-    component = tui_input_component.InputComponent(
-        lines,
-        id="input",
-        component_style=tui_styles.INPUT_PANEL_COMPONENT_STYLE,
-        prefix="> ",
-    )
-    terminal.append_component(component)
-
-    component.set_cursor_position(9, 1)
-    rendered = component.render(console.options)
-
-    assert len(rendered) == 6
-
-    rendered_text = ["".join(segment.text for segment in line) for line in rendered]
-    assert rendered_text[1].strip()
-    assert not any(ch.isdigit() for ch in rendered_text[1])
-    assert rendered_text[-1].strip()
-    assert not any(ch.isdigit() for ch in rendered_text[-1])
-
-    has_reversed_cursor = False
-    for line in rendered:
-        for segment in line:
-            style = segment.style
-            if isinstance(style, rich_style.Style) and style.reverse:
-                has_reversed_cursor = True
-                break
-        if has_reversed_cursor:
-            break
-
-    assert has_reversed_cursor
 
 
 @pytest.mark.asyncio

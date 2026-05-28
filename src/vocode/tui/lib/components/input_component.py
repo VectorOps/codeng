@@ -4,7 +4,6 @@ import typing
 from dataclasses import dataclass
 
 from rich import console as rich_console
-from rich import cells as rich_cells
 from rich import style as rich_style
 from rich import text as rich_text
 
@@ -48,7 +47,7 @@ class InputComponent(tui_base.Component):
         self._change_subscribers: list[typing.Callable[[str], None]] = []
         self._cursor_event_subscribers: list[typing.Callable[[int, int], None]] = []
         self._prefix = prefix
-        self._top_row: int = 0
+        self._top_line: int = 0
         self._view_height: int | None = None
 
     @property
@@ -77,7 +76,7 @@ class InputComponent(tui_base.Component):
 
     @property
     def scroll_top(self) -> int:
-        return self._top_row
+        return self._top_line
 
     @property
     def total_lines(self) -> int:
@@ -97,156 +96,60 @@ class InputComponent(tui_base.Component):
 
     def _handle_editor_cursor_event(self, row: int, col: int) -> None:
         self._update_view_height()
-        width = self._get_render_width()
-        total_rows, cursor_row = self._measure_display_rows(width)
-        self._ensure_cursor_visible(total_rows, cursor_row)
+        self._ensure_cursor_visible()
         for subscriber in list(self._cursor_event_subscribers):
             subscriber(row, col)
-
-    def _get_render_width(self) -> int:
-        terminal = self.terminal
-        if terminal is None:
-            return 0
-        width = terminal.console.size.width
-        if width <= 0:
-            return 0
-        style = self.component_style
-        horizontal_extra = 0
-        if style is not None:
-            if style.panel_box is not None or style.panel_style is not None:
-                horizontal_extra += 4
-                if style.panel_padding is not None:
-                    horizontal_extra += (
-                        self._horizontal_padding(style.panel_padding) - 2
-                    )
-            if style.padding_pad is not None:
-                horizontal_extra += self._horizontal_padding(style.padding_pad)
-        return max(width - horizontal_extra, 1)
-
-    def _horizontal_padding(
-        self,
-        pad: int | tuple[int, int] | tuple[int, int, int, int],
-    ) -> int:
-        if isinstance(pad, int):
-            return pad * 2
-        if len(pad) == 2:
-            return pad[1] * 2
-        return pad[1] + pad[3]
-
-    def _vertical_padding(
-        self,
-        pad: int | tuple[int, int] | tuple[int, int, int, int],
-    ) -> int:
-        if isinstance(pad, int):
-            return pad * 2
-        if len(pad) == 2:
-            return pad[0] * 2
-        return pad[0] + pad[2]
-
-    def _get_vertical_chrome_height(self) -> int:
-        style = self.component_style
-        if style is None:
-            return 0
-        extra = 0
-        if style.panel_box is not None or style.panel_style is not None:
-            extra += 2
-            if style.panel_padding is not None:
-                extra += self._vertical_padding(style.panel_padding)
-        if style.padding_pad is not None:
-            extra += self._vertical_padding(style.padding_pad)
-        if style.margin_top is not None and style.margin_top > 0:
-            extra += style.margin_top
-        if style.margin_bottom is not None and style.margin_bottom > 0:
-            extra += style.margin_bottom
-        return extra
-
-    def _lines_to_text(self, lines: tui_base.Lines) -> rich_text.Text:
-        text = rich_text.Text()
-        for index, line in enumerate(lines):
-            if index > 0:
-                text.append("\n")
-            for segment in line:
-                text.append(segment.text, style=segment.style)
-        return text
-
-    def _measure_line_height(self, line_index: int, width: int) -> int:
-        if width <= 0:
-            return 0
-        prefix = self._prefix
-        prefix_len = len(prefix) if prefix is not None else 0
-        if prefix is None:
-            prefix_part = ""
-        elif line_index == 0:
-            prefix_part = prefix
-        else:
-            prefix_part = " " * prefix_len
-        line = prefix_part + self._editor.lines[line_index]
-        cells = rich_cells.cell_len(line)
-        if cells <= 0:
-            return 1
-        return (cells + width - 1) // width
-
-    def _measure_display_rows(self, width: int) -> tuple[int, int]:
-        if width <= 0:
-            return 0, 0
-        prefix = self._prefix
-        prefix_len = len(prefix) if prefix is not None else 0
-        total_rows = 0
-        cursor_display_row = 0
-        for index, line in enumerate(self._editor.lines):
-            line_height = self._measure_line_height(index, width)
-            if index == self._editor.cursor_row:
-                if prefix is None:
-                    prefix_part = ""
-                elif index == 0:
-                    prefix_part = prefix
-                else:
-                    prefix_part = " " * prefix_len
-                cursor_cells = rich_cells.cell_len(
-                    prefix_part + line[: self._editor.cursor_col]
-                )
-                cursor_display_row = total_rows + (cursor_cells // width)
-            total_rows += line_height
-        return total_rows, cursor_display_row
 
     def _update_view_height(self) -> None:
         terminal = self.terminal
         if terminal is None:
             self._view_height = None
-            self._top_row = 0
+            self._top_line = 0
             return
         height = terminal.console.size.height
         if height <= 0:
             self._view_height = None
-            self._top_row = 0
+            self._top_line = 0
             return
         max_height = int(height * 2 / 3)
         if max_height < 1:
             max_height = 1
+        total = len(self._editor.lines)
+        if total <= 0:
+            self._view_height = 0
+            self._top_line = 0
+            return
+        if max_height > total:
+            max_height = total
         self._view_height = max_height
-        if self._top_row < 0:
-            self._top_row = 0
+        max_top = max(total - max_height, 0)
+        if self._top_line > max_top:
+            self._top_line = max_top
+        if self._top_line < 0:
+            self._top_line = 0
 
-    def _ensure_cursor_visible(self, total_rows: int, cursor_row: int) -> None:
+    def _ensure_cursor_visible(self) -> None:
         height = self._view_height
         if height is None or height <= 0:
             return
-        if total_rows <= 0:
-            self._top_row = 0
+        total = len(self._editor.lines)
+        if total <= 0:
+            self._top_line = 0
             return
-        max_top = max(total_rows - height, 0)
-        if self._top_row < 0:
-            self._top_row = 0
-        if self._top_row > max_top:
-            self._top_row = max_top
-        if cursor_row < self._top_row:
-            self._top_row = cursor_row
-        elif cursor_row >= self._top_row + height:
-            self._top_row = cursor_row - (height - 1)
-        if self._top_row < 0:
-            self._top_row = 0
-        if self._top_row > max_top:
-            self._top_row = max_top
+        max_top = max(total - height, 0)
+        if self._top_line < 0:
+            self._top_line = 0
+        if self._top_line > max_top:
+            self._top_line = max_top
+        row = self._editor.cursor_row
+        if row < self._top_line:
+            self._top_line = row
+        elif row >= self._top_line + height:
+            self._top_line = row - (height - 1)
+        if self._top_line < 0:
+            self._top_line = 0
+        if self._top_line > max_top:
+            self._top_line = max_top
 
     def _create_keymap(self) -> dict[KeyBinding, typing.Callable[[], None]]:
         keymap: dict[KeyBinding, typing.Callable[[], None]] = {
@@ -322,46 +225,16 @@ class InputComponent(tui_base.Component):
             return []
         console = terminal.console
         self._update_view_height()
+        self._ensure_cursor_visible()
         text = self._build_text_with_cursor()
-        text_rendered = console.render_lines(
-            text,
-            options=options,
-            pad=False,
-            new_lines=False,
-        )
-        width = options.max_width
-        if width is None:
-            width = self._get_render_width()
-        width = self._get_render_width()
-        total_rows, cursor_row = self._measure_display_rows(width)
-        visible_text_lines = text_rendered
-        if self._view_height is not None and self._view_height > 0:
-            content_height = self._view_height - self._get_vertical_chrome_height()
-            if content_height < 1:
-                content_height = 1
-            previous_view_height = self._view_height
-            self._view_height = content_height
-            self._ensure_cursor_visible(total_rows, cursor_row)
-            self._view_height = previous_view_height
-            start_row = self._top_row
-            end_row = start_row + content_height
-            visible_text_lines = text_rendered[start_row:end_row]
-        else:
-            self._ensure_cursor_visible(total_rows, cursor_row)
-
-        visible_text = self._lines_to_text(visible_text_lines)
-        styled = self.apply_style(visible_text)
+        styled = self.apply_style(text)
         rendered = console.render_lines(
             styled,
             options=options,
             pad=False,
             new_lines=False,
         )
-        if self._view_height is None or self._view_height <= 0:
-            return typing.cast(tui_base.Lines, rendered)
-        start_row = self._top_row
-        _ = start_row
-        return typing.cast(tui_base.Lines, rendered[: self._view_height])
+        return typing.cast(tui_base.Lines, rendered)
 
     def _build_text_with_cursor(self) -> rich_text.Text:
         full = rich_text.Text()
@@ -370,8 +243,18 @@ class InputComponent(tui_base.Component):
         cursor_row = self._editor.cursor_row
         cursor_col = self._editor.cursor_col
         lines = self._editor.lines
-        for index, raw in enumerate(lines):
-            if index > 0:
+        total = len(lines)
+        if self._view_height is None or self._view_height <= 0:
+            start_row = 0
+            end_row = total
+        else:
+            start_row = self._top_line
+            end_row = self._top_line + self._view_height
+            if end_row > total:
+                end_row = total
+        for index in range(start_row, end_row):
+            raw = lines[index]
+            if index > start_row:
                 full.append("\n")
             if prefix is not None:
                 if index == 0:
