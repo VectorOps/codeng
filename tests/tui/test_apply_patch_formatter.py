@@ -119,6 +119,40 @@ def test_apply_patch_formatter_renders_output_from_json_payload() -> None:
     assert "Added file: foo.py" in output
 
 
+def test_apply_patch_formatter_prefers_response_when_request_and_response_exist() -> (
+    None
+):
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+    term = tui_terminal.Terminal(console=console)
+
+    formatter = apply_patch.ApplyPatchToolCallFormatter()
+
+    rendered = formatter.render(
+        terminal=term,
+        req=vocode_state.ToolCallReq(
+            id="call_1",
+            name="apply_patch",
+            arguments={"text": "*** Begin Patch\n...patch body...\n*** End Patch"},
+        ),
+        resp=types.SimpleNamespace(
+            id="call_1",
+            name="apply_patch",
+            result="Applied patch successfully.\nUpdated file: foo.py",
+        ),
+        context=tui_tcf.ToolCallRenderContext(max_width=term.console.size.width),
+        config=vocode_settings.ToolCallFormatter(title="Apply Patch"),
+    )
+
+    assert rendered is not None
+    console.print(rendered)
+    output = buffer.getvalue()
+
+    assert "Applied patch successfully." in output
+    assert "Updated file: foo.py" in output
+    assert "patch body" not in output
+
+
 def test_apply_patch_formatter_renders_error_from_json_payload() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)

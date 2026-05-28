@@ -39,6 +39,7 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         self._animated = False
         self._collapsed = True
         self._show_execution_stats: bool = True
+        self._confirmation_visual_status: bool = self._step_requires_confirmation(step)
 
     @property
     def step(self) -> vocode_state.Step:
@@ -46,7 +47,18 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
 
     def set_step(self, step: vocode_state.Step) -> None:
         self._step = step
+        if self._step_requires_confirmation(step):
+            self._confirmation_visual_status = True
         self._mark_dirty()
+
+    def _step_requires_confirmation(self, step: vocode_state.Step) -> bool:
+        message = step.message
+        if message is None:
+            return False
+        for tool_call in message.tool_call_requests:
+            if tool_call.status is vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION:
+                return True
+        return False
 
     @property
     def show_execution_stats(self) -> bool:
@@ -122,6 +134,19 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         self._frame_index = 0
         return icon
 
+    def _resolve_visual_status(
+        self,
+        status: vocode_state.ToolCallReqStatus | None,
+    ) -> vocode_state.ToolCallReqStatus | None:
+        if not self._confirmation_visual_status:
+            return status
+        if status in (
+            vocode_state.ToolCallReqStatus.PENDING_EXECUTION,
+            vocode_state.ToolCallReqStatus.EXECUTING,
+        ):
+            return vocode_state.ToolCallReqStatus.REQUIRES_CONFIRMATION
+        return status
+
     def _compute_duration(self) -> datetime.timedelta | None:
         message = self._step.message
         if message is None:
@@ -180,10 +205,11 @@ class ToolCallReqComponent(renderable_component.RenderableComponentBase):
         for tool_call in message.tool_call_requests:
             response = responses_by_id.get(tool_call.id)
             tool_status = self._resolve_tool_call_status(tool_call, response, status)
+            visual_status = self._resolve_visual_status(tool_status)
             context = tui_tcf.ToolCallRenderContext(
-                status=tool_status,
+                status=visual_status,
                 duration=duration,
-                status_icon=self._render_status_emoji(console, tool_status),
+                status_icon=self._render_status_emoji(console, visual_status),
                 max_width=console.size.width,
                 collapsed=self.is_collapsed,
                 show_execution_stats=self._show_execution_stats,

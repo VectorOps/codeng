@@ -544,6 +544,25 @@ def test_input_component_multiline_scroll_and_height_cap() -> None:
     assert component.scroll_top > 0
 
 
+def test_input_component_wrapped_line_respects_height_cap() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=10,
+        height=9,
+    )
+    terminal = tui_terminal.Terminal(console=console)
+    component = tui_input_component.InputComponent("x" * 100, id="input")
+    terminal.append_component(component)
+
+    rendered = component.render(console.options)
+
+    assert len(rendered) == 6
+    assert component.scroll_top > 0
+
+
 @pytest.mark.asyncio
 async def test_tui_state_input_history_navigation() -> None:
     async def on_input(value: str) -> None:

@@ -114,7 +114,7 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
             content_str = arguments
         if req is not None and not content_str and resp is None:
             return header
-        if req is not None and content_str:
+        if req is not None and resp is None and content_str:
             body = rich_syntax.Syntax(content_str, "diff")
             return rich_console.Group(header, body)
 

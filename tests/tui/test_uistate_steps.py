@@ -1293,3 +1293,78 @@ async def test_tool_request_completed_renders_checkmark_icon_for_autoapproved_to
     assert "✔︎" in output or "✔" in output
     assert "done" in output
     assert "✖" not in output
+
+
+@pytest.mark.asyncio
+async def test_tool_request_confirmation_keeps_static_visual_state_after_approval() -> (
+    None
+):
+    buffer = io.StringIO()
+    console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
+
+    async def on_input(_: str) -> None:
+        return None
+
+    class DummyInputHandler(input_base.InputHandler):
+        async def run(self) -> None:
+            return None
+
+    ui_state = tui_uistate.TUIState(
+        on_input=on_input,
+        console=console,
+        input_handler=DummyInputHandler(),
+        on_autocomplete_request=None,
+        on_stop=None,
+        on_eof=None,
+    )
+
+    execution = state.NodeExecution(node="node", status=state.RunStatus.RUNNING)
+    step_id = uuid4()
+    req = state.ToolCallReq(
+        id="call_1",
+        name="list_files",
+        arguments={"pattern": "*"},
+        status=state.ToolCallReqStatus.REQUIRES_CONFIRMATION,
+    )
+    step = _make_step(
+        execution,
+        step_id=step_id,
+        step_type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[req],
+        ),
+    )
+
+    ui_state.handle_step(step)
+    await ui_state.terminal.render()
+    initial_output = buffer.getvalue()
+    assert "❓" in initial_output
+    assert "[waiting]" in initial_output
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    approved_step = _make_step(
+        execution,
+        step_id=step_id,
+        step_type=state.StepType.TOOL_REQUEST,
+        message=state.Message(
+            role=models.Role.ASSISTANT,
+            text="",
+            tool_call_requests=[
+                state.ToolCallReq(
+                    id="call_1",
+                    name="list_files",
+                    arguments={"pattern": "*"},
+                    status=state.ToolCallReqStatus.PENDING_EXECUTION,
+                )
+            ],
+        ),
+    )
+
+    ui_state.handle_step(approved_step)
+    await ui_state.terminal.render()
+    approved_output = buffer.getvalue()
+    assert approved_output == ""
