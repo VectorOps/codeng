@@ -1578,9 +1578,10 @@ class TUIState:
             if self._toolbar_component.terminal is None:
                 if self._toolbar_component in terminal.components:
                     terminal.components.remove(self._toolbar_component)
-                    if hasattr(terminal, "_removed_components"):
-                        if self._toolbar_component in terminal._removed_components:
-                            terminal._removed_components.remove(self._toolbar_component)
+                    if self._toolbar_component in terminal._component_set:
+                        terminal._component_set.remove(self._toolbar_component)
+                    if self._toolbar_component in terminal._removed_components:
+                        terminal._removed_components.remove(self._toolbar_component)
 
             if self._toolbar_component not in terminal.components:
                 terminal.append_component(self._toolbar_component)

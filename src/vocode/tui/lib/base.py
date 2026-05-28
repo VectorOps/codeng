@@ -51,8 +51,6 @@ def _apply_base_style(
 def _build_panel_kwargs(component_style: "ComponentStyle") -> dict[str, typing.Any]:
     kwargs: dict[str, typing.Any] = {}
     for field_name, kwarg_name in _PANEL_KWARG_MAP.items():
-        if not hasattr(component_style, field_name):
-            continue
         value = getattr(component_style, field_name)
         if value is not None:
             kwargs[kwarg_name] = value

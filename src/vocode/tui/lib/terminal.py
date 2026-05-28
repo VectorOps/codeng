@@ -47,6 +47,8 @@ class BaseScreen(typing.Protocol):
 
     def render(self) -> None: ...
 
+    def on_key_event(self, event: input_base.KeyEvent) -> None: ...
+
 
 class Terminal:
     def __init__(
@@ -283,10 +285,8 @@ class Terminal:
         if self._screens:
             screen = self._screens[-1]
             if isinstance(event, input_base.KeyEvent):
-                handler = getattr(screen, "on_key_event", None)
-                if handler is not None:
-                    handler(event)
-                    return
+                screen.on_key_event(event)
+                return
 
         if not self._focus_stack:
             return

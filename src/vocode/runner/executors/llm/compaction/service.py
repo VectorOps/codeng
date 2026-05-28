@@ -430,14 +430,12 @@ async def generate_summary_message_text(
     return summary_body, _build_summary_usage(response, summary_model), debug_payload
 
 
-async def maybe_compact_execution_history(
+async def compact_execution_history(
     history: Any,
     credential_manager: Any,
     execution: state.NodeExecution,
     preparation: CompactionPreparationResult,
-) -> Optional[state.Step]:
-    if not preparation.should_compact:
-        return None
+) -> Optional[tuple[state.Step, Any]]:
     prompt_messages = collect_prompt_messages(history, execution)
     if len(prompt_messages) < 2:
         return None
@@ -621,7 +619,26 @@ async def maybe_compact_execution_history(
         ),
     )
     history.upsert_node_execution(workflow_execution, execution)
-    return persisted_step
+    return persisted_step, mutation_result
+
+
+async def maybe_compact_execution_history(
+    history: Any,
+    credential_manager: Any,
+    execution: state.NodeExecution,
+    preparation: CompactionPreparationResult,
+) -> Optional[state.Step]:
+    if not preparation.should_compact:
+        return None
+    result = await compact_execution_history(
+        history,
+        credential_manager,
+        execution,
+        preparation,
+    )
+    if result is None:
+        return None
+    return result[0]
 
 
 def select_compaction_cut_index(

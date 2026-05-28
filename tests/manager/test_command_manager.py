@@ -20,6 +20,8 @@ from vocode.manager.commands import workflows as workflow_commands
 from vocode.manager import base as manager_base
 from vocode.mcp.service import MCPService
 from vocode.runner import base as runner_base
+from vocode.runner.executors.llm.compaction import service as llm_compaction_service
+from vocode.runner.executors.llm import models as llm_models
 from tests.stub_project import StubProject
 
 
@@ -1977,6 +1979,266 @@ async def test_continue_command_reports_manager_error(
     text = payload.text
     assert "Command error:" in text
     assert "No active runner to continue" in text
+
+
+@pytest.mark.asyncio
+async def test_compact_command_compacts_current_stopped_llm_node() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    node = llm_models.LLMNode(
+        name="node-compact",
+        type="llm",
+        model="gpt-3.5-turbo",
+        confirmation=models.Confirmation.AUTO,
+        extra={"model_max_tokens": 128},
+    )
+    workflow = manager_base.Workflow(
+        name="wf-compact",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = manager_base.Runner(workflow, project, None)
+    execution = project.history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            workflow_execution=runner.execution,
+            node=node.name,
+            input_message_ids=[],
+            status=state.RunStatus.STOPPED,
+        ),
+    )
+    messages = [
+        state.Message(role=models.Role.USER, text="msg-1"),
+        state.Message(role=models.Role.ASSISTANT, text="msg-2"),
+        state.Message(role=models.Role.USER, text="msg-3"),
+    ]
+    step_types = [
+        state.StepType.INPUT_MESSAGE,
+        state.StepType.OUTPUT_MESSAGE,
+        state.StepType.INPUT_MESSAGE,
+    ]
+    for message, step_type in zip(messages, step_types):
+        project.history.upsert_message(runner.execution, message)
+        project.history.upsert_step(
+            runner.execution,
+            state.Step(
+                workflow_execution=runner.execution,
+                execution_id=execution.id,
+                type=step_type,
+                message_id=message.id,
+                is_complete=True,
+            ),
+        )
+
+    runner.status = state.RunnerStatus.STOPPED
+    frame = manager_base.RunnerFrame(
+        workflow_name="wf-compact",
+        runner=runner,
+        initial_message=None,
+    )
+    frame.last_stats = runner.set_status(
+        state.RunnerStatus.STOPPED,
+        current_execution=execution,
+    ).stats
+    server.manager._runner_stack.append(frame)
+
+    async def _fake_generate_summary_message_text(*args, **kwargs):
+        return (
+            "summary",
+            state.LLMUsageStats(
+                prompt_tokens=120,
+                completion_tokens=45,
+            ),
+            None,
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        llm_compaction_service,
+        "generate_summary_message_text",
+        _fake_generate_summary_message_text,
+    )
+    try:
+        await workflow_commands.register_workflow_commands(server.commands)
+
+        handled = await server.commands.execute(server, "compact")
+
+        assert handled is True
+    finally:
+        monkeypatch.undo()
+
+    packets = []
+    for _ in range(3):
+        packets.append((await client_endpoint.recv()).payload)
+    text_packets = [
+        packet
+        for packet in packets
+        if isinstance(packet, manager_proto.TextMessagePacket)
+    ]
+    assert len(text_packets) == 1
+    text = text_packets[0].text
+    assert "Context compaction" in text
+    assert "Compaction complete." in text
+    assert "Prompt-visible messages: 3 -> 2" in text
+    assert "Persisted token target: 10% (default)" in text
+    assert "Retained recent messages: 1" in text
+    assert "Summary tokens: 120 -> 45" in text
+    assert any(
+        step.type == state.StepType.CONTEXT_COMPACTION
+        for step in execution.iter_steps()
+    )
+
+
+@pytest.mark.asyncio
+async def test_compact_command_accepts_custom_persist_percent() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    node = llm_models.LLMNode(
+        name="node-compact-custom",
+        type="llm",
+        model="gpt-3.5-turbo",
+        confirmation=models.Confirmation.AUTO,
+        extra={"model_max_tokens": 128},
+    )
+    workflow = manager_base.Workflow(
+        name="wf-compact-custom",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = manager_base.Runner(workflow, project, None)
+    execution = project.history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            workflow_execution=runner.execution,
+            node=node.name,
+            input_message_ids=[],
+            status=state.RunStatus.STOPPED,
+        ),
+    )
+    messages = [
+        state.Message(role=models.Role.USER, text="msg-1"),
+        state.Message(role=models.Role.ASSISTANT, text="msg-2"),
+        state.Message(role=models.Role.USER, text="msg-3"),
+    ]
+    step_types = [
+        state.StepType.INPUT_MESSAGE,
+        state.StepType.OUTPUT_MESSAGE,
+        state.StepType.INPUT_MESSAGE,
+    ]
+    for message, step_type in zip(messages, step_types):
+        project.history.upsert_message(runner.execution, message)
+        project.history.upsert_step(
+            runner.execution,
+            state.Step(
+                workflow_execution=runner.execution,
+                execution_id=execution.id,
+                type=step_type,
+                message_id=message.id,
+                is_complete=True,
+            ),
+        )
+
+    runner.status = state.RunnerStatus.STOPPED
+    frame = manager_base.RunnerFrame(
+        workflow_name="wf-compact-custom",
+        runner=runner,
+        initial_message=None,
+    )
+    frame.last_stats = runner.set_status(
+        state.RunnerStatus.STOPPED,
+        current_execution=execution,
+    ).stats
+    server.manager._runner_stack.append(frame)
+
+    async def _fake_generate_summary_message_text(*args, **kwargs):
+        return (
+            "summary",
+            state.LLMUsageStats(
+                prompt_tokens=120,
+                completion_tokens=45,
+            ),
+            None,
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        llm_compaction_service,
+        "generate_summary_message_text",
+        _fake_generate_summary_message_text,
+    )
+    try:
+        await workflow_commands.register_workflow_commands(server.commands)
+
+        handled = await server.commands.execute(server, "compact 25")
+
+        assert handled is True
+    finally:
+        monkeypatch.undo()
+
+    packets = []
+    for _ in range(3):
+        packets.append((await client_endpoint.recv()).payload)
+    text_packets = [
+        packet
+        for packet in packets
+        if isinstance(packet, manager_proto.TextMessagePacket)
+    ]
+    assert len(text_packets) == 1
+    text = text_packets[0].text
+    assert "Persisted token target: 25%" in text
+    assert "Persisted token target: 25% (default)" not in text
+
+
+@pytest.mark.asyncio
+async def test_compact_command_rejects_running_runner() -> None:
+    project = StubProject()
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    node = llm_models.LLMNode(
+        name="node-compact-running",
+        type="llm",
+        model="gpt-3.5-turbo",
+        confirmation=models.Confirmation.AUTO,
+    )
+    workflow = manager_base.Workflow(
+        name="wf-compact-running",
+        graph=models.Graph(nodes=[node], edges=[]),
+    )
+    runner = manager_base.Runner(workflow, project, None)
+    execution = project.history.upsert_node_execution(
+        runner.execution,
+        state.NodeExecution(
+            workflow_execution=runner.execution,
+            node=node.name,
+            input_message_ids=[],
+            status=state.RunStatus.RUNNING,
+        ),
+    )
+    runner.status = state.RunnerStatus.RUNNING
+    frame = manager_base.RunnerFrame(
+        workflow_name="wf-compact-running",
+        runner=runner,
+        initial_message=None,
+    )
+    frame.last_stats = runner.set_status(
+        state.RunnerStatus.RUNNING,
+        current_execution=execution,
+    ).stats
+    server.manager._runner_stack.append(frame)
+
+    await workflow_commands.register_workflow_commands(server.commands)
+
+    handled = await server.commands.execute(server, "compact")
+
+    assert handled is True
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert "Command error:" in payload.text
+    assert "paused (waiting for input) or stopped" in payload.text
 
 
 @pytest.mark.asyncio
