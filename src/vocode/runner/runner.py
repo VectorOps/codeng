@@ -223,6 +223,7 @@ class Runner:
         if usage is not None:
             prompt_step.llm_usage = state.LLMUsageStats(
                 prompt_tokens=usage.prompt_tokens,
+                cached_tokens=usage.cached_tokens,
                 completion_tokens=usage.completion_tokens,
                 cost_dollars=usage.cost_dollars,
                 model_name=usage.model_name,
@@ -1436,6 +1437,7 @@ class Runner:
     def _clone_llm_usage(self, usage: state.LLMUsageStats) -> state.LLMUsageStats:
         return state.LLMUsageStats(
             prompt_tokens=usage.prompt_tokens,
+            cached_tokens=usage.cached_tokens,
             completion_tokens=usage.completion_tokens,
             cost_dollars=usage.cost_dollars,
             model_name=usage.model_name,
@@ -1458,6 +1460,7 @@ class Runner:
             self.execution.llm_usage = self._clone_llm_usage(usage)
         else:
             execution_usage.prompt_tokens += usage.prompt_tokens
+            execution_usage.cached_tokens += usage.cached_tokens
             execution_usage.completion_tokens += usage.completion_tokens
             execution_usage.cost_dollars += usage.cost_dollars
             if execution_usage.model_name is None and usage.model_name is not None:
@@ -1474,6 +1477,7 @@ class Runner:
                 execution_usage.output_token_limit = usage.output_token_limit
         self.project.add_llm_usage(
             usage.prompt_tokens,
+            usage.cached_tokens,
             usage.completion_tokens,
             usage.cost_dollars,
         )

@@ -137,11 +137,16 @@ class Project:
 
     # LLM usage totals
     def add_llm_usage(
-        self, prompt_delta: int, completion_delta: int, cost_delta: float
+        self,
+        prompt_delta: int,
+        cached_delta: int,
+        completion_delta: int,
+        cost_delta: float,
     ) -> None:
         """Increment aggregate LLM usage totals for this project."""
         stats = self.llm_usage
         stats.prompt_tokens += int(prompt_delta or 0)
+        stats.cached_tokens += int(cached_delta or 0)
         stats.completion_tokens += int(completion_delta or 0)
         stats.cost_dollars += float(cost_delta or 0.0)
 

@@ -1030,6 +1030,7 @@ async def test_maybe_compact_execution_history_records_summary_usage(
     assert compaction_step.type == state.StepType.CONTEXT_COMPACTION
     assert compaction_step.llm_usage is not None
     assert compaction_step.llm_usage.prompt_tokens == 321
+    assert compaction_step.llm_usage.cached_tokens == 0
     assert compaction_step.llm_usage.completion_tokens == 45
     assert compaction_step.message is not None
     summary_state = service_mod.CompactionSummaryState.model_validate(
@@ -1224,6 +1225,7 @@ async def test_generate_summary_message_text_captures_debug_payload_when_enabled
 
     assert summary_usage is not None
     assert summary_usage.prompt_tokens == 123
+    assert summary_usage.cached_tokens == 0
     assert "<debug_llm_payload>" not in summary_text
     assert summary_debug is not None
     assert summary_debug["response"]["response_id"] == "resp_debug"

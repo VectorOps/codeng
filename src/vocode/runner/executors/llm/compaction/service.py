@@ -31,8 +31,10 @@ def _build_summary_usage(
     usage = response.usage
     if usage is None:
         return None
+    cached_tokens = int(usage.cache_read_tokens or 0)
     return state.LLMUsageStats(
-        prompt_tokens=int(usage.input_tokens or 0) + int(usage.cache_read_tokens or 0),
+        prompt_tokens=int(usage.input_tokens or 0) + cached_tokens,
+        cached_tokens=cached_tokens,
         completion_tokens=int(usage.output_tokens or 0),
         cost_dollars=0.0,
         model_name=model_name,

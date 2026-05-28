@@ -70,6 +70,7 @@ class LLMUsageStats(BaseModel):
     """
 
     prompt_tokens: int = 0
+    cached_tokens: int = 0
     completion_tokens: int = 0
     cost_dollars: float = 0.0
     model_name: Optional[str] = None

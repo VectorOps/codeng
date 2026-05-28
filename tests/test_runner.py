@@ -2702,10 +2702,12 @@ async def test_runner_tool_round_carries_llm_usage_on_tool_request():
     assert tool_step is not None
     assert tool_step.llm_usage is not None
     assert tool_step.llm_usage.prompt_tokens == 10
+    assert tool_step.llm_usage.cached_tokens == 0
     assert tool_step.llm_usage.completion_tokens == 5
     assert tool_step.llm_usage.cost_dollars == 1.0
 
     assert project.llm_usage.prompt_tokens == 10
+    assert project.llm_usage.cached_tokens == 0
     assert project.llm_usage.completion_tokens == 5
     assert project.llm_usage.cost_dollars == 1.0
 
@@ -2742,10 +2744,12 @@ async def test_runner_preview_usage_refreshes_status_without_updating_totals():
 
     assert runner.execution.last_step_llm_usage is not None
     assert runner.execution.last_step_llm_usage.prompt_tokens == 7
+    assert runner.execution.last_step_llm_usage.cached_tokens == 0
     assert runner.execution.last_step_llm_usage.completion_tokens == 3
     assert runner.execution.last_step_llm_usage.cost_dollars == 0.25
     assert runner.execution.llm_usage is None
     assert project.llm_usage.prompt_tokens == 0
+    assert project.llm_usage.cached_tokens == 0
     assert project.llm_usage.completion_tokens == 0
     assert project.llm_usage.cost_dollars == 0.0
 

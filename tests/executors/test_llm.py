@@ -902,6 +902,7 @@ async def test_llm_executor_counts_cached_tokens_toward_round_prompt_usage(
     final_message_step = output_steps[-1]
     assert final_message_step.llm_usage is not None
     assert final_message_step.llm_usage.prompt_tokens == 12
+    assert final_message_step.llm_usage.cached_tokens == 7
     assert final_message_step.llm_usage.completion_tokens == 3
 
 
@@ -1029,6 +1030,7 @@ async def test_llm_executor_preview_usage_uses_last_real_message_usage_from_line
     assert call_count["n"] == 0
     assert first_step.llm_usage is not None
     assert first_step.llm_usage.prompt_tokens == 10
+    assert first_step.llm_usage.cached_tokens == 0
     assert first_step.llm_usage.completion_tokens == 3
     assert first_step.llm_usage.cost_dollars == 0.2
     assert first_step.llm_usage.model_name == "gpt-3.5-turbo"
@@ -2416,6 +2418,7 @@ async def test_llm_executor_preview_usage_uses_last_tool_round_message_usage(
     assert call_count["n"] == 0
     assert first_step.llm_usage is not None
     assert first_step.llm_usage.prompt_tokens == 33
+    assert first_step.llm_usage.cached_tokens == 0
     assert first_step.llm_usage.completion_tokens == 7
     assert first_step.llm_usage.cost_dollars == 0.5
     assert first_step.llm_usage.model_name == "gpt-3.5-turbo"
@@ -2430,6 +2433,7 @@ async def test_llm_executor_preview_usage_uses_last_tool_round_message_usage(
     ]
     assert final_step.llm_usage is not None
     assert final_step.llm_usage.prompt_tokens == 5
+    assert final_step.llm_usage.cached_tokens == 0
     assert final_step.llm_usage.completion_tokens == len("preview response")
 
 

@@ -627,6 +627,7 @@ class LLMExecutor(runner_base.BaseExecutor):
                 continue
             return state.LLMUsageStats(
                 prompt_tokens=int(usage.prompt_tokens or 0),
+                cached_tokens=int(usage.cached_tokens or 0),
                 completion_tokens=int(usage.completion_tokens or 0),
                 cost_dollars=float(usage.cost_dollars or 0.0),
                 model_name=self.config.model,
@@ -1212,9 +1213,8 @@ class LLMExecutor(runner_base.BaseExecutor):
             execution_state.selected_outcome = selected_outcome
 
             usage_obj = final_response.usage
-            prompt_tokens = int(usage_obj.input_tokens or 0) + int(
-                usage_obj.cache_read_tokens or 0
-            )
+            cached_tokens = int(usage_obj.cache_read_tokens or 0)
+            prompt_tokens = int(usage_obj.input_tokens or 0) + cached_tokens
             completion_tokens = int(usage_obj.output_tokens or 0)
 
             round_cost = 0.0
@@ -1230,6 +1230,7 @@ class LLMExecutor(runner_base.BaseExecutor):
 
             usage_stats = state.LLMUsageStats(
                 prompt_tokens=prompt_tokens,
+                cached_tokens=cached_tokens,
                 completion_tokens=completion_tokens,
                 cost_dollars=round_cost,
                 model_name=cfg.model,
