@@ -135,12 +135,20 @@ class TUIOptions(vars_mod.BaseVarModel):
     expand_confirm_tools: bool = True
     submit_with_enter: bool = True
     history_limit: int = Field(default=10000, ge=1)
+    max_components: Optional[int] = 1000
     banner_text: str = "VOCODE"
     banner_font: str = "spliff"
     markdown_render_mode: MarkdownRenderMode = MarkdownRenderMode.rich_markdown
     full_refresh_max_lines: Optional[int] = Field(default=None, ge=1)
 
     full_refresh_max_components: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("max_components")
+    @classmethod
+    def validate_max_components(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value < 1:
+            raise ValueError("max_components must be greater than or equal to 1")
+        return value
 
 
 class ToolSpec(vars_mod.BaseVarModel):

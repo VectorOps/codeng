@@ -1083,6 +1083,68 @@ async def test_terminal_full_refresh_max_lines_unlimited_by_default() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminal_max_components_prunes_oldest_without_repaint() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        height=2,
+    )
+    tui_options = vocode_settings.TUIOptions(max_components=2)
+    settings = tui_terminal.TerminalSettings(auto_render=False, tui=tui_options)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+    first = DummyComponent("one", id="one")
+    second = DummyComponent("two", id="two")
+    third = DummyComponent("three", id="three")
+
+    terminal.append_component(first)
+    terminal.append_component(second)
+    await terminal.render()
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    terminal.append_component(third)
+    await terminal.render()
+
+    output = buffer.getvalue()
+    assert "three" in output
+    assert tui_controls.ERASE_SCROLLBACK not in output
+    assert [component.text for component in terminal.components] == ["two", "three"]
+    assert first.terminal is None
+    assert "one" not in terminal._id_index
+
+
+def test_terminal_max_components_none_keeps_unlimited_stack() -> None:
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+    )
+    tui_options = vocode_settings.TUIOptions(max_components=None)
+    settings = tui_terminal.TerminalSettings(auto_render=False, tui=tui_options)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    terminal.append_component(DummyComponent("one"))
+    terminal.append_component(DummyComponent("two"))
+    terminal.append_component(DummyComponent("three"))
+
+    assert [component.text for component in terminal.components] == [
+        "one",
+        "two",
+        "three",
+    ]
+
+
+def test_terminal_max_components_accepts_none() -> None:
+    options = vocode_settings.TUIOptions(max_components=None)
+
+    assert options.max_components is None
+
+
+@pytest.mark.asyncio
 async def test_terminal_full_refresh_max_components_limits_recomputed_components() -> (
     None
 ):

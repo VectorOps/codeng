@@ -140,6 +140,7 @@ class Terminal:
         component.terminal = self
         self._components.append(component)
         self._component_set.add(component)
+        self._trim_components_before_render(component)
         self.notify_component(component)
 
     def insert_component(self, index: int, component: tui_base.Component) -> None:
@@ -185,7 +186,27 @@ class Terminal:
         component.terminal = self
         self._components.insert(position, component)
         self._component_set.add(component)
+        self._trim_components_before_render(component)
         self.notify_component(component)
+
+    def _trim_components_before_render(self, preserved: tui_base.Component) -> None:
+        max_components = self._settings.tui.max_components
+        if max_components is None:
+            return
+
+        while len(self._components) > max_components:
+            removed = self._components.pop(0)
+            self._component_set.remove(removed)
+            self._dirty_components.discard(removed)
+            self._removed_components.discard(removed)
+            self._animation_components.discard(removed)
+            self._cache.pop(removed, None)
+            self._id_index.pop(removed.id, None)
+            if removed in self._focus_stack:
+                self.remove_focus(removed)
+            removed.terminal = None
+            if removed is preserved:
+                break
 
     def _delete_removed_components(self) -> None:
         removed = self._removed_components
