@@ -8,6 +8,7 @@ import pytest
 from connect.credentials import chatgpt as connect_chatgpt_credentials
 
 from vocode import input_manager, models, state
+from vocode.auth import ProjectCredentialManager
 from vocode import settings as vocode_settings
 from vocode.history.manager import HistoryManager
 from vocode.history.models import HistoryMutationResult
@@ -918,6 +919,106 @@ async def test_auth_cancel_command_stops_active_login(
         and "Authentication cancelled." in packet.text
         for packet in packets
     )
+
+
+@pytest.mark.asyncio
+async def test_auth_profile_list_command_reports_profiles(tmp_path) -> None:
+    project = StubProject()
+    project.credentials = ProjectCredentialManager(
+        env={},
+        credentials_path=tmp_path / "credentials.json",
+    )
+    await project.credentials.add_profile("work")
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    message = state.Message(role=models.Role.USER, text="/auth profile list")
+    user_packet = manager_proto.UserInputPacket(message=message)
+    envelope = manager_proto.BasePacketEnvelope(msg_id=1, payload=user_packet)
+    await client_endpoint.send(envelope)
+
+    server_envelope = await server_endpoint.recv()
+    handled = await server.on_ui_packet(server_envelope)
+    assert handled is True
+
+    response_envelope = await client_endpoint.recv()
+    payload = response_envelope.payload
+    assert payload.kind == manager_proto.BasePacketKind.TEXT_MESSAGE
+    assert isinstance(payload, manager_proto.TextMessagePacket)
+    assert payload.format == manager_proto.TextMessageFormat.RICH_TEXT
+    assert "Authentication profiles:" in payload.text
+    assert "default (active)" in payload.text
+    assert "work" in payload.text
+
+
+@pytest.mark.asyncio
+async def test_auth_profile_commands_switch_and_delete_profile(tmp_path) -> None:
+    project = StubProject()
+    project.credentials = ProjectCredentialManager(
+        env={},
+        credentials_path=tmp_path / "credentials.json",
+    )
+    server_endpoint, client_endpoint = manager_helpers.InMemoryEndpoint.pair()
+    server = UIServer(project=project, endpoint=server_endpoint)
+
+    handled_add = await server.on_ui_packet(
+        manager_proto.BasePacketEnvelope(
+            msg_id=1,
+            payload=manager_proto.UserInputPacket(
+                message=state.Message(
+                    role=models.Role.USER,
+                    text="/auth profile add work",
+                )
+            ),
+        )
+    )
+    assert handled_add is True
+
+    add_envelope = await client_endpoint.recv()
+    add_payload = add_envelope.payload
+    assert isinstance(add_payload, manager_proto.TextMessagePacket)
+    assert "Added authentication profile 'work'." in add_payload.text
+
+    handled_switch = await server.on_ui_packet(
+        manager_proto.BasePacketEnvelope(
+            msg_id=2,
+            payload=manager_proto.UserInputPacket(
+                message=state.Message(
+                    role=models.Role.USER,
+                    text="/auth profile switch work",
+                )
+            ),
+        )
+    )
+    assert handled_switch is True
+
+    switch_envelope = await client_endpoint.recv()
+    switch_payload = switch_envelope.payload
+    assert isinstance(switch_payload, manager_proto.TextMessagePacket)
+    assert "Switched authentication profile to 'work'." in switch_payload.text
+    assert await project.credentials.get_active_profile() == "work"
+
+    handled_delete = await server.on_ui_packet(
+        manager_proto.BasePacketEnvelope(
+            msg_id=3,
+            payload=manager_proto.UserInputPacket(
+                message=state.Message(
+                    role=models.Role.USER,
+                    text="/auth profile delete work",
+                )
+            ),
+        )
+    )
+    assert handled_delete is True
+
+    delete_envelope = await client_endpoint.recv()
+    delete_payload = delete_envelope.payload
+    assert isinstance(delete_payload, manager_proto.TextMessagePacket)
+    assert (
+        "Deleted authentication profile 'work' and switched to 'default'."
+        in delete_payload.text
+    )
+    assert await project.credentials.get_active_profile() == "default"
 
 
 @pytest.mark.asyncio

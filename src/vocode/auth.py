@@ -8,7 +8,7 @@ import logging
 import os
 import secrets
 from pathlib import Path
-from typing import MutableMapping, Optional, Protocol
+from typing import Final, MutableMapping, Optional, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -35,6 +35,11 @@ class EncryptedCredentialsEnvelope(BaseModel):
     version: int = 1
     nonce: str
     ciphertext: str
+
+
+class CredentialProfileMetadata(BaseModel):
+    active_profile: str = "default"
+    profiles: list[str] = Field(default_factory=list)
 
 
 class EncryptedCredentialStore(connect_credentials_base.CredentialStore):
@@ -176,6 +181,7 @@ class EncryptedCredentialStore(connect_credentials_base.CredentialStore):
 
 class ProviderAuthorizationStatus(BaseModel):
     provider: str
+    profile: str = "default"
     has_stored_credentials: bool = False
     has_env_token: bool = False
     credentials_path: Optional[str] = None
@@ -207,6 +213,10 @@ class TokenCredentialManager(Protocol):
 
 
 class ProjectCredentialManager:
+    _DEFAULT_PROFILE: Final[str] = "default"
+    _PROFILE_METADATA_PROVIDER: Final[str] = "__auth_profiles__"
+    _PROFILE_ENTRY_PREFIX: Final[str] = "__auth_profile_entry__:"
+
     def __init__(
         self,
         *,
@@ -232,8 +242,208 @@ class ProjectCredentialManager:
     def _token_provider_name(self, name: str) -> str:
         return f"token:{name}"
 
+    def _empty_credentials_document(
+        self,
+    ) -> connect_credentials_base.StoredCredentialsDocument:
+        return connect_credentials_base.StoredCredentialsDocument()
+
+    def _normalize_profile_name(self, name: str) -> str:
+        return name.strip()
+
+    def _encode_profile_entry_key(self, profile: str, provider: str) -> str:
+        encoded_profile = (
+            base64.urlsafe_b64encode(profile.encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
+        encoded_provider = (
+            base64.urlsafe_b64encode(provider.encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
+        return f"{self._PROFILE_ENTRY_PREFIX}{encoded_profile}:{encoded_provider}"
+
+    def _decode_profile_entry_key(
+        self,
+        provider_key: str,
+    ) -> Optional[tuple[str, str]]:
+        if not provider_key.startswith(self._PROFILE_ENTRY_PREFIX):
+            return None
+        encoded_value = provider_key[len(self._PROFILE_ENTRY_PREFIX) :]
+        parts = encoded_value.split(":", 1)
+        if len(parts) != 2:
+            return None
+        encoded_profile, encoded_provider = parts
+        try:
+            profile = base64.urlsafe_b64decode(
+                f"{encoded_profile}{'=' * (-len(encoded_profile) % 4)}"
+            ).decode("utf-8")
+            provider = base64.urlsafe_b64decode(
+                f"{encoded_provider}{'=' * (-len(encoded_provider) % 4)}"
+            ).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+        if not profile or not provider:
+            return None
+        return profile, provider
+
+    def _load_profile_documents(
+        self,
+    ) -> tuple[
+        str,
+        dict[str, connect_credentials_base.StoredCredentialsDocument],
+    ]:
+        document = self._credential_store.load_document(self._credentials_path)
+        active_profile = self._DEFAULT_PROFILE
+        profile_names = {self._DEFAULT_PROFILE}
+        profile_documents = {self._DEFAULT_PROFILE: self._empty_credentials_document()}
+        metadata_payload = document.credentials.get(self._PROFILE_METADATA_PROVIDER)
+        if isinstance(metadata_payload, dict):
+            metadata = CredentialProfileMetadata.model_validate(metadata_payload)
+            active_profile = metadata.active_profile
+            for profile_name in metadata.profiles:
+                normalized = self._normalize_profile_name(profile_name)
+                if normalized:
+                    profile_names.add(normalized)
+        for provider_name, payload in document.credentials.items():
+            if provider_name == self._PROFILE_METADATA_PROVIDER:
+                continue
+            profile_entry = self._decode_profile_entry_key(provider_name)
+            if profile_entry is None:
+                profile_documents[self._DEFAULT_PROFILE].credentials[
+                    provider_name
+                ] = payload
+                continue
+            profile_name, nested_provider_name = profile_entry
+            profile_names.add(profile_name)
+            profile_document = profile_documents.setdefault(
+                profile_name,
+                self._empty_credentials_document(),
+            )
+            profile_document.credentials[nested_provider_name] = payload
+        for profile_name in profile_names:
+            profile_documents.setdefault(
+                profile_name,
+                self._empty_credentials_document(),
+            )
+        if active_profile not in profile_documents:
+            profile_documents[active_profile] = self._empty_credentials_document()
+        return active_profile, profile_documents
+
+    def _save_profile_documents(
+        self,
+        *,
+        active_profile: str,
+        profile_documents: dict[
+            str,
+            connect_credentials_base.StoredCredentialsDocument,
+        ],
+    ) -> None:
+        profile_names = {
+            profile_name
+            for profile_name in profile_documents
+            if self._normalize_profile_name(profile_name)
+        }
+        profile_names.add(self._DEFAULT_PROFILE)
+        profile_names.add(active_profile)
+        document = connect_credentials_base.StoredCredentialsDocument()
+        document.credentials[self._PROFILE_METADATA_PROVIDER] = (
+            CredentialProfileMetadata(
+                active_profile=active_profile,
+                profiles=self._sort_profiles(profile_names),
+            ).model_dump(mode="json")
+        )
+        default_document = profile_documents.get(self._DEFAULT_PROFILE)
+        if default_document is not None:
+            for provider_name, payload in default_document.credentials.items():
+                document.credentials[provider_name] = payload
+        for profile_name in self._sort_profiles(profile_names):
+            if profile_name == self._DEFAULT_PROFILE:
+                continue
+            profile_document = profile_documents.get(profile_name)
+            if profile_document is None:
+                continue
+            for provider_name, payload in profile_document.credentials.items():
+                document.credentials[
+                    self._encode_profile_entry_key(profile_name, provider_name)
+                ] = payload
+        self._credential_store.save_document(self._credentials_path, document)
+
+    def _sort_profiles(self, profile_names: set[str]) -> list[str]:
+        other_profiles = sorted(
+            profile_name
+            for profile_name in profile_names
+            if profile_name != self._DEFAULT_PROFILE
+        )
+        return [self._DEFAULT_PROFILE, *other_profiles]
+
+    def _current_profile_document(
+        self,
+    ) -> tuple[str, connect_credentials_base.StoredCredentialsDocument]:
+        active_profile, profile_documents = self._load_profile_documents()
+        return active_profile, profile_documents.setdefault(
+            active_profile,
+            self._empty_credentials_document(),
+        )
+
     def _is_store_only_token(self, name: str) -> bool:
         return name.startswith("MCP_TOKEN_")
+
+    async def get_active_profile(self) -> str:
+        active_profile, _ = self._load_profile_documents()
+        return active_profile
+
+    async def list_profiles(self) -> list[str]:
+        _, profile_documents = self._load_profile_documents()
+        return self._sort_profiles(set(profile_documents.keys()))
+
+    async def add_profile(self, name: str) -> bool:
+        profile_name = self._normalize_profile_name(name)
+        if not profile_name:
+            raise ValueError("Profile name cannot be empty.")
+        active_profile, profile_documents = self._load_profile_documents()
+        if profile_name in profile_documents:
+            return False
+        profile_documents[profile_name] = self._empty_credentials_document()
+        self._save_profile_documents(
+            active_profile=active_profile,
+            profile_documents=profile_documents,
+        )
+        return True
+
+    async def switch_profile(self, name: str) -> bool:
+        profile_name = self._normalize_profile_name(name)
+        if not profile_name:
+            raise ValueError("Profile name cannot be empty.")
+        active_profile, profile_documents = self._load_profile_documents()
+        if profile_name not in profile_documents:
+            raise ValueError(f"Profile '{profile_name}' does not exist.")
+        if profile_name == active_profile:
+            return False
+        self._save_profile_documents(
+            active_profile=profile_name,
+            profile_documents=profile_documents,
+        )
+        return True
+
+    async def delete_profile(self, name: str) -> tuple[bool, str]:
+        profile_name = self._normalize_profile_name(name)
+        if not profile_name:
+            raise ValueError("Profile name cannot be empty.")
+        if profile_name == self._DEFAULT_PROFILE:
+            raise ValueError("Profile 'default' cannot be deleted.")
+        active_profile, profile_documents = self._load_profile_documents()
+        if profile_name not in profile_documents:
+            return False, active_profile
+        del profile_documents[profile_name]
+        next_active_profile = active_profile
+        if active_profile == profile_name:
+            next_active_profile = self._DEFAULT_PROFILE
+        self._save_profile_documents(
+            active_profile=next_active_profile,
+            profile_documents=profile_documents,
+        )
+        return True, next_active_profile
 
     async def get_token(
         self,
@@ -245,7 +455,7 @@ class ProjectCredentialManager:
             value = self._env.get(name)
             if value:
                 return value
-        document = self._credential_store.load_document(self._credentials_path)
+        _, document = self._current_profile_document()
         payload = document.credentials.get(self._token_provider_name(name))
         if payload is None:
             return None
@@ -262,21 +472,31 @@ class ProjectCredentialManager:
         context: Optional[connect_auth.AuthContext] = None,
     ) -> None:
         provider_name = self._token_provider_name(name)
+        active_profile, profile_documents = self._load_profile_documents()
+        profile_document = profile_documents.setdefault(
+            active_profile,
+            self._empty_credentials_document(),
+        )
         if value is None:
             if not self._is_store_only_token(name):
                 self._env.pop(name, None)
-            self._credential_store.delete(
-                self._credentials_path, provider=provider_name
+            profile_document.credentials.pop(provider_name, None)
+            self._save_profile_documents(
+                active_profile=active_profile,
+                profile_documents=profile_documents,
             )
             return
         if not self._is_store_only_token(name):
             self._env[name] = value
-        self._credential_store.save(
-            self._credentials_path,
+        profile_document.credentials[provider_name] = (
             connect_credentials_base.OAuth2Credentials(
                 provider=provider_name,
                 access_token=value,
-            ),
+            ).model_dump(mode="json")
+        )
+        self._save_profile_documents(
+            active_profile=active_profile,
+            profile_documents=profile_documents,
         )
 
     async def get_oauth2_credentials(
@@ -285,12 +505,13 @@ class ProjectCredentialManager:
         *,
         context: Optional[connect_auth.AuthContext] = None,
     ) -> Optional[connect_credentials_base.OAuth2Credentials]:
+        _, document = self._current_profile_document()
+        payload = document.credentials.get(provider)
+        if payload is None:
+            return None
         try:
-            return self._credential_store.load(
-                self._credentials_path,
-                provider=provider,
-                registry=self._credential_registry,
-            )
+            credential_adapter = self._credential_registry.get(provider)
+            return credential_adapter.credentials_type.model_validate(payload)
         except ValueError:
             return None
 
@@ -301,10 +522,23 @@ class ProjectCredentialManager:
         *,
         context: Optional[connect_auth.AuthContext] = None,
     ) -> None:
+        active_profile, profile_documents = self._load_profile_documents()
+        profile_document = profile_documents.setdefault(
+            active_profile,
+            self._empty_credentials_document(),
+        )
         if credentials is None:
-            self._credential_store.delete(self._credentials_path, provider=provider)
+            profile_document.credentials.pop(provider, None)
+            self._save_profile_documents(
+                active_profile=active_profile,
+                profile_documents=profile_documents,
+            )
             return
-        self._credential_store.save(self._credentials_path, credentials)
+        profile_document.credentials[provider] = credentials.model_dump(mode="json")
+        self._save_profile_documents(
+            active_profile=active_profile,
+            profile_documents=profile_documents,
+        )
 
     async def get_oauth_login_callbacks(
         self,
@@ -328,9 +562,11 @@ class ProjectCredentialManager:
         await self.set_oauth2_credentials(provider, None)
 
     async def authorization_status(self, provider: str) -> ProviderAuthorizationStatus:
+        active_profile = await self.get_active_profile()
         credentials = await self.get_oauth2_credentials(provider)
         return ProviderAuthorizationStatus(
             provider=provider,
+            profile=active_profile,
             has_stored_credentials=credentials is not None,
             has_env_token=self._has_env_token(provider),
             credentials_path=str(self._credentials_path),

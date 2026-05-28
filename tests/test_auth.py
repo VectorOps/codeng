@@ -91,6 +91,90 @@ async def test_project_credential_manager_login_persists_credentials(
 
 
 @pytest.mark.asyncio
+async def test_project_credential_manager_scopes_credentials_by_active_profile(
+    tmp_path,
+) -> None:
+    manager = ProjectCredentialManager(credentials_path=tmp_path / "credentials.json")
+
+    await manager.set_oauth2_credentials(
+        "chatgpt",
+        connect_chatgpt_credentials.ChatGPTCredentials(
+            access_token=_jwt("acct_default"),
+            refresh_token="refresh_default",
+            expires_at=time.time() + 600,
+            account_id="acct_default",
+        ),
+    )
+    assert await manager.add_profile("work") is True
+    assert await manager.switch_profile("work") is True
+
+    assert await manager.get_oauth2_credentials("chatgpt") is None
+
+    await manager.set_oauth2_credentials(
+        "chatgpt",
+        connect_chatgpt_credentials.ChatGPTCredentials(
+            access_token=_jwt("acct_work"),
+            refresh_token="refresh_work",
+            expires_at=time.time() + 600,
+            account_id="acct_work",
+        ),
+    )
+
+    work_credentials = await manager.get_oauth2_credentials("chatgpt")
+    assert work_credentials is not None
+    assert work_credentials.account_id == "acct_work"
+
+    assert await manager.switch_profile("default") is True
+    default_credentials = await manager.get_oauth2_credentials("chatgpt")
+
+    assert default_credentials is not None
+    assert default_credentials.account_id == "acct_default"
+
+
+@pytest.mark.asyncio
+async def test_project_credential_manager_reads_legacy_credentials_in_default_profile(
+    tmp_path,
+) -> None:
+    credentials_path = tmp_path / "credentials.json"
+    connect_credentials_base.CredentialStore().save(
+        credentials_path,
+        connect_chatgpt_credentials.ChatGPTCredentials(
+            access_token=_jwt("acct_legacy"),
+            refresh_token="refresh_legacy",
+            expires_at=time.time() + 600,
+            account_id="acct_legacy",
+        ),
+    )
+    manager = ProjectCredentialManager(credentials_path=credentials_path)
+
+    active_profile = await manager.get_active_profile()
+    profiles = await manager.list_profiles()
+    credentials = await manager.get_oauth2_credentials("chatgpt")
+
+    assert active_profile == "default"
+    assert profiles == ["default"]
+    assert credentials is not None
+    assert credentials.account_id == "acct_legacy"
+
+
+@pytest.mark.asyncio
+async def test_project_credential_manager_delete_active_profile_switches_to_default(
+    tmp_path,
+) -> None:
+    manager = ProjectCredentialManager(credentials_path=tmp_path / "credentials.json")
+
+    assert await manager.add_profile("work") is True
+    assert await manager.switch_profile("work") is True
+
+    deleted, active_profile = await manager.delete_profile("work")
+
+    assert deleted is True
+    assert active_profile == "default"
+    assert await manager.get_active_profile() == "default"
+    assert await manager.list_profiles() == ["default"]
+
+
+@pytest.mark.asyncio
 async def test_project_credential_manager_persists_raw_tokens_to_file(tmp_path) -> None:
     credentials_path = tmp_path / "credentials.json"
     manager = ProjectCredentialManager(credentials_path=credentials_path)
@@ -119,6 +203,26 @@ async def test_project_credential_manager_does_not_cache_mcp_tokens_in_env(
     await manager.set_token("MCP_TOKEN_TEST", None)
 
     assert "MCP_TOKEN_TEST" not in env
+
+
+@pytest.mark.asyncio
+async def test_project_credential_manager_scopes_raw_tokens_by_active_profile(
+    tmp_path,
+) -> None:
+    credentials_path = tmp_path / "credentials.json"
+    manager = ProjectCredentialManager(credentials_path=credentials_path)
+
+    await manager.set_token("MCP_TOKEN_TEST", "token-default")
+    assert await manager.add_profile("work") is True
+    assert await manager.switch_profile("work") is True
+
+    assert await manager.get_token("MCP_TOKEN_TEST") is None
+
+    await manager.set_token("MCP_TOKEN_TEST", "token-work")
+
+    assert await manager.get_token("MCP_TOKEN_TEST") == "token-work"
+    assert await manager.switch_profile("default") is True
+    assert await manager.get_token("MCP_TOKEN_TEST") == "token-default"
 
 
 class _MemoryKeyring:
