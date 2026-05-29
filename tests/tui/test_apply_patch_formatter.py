@@ -119,9 +119,7 @@ def test_apply_patch_formatter_renders_output_from_json_payload() -> None:
     assert "Added file: foo.py" in output
 
 
-def test_apply_patch_formatter_prefers_response_when_request_and_response_exist() -> (
-    None
-):
+def test_apply_patch_formatter_renders_input_and_output_when_both_exist() -> None:
     buffer = io.StringIO()
     console = rich_console.Console(file=buffer, force_terminal=True, color_system=None)
     term = tui_terminal.Terminal(console=console)
@@ -148,9 +146,10 @@ def test_apply_patch_formatter_prefers_response_when_request_and_response_exist(
     console.print(rendered)
     output = buffer.getvalue()
 
+    assert "*** Begin Patch" in output
+    assert "patch body" in output
     assert "Applied patch successfully." in output
     assert "Updated file: foo.py" in output
-    assert "patch body" not in output
 
 
 def test_apply_patch_formatter_renders_error_from_json_payload() -> None:

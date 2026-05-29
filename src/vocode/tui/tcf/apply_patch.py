@@ -119,6 +119,12 @@ class ApplyPatchToolCallFormatter(tui_tcf.BaseToolCallFormatter):
             return rich_console.Group(header, body)
 
         result_text, is_error = self._extract_text(result)
+        if content_str and result_text.strip():
+            input_body = rich_syntax.Syntax(content_str, "diff")
+            output_body = rich_text.Text(result_text, no_wrap=False)
+            if is_error:
+                output_body.stylize("red")
+            return rich_console.Group(header, input_body, output_body)
         if not result_text.strip():
             return header
         body = rich_text.Text(result_text, no_wrap=False)
