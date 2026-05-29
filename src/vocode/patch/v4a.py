@@ -242,7 +242,7 @@ def render_chunk_block(ch: Chunk) -> str:
                     out.append(f"{ADD_PREFIX}{a}")
                 emitted[gi] = True
         if lt2 == NeedleType.CONTEXT:
-            out.append(f"{CONTEXT_PREFIX}{t2}")
+            out.append(f"{CONTEXT_PREFIX}{t2}" if t2 else "")
         elif lt2 == NeedleType.DELETE:
             out.append(f"{DELETE_PREFIX}{t2}")
             # For deletions, emit additions after the last deleted line in the group
@@ -875,6 +875,7 @@ def build_commits(
         file_lines: List[str],
         chunk: Chunk,
         start_min: int = 0,
+        display_chunk: Optional[Chunk] = None,
     ) -> Tuple[Optional[int], Optional[int], Optional[List[str]], Optional[str]]:
         """
         Linear, anchor-aware search for a chunk.
@@ -884,6 +885,9 @@ def build_commits(
         Returns (start_idx, end_idx, replacement_lines, hint) where replacement_lines is the
         buffer to substitute for the matched pattern region (i.e. with additions applied).
         """
+        if display_chunk is None:
+            display_chunk = chunk
+
         # Build pattern from items (exclude anchors)
         items = chunk.items
         pat_items_idx: List[int] = []
@@ -1041,10 +1045,11 @@ def build_commits(
                 file_lines,
                 chunk_without_blank_context,
                 start_min=start_min,
+                display_chunk=display_chunk,
             )
 
         # Failure: quote the unmatched block the user provided
-        block_quote = render_chunk_block(chunk)
+        block_quote = render_chunk_block(display_chunk)
         hint = f"Change block not found. Here is the block you provided:\n---\n{block_quote}\n---"
         return None, None, None, hint
 

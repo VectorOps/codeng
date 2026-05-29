@@ -462,6 +462,28 @@ def test_update_partial_match_reports_hint_and_no_write():
     assert "Possible variants" not in hint
 
 
+def test_failed_match_hint_preserves_blank_context_lines():
+    patch_text = """*** Begin Patch
+*** Update File: src/t.py
+ ctx1
+
+- old
++ new
+
+ ctx2
+*** End Patch"""
+    initial = {"src/t.py": "ctx1\nWRONG\n old\n\nctx2\n"}
+    statuses, errs, writes, deletes, _ = run_patch(patch_text, initial_files=initial)
+    assert statuses == {}
+    assert writes == {}
+    assert deletes == []
+    assert len(errs) == 1
+    assert "Failed to locate change block" in errs[0].msg
+    hint = errs[0].hint or ""
+    assert "Change block not found. Here is the block you provided:" in hint
+    assert " ctx1\n\n- old\n+ new\n\n ctx2" in hint
+
+
 def test_partial_apply_on_some_chunks_updates_and_reports_error():
     patch_text = """*** Begin Patch
 *** Update File: src/partial.py
