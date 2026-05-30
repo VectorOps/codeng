@@ -663,6 +663,49 @@ def test_blank_context_line_variants_apply(blank_line: str):
     assert statuses == {"src/example.cpp": FileApplyStatus.Update}
 
 
+@pytest.mark.parametrize("file_blank_line", [" ", "    ", "\t", "\u00a0"])
+def test_whitespace_only_file_context_line_matches_blank_patch_context(
+    file_blank_line: str,
+):
+    patch_text = """*** Begin Patch
+*** Update File: src/example.cpp
+ alpha();
+
+ beta();
+-gamma();
++delta();
+*** End Patch"""
+    initial = {
+        "src/example.cpp": (
+            "alpha();\n" f"{file_blank_line}\n" "beta();\n" "gamma();\n"
+        )
+    }
+    statuses, errs, writes, deletes, _ = run_patch(patch_text, initial_files=initial)
+    assert errs == []
+    assert deletes == []
+    assert writes["src/example.cpp"] == (
+        "alpha();\n" f"{file_blank_line}\n" "beta();\n" "delta();\n"
+    )
+    assert statuses == {"src/example.cpp": FileApplyStatus.Update}
+
+
+def test_whitespace_only_file_context_line_matches_trimmed_patch_context():
+    patch_text = """*** Begin Patch
+*** Update File: src/example.cpp
+ alpha();
+ 
+ beta();
+-gamma();
++delta();
+*** End Patch"""
+    initial = {"src/example.cpp": "alpha();\n    \nbeta();\ngamma();\n"}
+    statuses, errs, writes, deletes, _ = run_patch(patch_text, initial_files=initial)
+    assert errs == []
+    assert deletes == []
+    assert writes["src/example.cpp"] == "alpha();\n    \nbeta();\ndelta();\n"
+    assert statuses == {"src/example.cpp": FileApplyStatus.Update}
+
+
 def test_blank_context_line_variants_apply_with_crlf_patch_text():
     patch_text = (
         "*** Begin Patch\r\n"
