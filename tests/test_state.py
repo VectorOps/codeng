@@ -711,13 +711,7 @@ def test_edit_user_input_preserves_visible_history_and_execution_chain() -> None
         message.text
         for message, _step in iter_execution_messages(replacement_execution)
     ]
-    assert rebuilt_texts == [
-        "original input",
-        "prompt",
-        "old user input",
-        "old output",
-        "new user input",
-    ]
+    assert rebuilt_texts == ["original input", "prompt", "new user input"]
     _assert_execution_iteration_matches_history_view(history, replacement_execution)
 
 
@@ -846,7 +840,7 @@ def test_insert_step_splices_between_existing_visible_steps() -> None:
     assert result.changed is True
     assert result.mutation_kind == history_models.HistoryMutationKind.INSERT
     assert run.step_ids == [step1.id, inserted.id, step2.id, step3.id]
-    assert execution.step_ids == [step1.id, step2.id, step3.id, inserted.id]
+    assert execution.step_ids == [step1.id, inserted.id, step2.id, step3.id]
     assert run.get_step(inserted.id).parent_step_id == step1.id
     assert run.get_step(step2.id).parent_step_id == inserted.id
     assert run.get_active_branch().head_step_id == step3.id
@@ -906,7 +900,7 @@ def test_insert_step_supports_cross_execution_splice_on_active_branch() -> None:
     assert run.step_ids == [step1.id, inserted.id, step2.id, step3.id]
     assert run.get_active_branch().head_step_id == step3.id
     assert execution1.step_ids == [step1.id, step2.id]
-    assert execution2.step_ids == [step3.id, inserted.id]
+    assert execution2.step_ids == [inserted.id, step3.id]
     assert run.get_step(step2.id).parent_step_id == inserted.id
     _assert_execution_iteration_matches_history_view(history, execution2)
 

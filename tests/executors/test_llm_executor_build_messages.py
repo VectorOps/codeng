@@ -371,17 +371,13 @@ def test_build_connect_messages_uses_active_history_view_after_user_input_edit()
 
     _, messages = executor.build_connect_messages(executor._iter_prompt_messages(inp))
 
-    assert len(messages) == 5
+    assert len(messages) == 3
     assert isinstance(messages[0], connect.UserMessage)
     assert messages[0].content == "initial input"
     assert isinstance(messages[1], connect.AssistantMessage)
     assert messages[1].content[0].text == "prompt"
     assert isinstance(messages[2], connect.UserMessage)
-    assert messages[2].content == "old user input"
-    assert isinstance(messages[3], connect.AssistantMessage)
-    assert messages[3].content[0].text == "old output"
-    assert isinstance(messages[4], connect.UserMessage)
-    assert messages[4].content == "new user input"
+    assert messages[2].content == "new user input"
 
 
 def test_build_connect_messages_omits_unresolved_tool_calls_after_history_edit() -> (

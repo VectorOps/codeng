@@ -60,16 +60,6 @@ class HistoryManager:
                 if step.message is None:
                     continue
                 yield step.message, step
-            visible_step_ids_for_execution = visible_step_ids_by_execution_id.get(
-                exec_item.id, set()
-            )
-            for step_id in exec_item.step_ids:
-                if step_id in visible_step_ids_for_execution:
-                    continue
-                step = workflow_execution.get_step(step_id)
-                if step.message is None:
-                    continue
-                yield step.message, step
 
     def reverse_apply_patch_from_step(
         self,
@@ -255,8 +245,7 @@ class HistoryManager:
         elif branch.base_step_id == step.id:
             path = self._get_path_from_head(execution, step.id)
             branch.base_step_id = path[0] if path else step.id
-        if execution.active_branch_id == branch.id:
-            self._refresh_step_ids(execution)
+        self._refresh_step_ids(execution)
         return step
 
     def delete_steps(
@@ -416,8 +405,7 @@ class HistoryManager:
                 branch.base_step_id = persisted_step.id
             else:
                 branch.base_step_id = original_base_step_id
-            if execution.active_branch_id == branch.id:
-                self._refresh_step_ids(execution)
+            self._refresh_step_ids(execution)
         after_step_ids = execution.get_step_ids()
         return history_models.HistoryMutationResult(
             changed=before_step_ids != after_step_ids,
@@ -608,6 +596,20 @@ class HistoryManager:
     ) -> None:
         branch = self._ensure_default_branch(execution)
         execution.step_ids = self._compute_branch_step_ids(execution, branch.id)
+        for node_execution in execution.node_executions.values():
+            node_execution_branch_id = node_execution.branch_id
+            if node_execution_branch_id is None:
+                node_execution.step_ids = []
+                continue
+            branch_step_ids = self._compute_branch_step_ids(
+                execution,
+                node_execution_branch_id,
+            )
+            node_execution.step_ids = [
+                step_id
+                for step_id in branch_step_ids
+                if execution.get_step(step_id).execution_id == node_execution.id
+            ]
 
     def _compute_branch_step_ids(
         self,

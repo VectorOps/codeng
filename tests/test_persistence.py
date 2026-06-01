@@ -218,6 +218,11 @@ def test_codec_roundtrip_restores_visible_step_ids_from_branch_projection():
     assert restored.get_node_execution(branched_execution.id).step_ids == [step3.id]
     history.switch_branch(restored, branch1_id)
     assert restored.step_ids == [step1.id, step2.id]
+    assert restored.get_node_execution(node_execution.id).step_ids == [
+        step1.id,
+        step2.id,
+    ]
+    assert restored.get_node_execution(branched_execution.id).step_ids == [step3.id]
 
 
 def test_codec_roundtrip_preserves_compaction_step_and_execution_state() -> None:

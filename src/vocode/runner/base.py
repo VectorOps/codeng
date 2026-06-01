@@ -136,13 +136,3 @@ def iter_execution_messages(
             if step.message is None:
                 continue
             yield step.message, step
-        visible_step_ids_for_execution = visible_step_ids_by_execution_id.get(
-            exec_item.id, set()
-        )
-        for step_id in exec_item.step_ids:
-            if step_id in visible_step_ids_for_execution:
-                continue
-            step = workflow_execution.get_step(step_id)
-            if step.message is None:
-                continue
-            yield step.message, step
