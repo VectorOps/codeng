@@ -9,6 +9,7 @@ from aiohttp import web
 from vocode.webclient import errors as webclient_errors
 from vocode.webclient import models as webclient_models
 from vocode.webclient.backends.http import HTTPWebClientBackend
+from vocode.webclient.pipeline import process_raw_content
 
 
 async def _start_test_server(unused_tcp_port, handler_map: dict[str, object]):
@@ -328,3 +329,37 @@ async def test_http_backend_enforces_timeout(unused_tcp_port) -> None:
             await backend.fetch(request, settings)
     finally:
         await runner.cleanup()
+
+
+def test_process_raw_content_limits_text_lines() -> None:
+    raw = webclient_models.WebClientRawContent(
+        url="https://example.com/test.txt",
+        final_url="https://example.com/test.txt",
+        status_code=200,
+        content_type="text/plain",
+        text="line1\nline2\nline3",
+    )
+
+    result = process_raw_content(
+        raw,
+        webclient_models.WebClientSettings(max_text_lines=2),
+    )
+
+    assert result.text == "line1\nline2..."
+
+
+def test_process_raw_content_preserves_text_within_line_limit() -> None:
+    raw = webclient_models.WebClientRawContent(
+        url="https://example.com/test.txt",
+        final_url="https://example.com/test.txt",
+        status_code=200,
+        content_type="text/plain",
+        text="line1\nline2",
+    )
+
+    result = process_raw_content(
+        raw,
+        webclient_models.WebClientSettings(max_text_lines=2),
+    )
+
+    assert result.text == "line1\nline2"
