@@ -1062,3 +1062,108 @@ def test_reverse_move_restores_original_path():
     assert statuses == {"src/renamed.txt": FileApplyStatus.Update}
     assert writes["src/a.txt"] == "pre\n old\npost\n"
     assert deletes == ["src/renamed.txt"]
+
+
+def test_deterministic_chunk_application_preserves_added_lines_after_fuzzy_match():
+    patch_text = """*** Begin Patch
+*** Update File: src/example.cpp
+ void process_event(int32_t sender_id, uint16_t event_id, int32_t size, payload_t* payload) {
+-    if (event_id >= 1000 && event_id < 2000) {
+-        switch (event_id) {
++    if (message_id >= 1000 && message_id < 2000) {
++        switch (message_id) {
+             case 1000:
+                 if (state.cache == 0) {
+-                    copy_data(&state, payload, 16);
++                    copy_data(&state, message, sizeof(state));
+                     state.choice = state.cache;
+                     return;
+                 }
+
+-                copy_data(&state, payload, 16);
++                copy_data(&state, message, sizeof(state));
+                 state.choice = state.cache;
+                 return;
+
+             case 1002: {
+-                int16_t slot = payload->x;
+-                flags[slot] = 0;
++                int16_t player_idx = message->x;
++                flags[player_idx] = 0;
+
+                 if (owners[current].kind == primary_owner) {
+-                    if (slot == 0) {
++                    if (player_idx == 0) {
+                         active = 0;
+                         return;
+                     }
+                 } else {
+-                    if (slot == 1) {
++                    if (player_idx == 1) {
+                         active = 0;
+                         return;
+                     }
+                 }
+                 break;
+             }
+
+             case 1003:
+                 saved_warning = warning_flag;
+-                warning_flag = payload->x;
++                warning_flag = message->x;
+                 return;
+*** End Patch"""
+    initial = {
+        "src/example.cpp": (
+            "void process_event(int32_t sender_id, uint16_t event_id, int32_t size, payload_t* payload) {\n"
+            "    if (event_id >= 1000 && event_id < 2000) {\n"
+            "        switch (event_id) {\n"
+            "            case 1000:\n"
+            "                if (state.cache == 0) {\n"
+            "                    copy_data(&state, payload, 16);\n"
+            "                    state.choice = state.cache;\n"
+            "                    return;\n"
+            "                }\n"
+            "\n"
+            "                copy_data(&state, payload, 16);\n"
+            "                state.choice = state.cache;\n"
+            "                return;\n"
+            "\n"
+            "            case 1002: {\n"
+            "                int16_t slot = payload->x;\n"
+            "                flags[slot] = 0;\n"
+            "\n"
+            "                if (owners[current].kind == primary_owner) {\n"
+            "                    if (slot == 0) {\n"
+            "                        active = 0;\n"
+            "                        return;\n"
+            "                    }\n"
+            "                } else {\n"
+            "                    if (slot == 1) {\n"
+            "                        active = 0;\n"
+            "                        return;\n"
+            "                    }\n"
+            "                }\n"
+            "                break;\n"
+            "            }\n"
+            "\n"
+            "            case 1003:\n"
+            "                saved_warning = warning_flag;\n"
+            "                warning_flag = payload->x;\n"
+            "                return;\n"
+            "\n"
+            "            case 1004:\n"
+            "                wait_counter++;\n"
+            "                return;\n"
+        )
+    }
+    statuses, errs, writes, deletes, _ = run_patch(patch_text, initial_files=initial)
+    assert errs == []
+    assert deletes == []
+    updated = writes["src/example.cpp"]
+    assert "int16_t player_idx = message->x;" in updated
+    assert "flags[player_idx] = 0;" in updated
+    assert "if (player_idx == 0) {" in updated
+    assert "if (player_idx == 1) {" in updated
+    assert "warning_flag = message->x;" in updated
+    assert statuses == {"src/example.cpp": FileApplyStatus.Update}
