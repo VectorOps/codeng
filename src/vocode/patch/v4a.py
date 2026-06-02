@@ -209,6 +209,10 @@ CONTEXT_PREFIX = " "
 MOVE_TO_PREFIX = "*** Move to:"
 
 
+def _is_blankish_line(text: str) -> bool:
+    return text.strip() == ""
+
+
 # Partial/best match diagnostics removed; unmatched blocks will be quoted in hints.
 def render_chunk_block(ch: Chunk) -> str:
     """
@@ -383,7 +387,7 @@ def _drop_blank_context_lines(chunk: Chunk) -> Optional[Chunk]:
         if item.type == NeedleType.ANCHOR:
             new_items.append(item)
             continue
-        if item.type == NeedleType.CONTEXT and item.text == "":
+        if item.type == NeedleType.CONTEXT and _is_blankish_line(item.text):
             removed_pat_indices.append(pat_index)
         else:
             new_items.append(item)
@@ -952,9 +956,11 @@ def build_commits(
                     continue
 
                 # Fuzzy: treat an empty file line as an inserted empty CONTEXT where reasonable
-                if actual_line == "":
+                if _is_blankish_line(actual_line):
                     # Missing blank before a non-empty CONTEXT line
-                    if lt == NeedleType.CONTEXT and expected_line != "":
+                    if lt == NeedleType.CONTEXT and not _is_blankish_line(
+                        expected_line
+                    ):
                         insert_pat_positions.append(
                             j
                         )  # insert before current pattern position
