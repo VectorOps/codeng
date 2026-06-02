@@ -1077,6 +1077,17 @@ def build_commits(
                     j += 1
                     continue
 
+                if (
+                    lt == NeedleType.CONTEXT
+                    and _is_blankish_line(actual_line)
+                    and _is_blankish_line(expected_line)
+                ):
+                    matched += 1
+                    prev_was_context = True
+                    i += 1
+                    j += 1
+                    continue
+
                 # Fuzzy: treat an empty file line as an inserted empty CONTEXT where reasonable
                 if _is_blankish_line(actual_line):
                     # Missing blank before a non-empty CONTEXT line

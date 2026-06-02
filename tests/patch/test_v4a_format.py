@@ -1167,3 +1167,77 @@ def test_deterministic_chunk_application_preserves_added_lines_after_fuzzy_match
     assert "if (player_idx == 1) {" in updated
     assert "warning_flag = message->x;" in updated
     assert statuses == {"src/example.cpp": FileApplyStatus.Update}
+
+
+def test_whitespace_only_file_blank_matches_empty_patch_context_in_large_chunk():
+    patch_text = """*** Begin Patch
+*** Update File: src/example.cpp
+ #include "pch.h"
+
+ namespace CACHEMOD {
+-    record_t* load_item(int16_t x, int16_t y, int16_t kind) {
++    record_t* load_item(int16_t item_x, int16_t item_y, int16_t item_kind) {
+         char filename[28];
+-        int type_index = (int)kind - 1;
+-        int file_number = type_index / 10;
+-        int frame_index = type_index % 10;
++        int32_t type_index = (int32_t)item_kind - 1;
++        int32_t file_number = type_index / 10;
++        int32_t frame_index = type_index % 10;
+
+-        char* format = get_format(STR_ID);
+-        sprintf(filename, format, file_number);
++        char* filename_format = get_format(STR_ID);
++        sprintf(filename, filename_format, file_number);
+
+-        void* cache_seg = global_cache;
++        void* global_cache_seg = global_cache;
+
+-        int16_t base_frame = coords_to_frame(x, y);
++        int16_t base_item_frame = coords_to_frame(item_x, item_y);
+
+-        int effective_frame = (int)base_frame + (frame_index * 36);
++        int32_t effective_frame = (int32_t)base_item_frame + (frame_index * 36);
+
+-        return (record_t*)reload_buffer(filename, effective_frame, cache_seg);
++        return (record_t*)reload_buffer(filename, effective_frame, global_cache_seg);
+     }
+ }
+*** End Patch"""
+    initial = {
+        "src/example.cpp": (
+            "#include \"pch.h\"\n"
+            "\n"
+            "namespace CACHEMOD {\n"
+            "    record_t* load_item(int16_t x, int16_t y, int16_t kind) {\n"
+            "        char filename[28];\n"
+            "        int type_index = (int)kind - 1;\n"
+            "        int file_number = type_index / 10;\n"
+            "        int frame_index = type_index % 10;\n"
+            "\n"
+            "        char* format = get_format(STR_ID);\n"
+            "        sprintf(filename, format, file_number);\n"
+            "\n"
+            "        void* cache_seg = global_cache;\n"
+            "        \n"
+            "        int16_t base_frame = coords_to_frame(x, y);\n"
+            "\n"
+            "        int effective_frame = (int)base_frame + (frame_index * 36);\n"
+            "\n"
+            "        return (record_t*)reload_buffer(filename, effective_frame, cache_seg);\n"
+            "    }\n"
+            "}\n"
+        )
+    }
+    statuses, errs, writes, deletes, _ = run_patch(patch_text, initial_files=initial)
+    assert errs == []
+    assert deletes == []
+    updated = writes["src/example.cpp"]
+    assert "record_t* load_item(int16_t item_x, int16_t item_y, int16_t item_kind)" in updated
+    assert "int32_t type_index = (int32_t)item_kind - 1;" in updated
+    assert "char* filename_format = get_format(STR_ID);" in updated
+    assert "void* global_cache_seg = global_cache;" in updated
+    assert "int16_t base_item_frame = coords_to_frame(item_x, item_y);" in updated
+    assert "int32_t effective_frame = (int32_t)base_item_frame + (frame_index * 36);" in updated
+    assert "return (record_t*)reload_buffer(filename, effective_frame, global_cache_seg);" in updated
+    assert statuses == {"src/example.cpp": FileApplyStatus.Update}
