@@ -185,7 +185,7 @@ class WebClientSettings(vars_mod.BaseVarModel):
     max_redirects: int = Field(default=5, ge=0)
     follow_redirects: bool = True
     max_content_bytes: int = Field(default=2_000_000, gt=0)
-    max_text_lines: int = Field(default=10_000, gt=0)
+    max_text_bytes: int = Field(default=10 * 1024, gt=0)
     user_agent: str = "vocode-webclient/1"
     allowed_schemes: List[str] = Field(default_factory=lambda: ["http", "https"])
     url_blocklist: List[str] = Field(default_factory=list)

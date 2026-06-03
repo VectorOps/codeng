@@ -6,7 +6,7 @@ from vocode.webclient import content
 from vocode.webclient import errors
 from vocode.webclient import models
 
-_TEXT_LINE_TRUNCATION_MARKER = "..."
+_TEXT_BYTE_TRUNCATION_MARKER = "\n..."
 
 
 def _decode_raw_text(raw: models.WebClientRawContent) -> str:
@@ -45,24 +45,24 @@ def _validate_allowed_content_types(
     raise errors.WebClientContentError("content type is not allowed")
 
 
-def _truncate_text_lines(
+def _truncate_text_bytes(
     text: str,
     settings: Optional[models.WebClientSettings],
 ) -> str:
     if settings is None:
         return text
-    max_text_lines = settings.max_text_lines
-    if max_text_lines <= 0:
+    max_text_bytes = settings.max_text_bytes
+    if max_text_bytes <= 0:
         return text
-    lines = text.split("\n")
-    if len(lines) <= max_text_lines:
+    text_bytes = text.encode("utf-8")
+    if len(text_bytes) <= max_text_bytes:
         return text
-    truncated_lines = lines[:max_text_lines]
-    if truncated_lines:
-        truncated_lines[-1] = truncated_lines[-1] + _TEXT_LINE_TRUNCATION_MARKER
-    else:
-        truncated_lines.append(_TEXT_LINE_TRUNCATION_MARKER)
-    return "\n".join(truncated_lines)
+    marker_bytes = _TEXT_BYTE_TRUNCATION_MARKER.encode("utf-8")
+    if max_text_bytes <= len(marker_bytes):
+        return marker_bytes[:max_text_bytes].decode("utf-8", errors="ignore")
+    keep_bytes = max_text_bytes - len(marker_bytes)
+    truncated_text = text_bytes[:keep_bytes].decode("utf-8", errors="ignore")
+    return truncated_text + _TEXT_BYTE_TRUNCATION_MARKER
 
 
 def process_raw_content(
@@ -78,7 +78,7 @@ def process_raw_content(
     else:
         final_text = content.normalize_text_output(decoded_text)
 
-    final_text = _truncate_text_lines(final_text, settings)
+    final_text = _truncate_text_bytes(final_text, settings)
 
     if not final_text:
         raise errors.WebClientContentError("response body is empty")

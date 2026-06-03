@@ -331,35 +331,18 @@ async def test_http_backend_enforces_timeout(unused_tcp_port) -> None:
         await runner.cleanup()
 
 
-def test_process_raw_content_limits_text_lines() -> None:
+def test_process_raw_content_limits_text_bytes() -> None:
     raw = webclient_models.WebClientRawContent(
         url="https://example.com/test.txt",
         final_url="https://example.com/test.txt",
         status_code=200,
         content_type="text/plain",
-        text="line1\nline2\nline3",
+        text="abcdefghijklmno",
     )
 
     result = process_raw_content(
         raw,
-        webclient_models.WebClientSettings(max_text_lines=2),
+        webclient_models.WebClientSettings(max_text_bytes=10),
     )
 
-    assert result.text == "line1\nline2..."
-
-
-def test_process_raw_content_preserves_text_within_line_limit() -> None:
-    raw = webclient_models.WebClientRawContent(
-        url="https://example.com/test.txt",
-        final_url="https://example.com/test.txt",
-        status_code=200,
-        content_type="text/plain",
-        text="line1\nline2",
-    )
-
-    result = process_raw_content(
-        raw,
-        webclient_models.WebClientSettings(max_text_lines=2),
-    )
-
-    assert result.text == "line1\nline2"
+    assert result.text == "abcdef\n..."

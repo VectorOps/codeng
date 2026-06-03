@@ -12,6 +12,15 @@ from vocode.webclient import models as webclient_models
 from vocode.webclient import service as webclient_service
 
 
+def _format_text_limit_description(settings: webclient_models.WebClientSettings) -> str:
+    max_text_kb = settings.max_text_bytes / 1024
+    if float(max_text_kb).is_integer():
+        max_text_kb_text = str(int(max_text_kb))
+    else:
+        max_text_kb_text = f"{max_text_kb:.1f}"
+    return f"Text output is truncated to {max_text_kb_text}KB."
+
+
 class WebFetchArgs(BaseModel):
     url: str
     method: webclient_models.WebClientMethod = webclient_models.WebClientMethod.get
@@ -138,10 +147,12 @@ class WebFetchTool(tools_base.BaseTool):
             )
 
     async def openapi_spec(self, spec: ToolSpec) -> Dict[str, Any]:
+        settings = _build_tool_settings(self.prj, spec)
         return {
             "name": self.name,
             "description": (
-                "Send an HTTP request and return normalized markdown or plain text content."
+                "Send an HTTP request and return normalized markdown or plain text content. "
+                + _format_text_limit_description(settings)
             ),
             "parameters": {
                 "type": "object",
