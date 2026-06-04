@@ -8,6 +8,7 @@ from rich import panel as rich_panel
 from rich import padding as rich_padding
 from rich import segment as rich_segment
 from rich import style as rich_style
+import time
 
 from vocode import models, state
 from vocode.tui import lib as tui_terminal
@@ -15,6 +16,7 @@ from vocode.tui import uistate as tui_uistate
 from vocode.history.manager import HistoryManager
 from vocode.tui.components import tool_call_req as tool_call_req_component
 from vocode.tui.lib import controls as tui_controls
+from vocode.tui.lib.components import step_output_component as tui_step_output_component
 from vocode.tui.lib.components import input_component as tui_input_component
 from vocode.tui.lib.input import base as input_base
 from vocode import settings as vocode_settings
@@ -786,6 +788,45 @@ async def test_incremental_render_removes_middle_component() -> None:
     assert tui_controls.ERASE_SCROLLBACK not in output
     assert tui_controls.ERASE_DOWN in output
     assert second not in terminal.components
+
+
+@pytest.mark.asyncio
+async def test_incremental_render_large_streaming_output_scales_with_text_size() -> (
+    None
+):
+    buffer = io.StringIO()
+    console = rich_console.Console(
+        file=buffer,
+        force_terminal=True,
+        color_system=None,
+        width=80,
+        height=40,
+    )
+    settings = tui_terminal.TerminalSettings(auto_render=False)
+    terminal = tui_terminal.Terminal(console=console, settings=settings)
+
+    text = ("hello world\n" * 10000).strip()
+    component = tui_step_output_component.StepOutputComponent(
+        text=text,
+        content_type=models.StepContentType.MARKDOWN,
+        id="streaming-output",
+    )
+    terminal.append_component(component)
+    await terminal.render()
+
+    buffer.truncate(0)
+    buffer.seek(0)
+
+    start = time.perf_counter()
+    component.set_value(
+        text=text + "\nnext token",
+        content_type=models.StepContentType.MARKDOWN,
+    )
+    await terminal.render()
+    elapsed = time.perf_counter() - start
+
+    assert "next token" in buffer.getvalue()
+    assert elapsed > 0.01
 
 
 @pytest.mark.asyncio

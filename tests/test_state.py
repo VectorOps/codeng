@@ -741,6 +741,80 @@ def test_upsert_step_updates_existing_step_without_duplicate_node_step_ids() -> 
     assert run.get_step(step.id).is_complete is False
 
 
+def test_upsert_step_same_lineage_does_not_refresh_step_ids() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    message1 = state.Message(role=models.Role.ASSISTANT, text="one")
+    message2 = state.Message(role=models.Role.ASSISTANT, text="two")
+    history.upsert_message(run, message1)
+    history.upsert_message(run, message2)
+
+    step = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message1.id,
+        ),
+    )
+
+    calls: list[object] = []
+    original = history._refresh_step_ids
+
+    def wrapped_refresh_step_ids(execution_arg: state.WorkflowExecution) -> None:
+        calls.append(object())
+        original(execution_arg)
+
+    history._refresh_step_ids = wrapped_refresh_step_ids
+    try:
+        updated = step.model_copy(update={"message_id": message2.id})
+        history.upsert_step(run, updated)
+    finally:
+        history._refresh_step_ids = original
+
+    assert calls == []
+    assert execution.step_ids == [step.id]
+    assert run.step_ids == [step.id]
+
+
+def test_upsert_step_append_to_head_updates_projections_without_refresh() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    first = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+
+    calls: list[object] = []
+    original = history._refresh_step_ids
+
+    def wrapped_refresh_step_ids(execution_arg: state.WorkflowExecution) -> None:
+        calls.append(object())
+        original(execution_arg)
+
+    history._refresh_step_ids = wrapped_refresh_step_ids
+    try:
+        second = history.upsert_step(
+            run,
+            state.Step(
+                execution_id=execution.id,
+                type=state.StepType.INPUT_MESSAGE,
+            ),
+        )
+    finally:
+        history._refresh_step_ids = original
+
+    assert calls == []
+    assert run.step_ids == [first.id, second.id]
+    assert execution.step_ids == [first.id, second.id]
+    assert run.get_active_branch().head_step_id == second.id
+
+
 def test_upsert_step_reparents_existing_step() -> None:
     history = HistoryManager()
     run = state.WorkflowExecution(workflow_name="wf")
