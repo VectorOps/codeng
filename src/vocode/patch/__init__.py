@@ -275,7 +275,7 @@ def apply_patch(
             for f in targets_for_fix:
                 lines.append(f"* {f}")
             lines.append(
-                "If there were other files that were not mentioned in this response, regenerate chunks for them as well. You might want to re-read the source files."
+                "If there were other files that were not mentioned in this response, regenerate chunks for them as well. When a file had a partial apply or a failed retry, you may re-read the current full file contents before regenerating the remaining patch chunks."
             )
 
         lines.append("Errors:")
