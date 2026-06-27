@@ -2530,6 +2530,16 @@ async def test_llm_executor_timeouts_retry_and_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_count = {"n": 0}
+    sleep_delays: List[float] = []
+    original_sleep = asyncio.sleep
+
+    async def _fast_sleep(delay: float) -> None:
+        if delay >= 1000:
+            return await original_sleep(delay)
+        sleep_delays.append(delay)
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
 
     def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
         call_count["n"] += 1
@@ -2556,6 +2566,7 @@ async def test_llm_executor_timeouts_retry_and_fail(
         steps.append(step)
 
     assert call_count["n"] == 4
+    assert sleep_delays == [1, 2, 4]
     assert steps
     final_step = steps[-1]
     assert final_step.type == state.StepType.REJECTION
@@ -2567,6 +2578,16 @@ async def test_llm_executor_retry_clears_partial_streamed_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_count = {"n": 0}
+    sleep_delays: List[float] = []
+    original_sleep = asyncio.sleep
+
+    async def _fast_sleep(delay: float) -> None:
+        if delay >= 1000:
+            return await original_sleep(delay)
+        sleep_delays.append(delay)
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
 
     def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
         call_count["n"] += 1
@@ -2597,6 +2618,7 @@ async def test_llm_executor_retry_clears_partial_streamed_text(
         steps.append(step)
 
     assert call_count["n"] == 2
+    assert sleep_delays == [1]
     output_steps = [s for s in steps if s.type == state.StepType.OUTPUT_MESSAGE]
     assert output_steps
     final_message_step = output_steps[-1]
@@ -2673,6 +2695,16 @@ async def test_llm_executor_start_timeout_ignores_empty_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     call_count = {"n": 0}
+    sleep_delays: List[float] = []
+    original_sleep = asyncio.sleep
+
+    async def _fast_sleep(delay: float) -> None:
+        if delay >= 1000:
+            return await original_sleep(delay)
+        sleep_delays.append(delay)
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
 
     def fake_client_factory(*args, **kwargs) -> FakeAsyncLLMClient:
         call_count["n"] += 1
@@ -2698,6 +2730,7 @@ async def test_llm_executor_start_timeout_ignores_empty_chunks(
         steps.append(step)
 
     assert call_count["n"] == 4
+    assert sleep_delays == [1, 2, 4]
     assert steps
     assert all(
         s.type != state.StepType.OUTPUT_MESSAGE or not s.message or not s.message.text

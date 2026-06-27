@@ -998,6 +998,12 @@ class LLMExecutor(runner_base.BaseExecutor):
                     logger.error("LLM timeout", err=e)
                     if attempt < cfg.max_retries:
                         attempt += 1
+                        await asyncio.sleep(1 * (2 ** (attempt - 1)))
+                        logger.warning(
+                            "LLM timeout retry",
+                            attempt=attempt,
+                            max_retries=cfg.max_retries,
+                        )
                         continue
 
                     error_step = self._build_step_from_message(
