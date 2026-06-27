@@ -12,6 +12,33 @@ from . import models as history_models
 
 
 class HistoryManager:
+    def _append_step_projection(
+        self,
+        execution: state.WorkflowExecution,
+        branch_id: UUID,
+        step: state.Step,
+    ) -> bool:
+        branch = execution.get_branch(branch_id)
+        active_branch_id = execution.active_branch_id
+
+        if branch.head_step_id != step.parent_step_id:
+            return False
+
+        if active_branch_id == branch_id:
+            if execution.step_ids:
+                if execution.step_ids[-1] != step.parent_step_id:
+                    return False
+            elif step.parent_step_id is not None:
+                return False
+            execution.step_ids.append(step.id)
+
+        node_execution = execution.get_node_execution(step.execution_id)
+        node_execution.step_ids.append(step.id)
+        branch.head_step_id = step.id
+        if branch.base_step_id is None:
+            branch.base_step_id = step.id
+        return True
+
     def _iter_message_pairs_for_step_ids(
         self,
         execution: state.NodeExecution,
@@ -57,16 +84,6 @@ class HistoryManager:
                     continue
                 yield message, None
             for step in visible_steps_by_execution_id.get(exec_item.id, []):
-                if step.message is None:
-                    continue
-                yield step.message, step
-            visible_step_ids_for_execution = visible_step_ids_by_execution_id.get(
-                exec_item.id, set()
-            )
-            for step_id in exec_item.step_ids:
-                if step_id in visible_step_ids_for_execution:
-                    continue
-                step = workflow_execution.get_step(step_id)
                 if step.message is None:
                     continue
                 yield step.message, step
@@ -224,6 +241,7 @@ class HistoryManager:
             raise KeyError(f"Unknown message id: {step.message_id}")
         if step.parent_step_id is None and existing is None:
             step.parent_step_id = branch.head_step_id
+        should_refresh = True
         if existing is not None:
             if existing.execution_id != step.execution_id:
                 old_execution = execution.get_node_execution(existing.execution_id)
@@ -239,15 +257,29 @@ class HistoryManager:
                             for child_id in old_parent.child_step_ids
                             if child_id != step.id
                         ]
+            if (
+                existing.execution_id == step.execution_id
+                and existing.parent_step_id == step.parent_step_id
+            ):
+                should_refresh = False
         if step.parent_step_id is not None:
             parent_step = execution.get_step(step.parent_step_id)
             if step.id not in parent_step.child_step_ids:
                 parent_step.child_step_ids.append(step.id)
         step._workflow_execution = execution
         execution.steps_by_id[step.id] = step
-        if step.id not in node_execution.step_ids:
+        appended = False
+        if existing is None:
+            appended = self._append_step_projection(
+                execution,
+                node_execution.branch_id,
+                step,
+            )
+            if not appended and step.id not in node_execution.step_ids:
+                node_execution.step_ids.append(step.id)
+        elif step.id not in node_execution.step_ids:
             node_execution.step_ids.append(step.id)
-        if existing is None or branch.head_step_id == step.id:
+        if (existing is None and not appended) or branch.head_step_id == step.id:
             branch.head_step_id = step.id
         if branch.base_step_id is None:
             path = self._get_path_from_head(execution, step.id)
@@ -255,7 +287,9 @@ class HistoryManager:
         elif branch.base_step_id == step.id:
             path = self._get_path_from_head(execution, step.id)
             branch.base_step_id = path[0] if path else step.id
-        if execution.active_branch_id == branch.id:
+        if existing is None:
+            should_refresh = not appended
+        if should_refresh:
             self._refresh_step_ids(execution)
         return step
 
@@ -416,8 +450,7 @@ class HistoryManager:
                 branch.base_step_id = persisted_step.id
             else:
                 branch.base_step_id = original_base_step_id
-            if execution.active_branch_id == branch.id:
-                self._refresh_step_ids(execution)
+            self._refresh_step_ids(execution)
         after_step_ids = execution.get_step_ids()
         return history_models.HistoryMutationResult(
             changed=before_step_ids != after_step_ids,
@@ -608,6 +641,20 @@ class HistoryManager:
     ) -> None:
         branch = self._ensure_default_branch(execution)
         execution.step_ids = self._compute_branch_step_ids(execution, branch.id)
+        for node_execution in execution.node_executions.values():
+            node_execution_branch_id = node_execution.branch_id
+            if node_execution_branch_id is None:
+                node_execution.step_ids = []
+                continue
+            branch_step_ids = self._compute_branch_step_ids(
+                execution,
+                node_execution_branch_id,
+            )
+            node_execution.step_ids = [
+                step_id
+                for step_id in branch_step_ids
+                if execution.get_step(step_id).execution_id == node_execution.id
+            ]
 
     def _compute_branch_step_ids(
         self,

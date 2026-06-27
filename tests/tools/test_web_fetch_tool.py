@@ -9,6 +9,7 @@ from vocode.settings import ToolSettings
 from vocode.tools import ToolFactory, base as tools_base
 from vocode.tools.web_fetch_tool import WebFetchTool
 from vocode.tools.web_fetch_tool import _build_tool_policy
+from vocode.tools.web_fetch_tool import _format_text_limit_description
 from vocode.webclient import models as webclient_models
 from vocode.webclient import service as webclient_service
 from vocode.webclient.errors import WebClientAccessError
@@ -94,6 +95,7 @@ async def test_web_fetch_tool_openapi_spec_documents_header_support() -> None:
     spec = await tool.openapi_spec(ToolSpec(name="web_fetch"))
 
     assert spec["name"] == "web_fetch"
+    assert "Text output is truncated to 10KB." in spec["description"]
     assert "headers" in spec["parameters"]["properties"]
     assert spec["parameters"]["properties"]["headers"] == {
         "type": "object",
@@ -181,3 +183,11 @@ def test_web_fetch_tool_policy_uses_project_settings() -> None:
     )
     policy = _build_tool_policy(project)
     assert policy.default_url_blocklist == ["localhost", "127.0.0.1"]
+
+
+def test_format_text_limit_description_uses_active_settings() -> None:
+    description = _format_text_limit_description(
+        webclient_models.WebClientSettings(max_text_bytes=2048)
+    )
+
+    assert description == "Text output is truncated to 2KB."

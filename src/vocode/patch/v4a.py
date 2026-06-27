@@ -410,6 +410,128 @@ def _drop_blank_context_lines(chunk: Chunk) -> Optional[Chunk]:
     return Chunk(items=new_items, edits=new_edits, start_line=chunk.start_line)
 
 
+def _copy_chunk(chunk: Chunk) -> Chunk:
+    return Chunk(
+        items=[NeedleItem(item.type, item.text) for item in chunk.items],
+        edits=[
+            EditGroup(
+                start_pat_index=edit.start_pat_index,
+                del_count=edit.del_count,
+                additions=list(edit.additions),
+            )
+            for edit in chunk.edits
+        ],
+        start_line=chunk.start_line,
+    )
+
+
+def _insert_blank_context_lines(chunk: Chunk, positions: List[int]) -> Chunk:
+    if not positions:
+        return _copy_chunk(chunk)
+
+    new_chunk = _copy_chunk(chunk)
+    pat_items_idx = [
+        idx
+        for idx, item in enumerate(new_chunk.items)
+        if item.type != NeedleType.ANCHOR
+    ]
+    for pos in sorted(positions):
+        insert_at_items_idx = pat_items_idx[pos]
+        new_chunk.items.insert(insert_at_items_idx, NeedleItem(NeedleType.CONTEXT, ""))
+        for idx in range(pos, len(pat_items_idx)):
+            pat_items_idx[idx] += 1
+        for edit in new_chunk.edits:
+            if edit.start_pat_index >= pos:
+                edit.start_pat_index += 1
+    return new_chunk
+
+
+def _build_replacement_lines(
+    file_lines: List[str], start: int, chunk: Chunk
+) -> Tuple[Optional[List[str]], Optional[str], Optional[int]]:
+    pat_built: List[tuple[NeedleType, str]] = [
+        (item.type, item.text) for item in chunk.items if item.type != NeedleType.ANCHOR
+    ]
+    replacement: List[str] = []
+    group_progress: Dict[int, int] = {}
+    inserted_group: Dict[int, bool] = {}
+    emitted_additions = 0
+    k = start
+    for jj, (line_type, _line_text) in enumerate(pat_built):
+        for gi, edit in enumerate(chunk.edits):
+            if (
+                edit.del_count == 0
+                and edit.start_pat_index == jj
+                and not inserted_group.get(gi, False)
+            ):
+                replacement.extend(edit.additions)
+                emitted_additions += len(edit.additions)
+                inserted_group[gi] = True
+        if line_type == NeedleType.CONTEXT:
+            if k >= len(file_lines):
+                return (
+                    None,
+                    "Matched range ended unexpectedly while copying context",
+                    None,
+                )
+            replacement.append(file_lines[k])
+            k += 1
+            continue
+        if line_type == NeedleType.DELETE:
+            if k >= len(file_lines):
+                return (
+                    None,
+                    "Matched range ended unexpectedly while consuming deletions",
+                    None,
+                )
+            k += 1
+            for gi, edit in enumerate(chunk.edits):
+                if (
+                    edit.del_count > 0
+                    and edit.start_pat_index
+                    <= jj
+                    < edit.start_pat_index + edit.del_count
+                ):
+                    group_progress[gi] = group_progress.get(gi, 0) + 1
+                    if group_progress[gi] == edit.del_count and not inserted_group.get(
+                        gi, False
+                    ):
+                        replacement.extend(edit.additions)
+                        emitted_additions += len(edit.additions)
+                        inserted_group[gi] = True
+    pat_len_now = len(pat_built)
+    for gi, edit in enumerate(chunk.edits):
+        if edit.start_pat_index == pat_len_now and not inserted_group.get(gi, False):
+            replacement.extend(edit.additions)
+            emitted_additions += len(edit.additions)
+            inserted_group[gi] = True
+
+    for gi, edit in enumerate(chunk.edits):
+        if edit.del_count > 0 and group_progress.get(gi, 0) != edit.del_count:
+            return (
+                None,
+                f"Deterministic chunk application failed: delete group {gi} was only partially consumed",
+                None,
+            )
+        if not inserted_group.get(gi, False):
+            return (
+                None,
+                f"Deterministic chunk application failed: addition group {gi} was not emitted",
+                None,
+            )
+
+    expected_additions = sum(len(edit.additions) for edit in chunk.edits)
+    if emitted_additions != expected_additions:
+        return (
+            None,
+            "Deterministic chunk application failed: emitted additions did not match the patch",
+            None,
+        )
+
+    end_idx = start + len(pat_built)
+    return replacement, None, end_idx
+
+
 def parse_v4a_patch(text: str) -> Tuple[Patch, List[PatchError]]:
     """
     Best-effort, resilient V4A parser.
@@ -955,6 +1077,17 @@ def build_commits(
                     j += 1
                     continue
 
+                if (
+                    lt == NeedleType.CONTEXT
+                    and _is_blankish_line(actual_line)
+                    and _is_blankish_line(expected_line)
+                ):
+                    matched += 1
+                    prev_was_context = True
+                    i += 1
+                    j += 1
+                    continue
+
                 # Fuzzy: treat an empty file line as an inserted empty CONTEXT where reasonable
                 if _is_blankish_line(actual_line):
                     # Missing blank before a non-empty CONTEXT line
@@ -977,67 +1110,19 @@ def build_commits(
 
                 return False, matched, None, insert_pat_positions, None, None
 
-            # Success: mutate chunk items to include inserted blanks at the recorded pat indices
-            if insert_pat_positions:
-                # Map pat index -> items index
-                items_idx_for_pat = list(pat_items_idx)
-                for pos in sorted(insert_pat_positions):
-                    insert_at_items_idx = items_idx_for_pat[pos]
-                    chunk.items.insert(
-                        insert_at_items_idx, NeedleItem(NeedleType.CONTEXT, "")
-                    )
-                    # When we insert, subsequent item indices shift by +1 for >= insert_at_items_idx
-                    for k in range(pos, len(items_idx_for_pat)):
-                        items_idx_for_pat[k] += 1
-                    # Also shift edit groups whose start index is at or after this insertion
-                    for g in chunk.edits:
-                        if g.start_pat_index >= pos:
-                            g.start_pat_index += 1
-            # Build replacement buffer now that we have a complete match
-            pat_built: List[tuple[NeedleType, str]] = [
-                (it.type, it.text) for it in chunk.items if it.type != NeedleType.ANCHOR
-            ]
-            replacement: List[str] = []
-            group_progress: Dict[int, int] = {}
-            inserted_group: Dict[int, bool] = {}
-            k = start
-            for jj, (lt2, _t2) in enumerate(pat_built):
-                # Insert zero-delete additions at this position
-                for gi, g in enumerate(chunk.edits):
-                    if (
-                        g.del_count == 0
-                        and g.start_pat_index == jj
-                        and not inserted_group.get(gi, False)
-                    ):
-                        replacement.extend(g.additions)
-                        inserted_group[gi] = True
-                if lt2 == NeedleType.CONTEXT:
-                    replacement.append(file_lines[k])
-                    k += 1
-                elif lt2 == NeedleType.DELETE:
-                    k += 1
-                    for gi, g in enumerate(chunk.edits):
-                        if (
-                            g.del_count > 0
-                            and g.start_pat_index
-                            <= jj
-                            < g.start_pat_index + g.del_count
-                        ):
-                            group_progress[gi] = group_progress.get(gi, 0) + 1
-                            if group_progress[
-                                gi
-                            ] == g.del_count and not inserted_group.get(gi, False):
-                                replacement.extend(g.additions)
-                                inserted_group[gi] = True
-            # Tail insertions (groups at end)
-            pat_len_now = len(pat_built)
-            for gi, g in enumerate(chunk.edits):
-                if g.start_pat_index == pat_len_now and not inserted_group.get(
-                    gi, False
-                ):
-                    replacement.extend(g.additions)
-                    inserted_group[gi] = True
-            end_idx = start + len(pat_built)
+            normalized_chunk = _insert_blank_context_lines(chunk, insert_pat_positions)
+            replacement, replacement_error, end_idx = _build_replacement_lines(
+                file_lines, start, normalized_chunk
+            )
+            if replacement is None or end_idx is None:
+                return (
+                    False,
+                    matched,
+                    replacement_error,
+                    insert_pat_positions,
+                    None,
+                    None,
+                )
             return True, matched, None, [], replacement, end_idx
 
         for start in candidate_starts:

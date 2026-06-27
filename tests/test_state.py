@@ -711,13 +711,7 @@ def test_edit_user_input_preserves_visible_history_and_execution_chain() -> None
         message.text
         for message, _step in iter_execution_messages(replacement_execution)
     ]
-    assert rebuilt_texts == [
-        "original input",
-        "prompt",
-        "old user input",
-        "old output",
-        "new user input",
-    ]
+    assert rebuilt_texts == ["original input", "prompt", "new user input"]
     _assert_execution_iteration_matches_history_view(history, replacement_execution)
 
 
@@ -745,6 +739,80 @@ def test_upsert_step_updates_existing_step_without_duplicate_node_step_ids() -> 
     assert execution.step_ids == [step.id]
     assert run.get_step(step.id).message_id == message2.id
     assert run.get_step(step.id).is_complete is False
+
+
+def test_upsert_step_same_lineage_does_not_refresh_step_ids() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    message1 = state.Message(role=models.Role.ASSISTANT, text="one")
+    message2 = state.Message(role=models.Role.ASSISTANT, text="two")
+    history.upsert_message(run, message1)
+    history.upsert_message(run, message2)
+
+    step = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+            message_id=message1.id,
+        ),
+    )
+
+    calls: list[object] = []
+    original = history._refresh_step_ids
+
+    def wrapped_refresh_step_ids(execution_arg: state.WorkflowExecution) -> None:
+        calls.append(object())
+        original(execution_arg)
+
+    history._refresh_step_ids = wrapped_refresh_step_ids
+    try:
+        updated = step.model_copy(update={"message_id": message2.id})
+        history.upsert_step(run, updated)
+    finally:
+        history._refresh_step_ids = original
+
+    assert calls == []
+    assert execution.step_ids == [step.id]
+    assert run.step_ids == [step.id]
+
+
+def test_upsert_step_append_to_head_updates_projections_without_refresh() -> None:
+    history = HistoryManager()
+    run = state.WorkflowExecution(workflow_name="wf")
+    execution = _make_node_execution(run, "node-1")
+    first = history.upsert_step(
+        run,
+        state.Step(
+            execution_id=execution.id,
+            type=state.StepType.OUTPUT_MESSAGE,
+        ),
+    )
+
+    calls: list[object] = []
+    original = history._refresh_step_ids
+
+    def wrapped_refresh_step_ids(execution_arg: state.WorkflowExecution) -> None:
+        calls.append(object())
+        original(execution_arg)
+
+    history._refresh_step_ids = wrapped_refresh_step_ids
+    try:
+        second = history.upsert_step(
+            run,
+            state.Step(
+                execution_id=execution.id,
+                type=state.StepType.INPUT_MESSAGE,
+            ),
+        )
+    finally:
+        history._refresh_step_ids = original
+
+    assert calls == []
+    assert run.step_ids == [first.id, second.id]
+    assert execution.step_ids == [first.id, second.id]
+    assert run.get_active_branch().head_step_id == second.id
 
 
 def test_upsert_step_reparents_existing_step() -> None:
@@ -846,7 +914,7 @@ def test_insert_step_splices_between_existing_visible_steps() -> None:
     assert result.changed is True
     assert result.mutation_kind == history_models.HistoryMutationKind.INSERT
     assert run.step_ids == [step1.id, inserted.id, step2.id, step3.id]
-    assert execution.step_ids == [step1.id, step2.id, step3.id, inserted.id]
+    assert execution.step_ids == [step1.id, inserted.id, step2.id, step3.id]
     assert run.get_step(inserted.id).parent_step_id == step1.id
     assert run.get_step(step2.id).parent_step_id == inserted.id
     assert run.get_active_branch().head_step_id == step3.id
@@ -906,7 +974,7 @@ def test_insert_step_supports_cross_execution_splice_on_active_branch() -> None:
     assert run.step_ids == [step1.id, inserted.id, step2.id, step3.id]
     assert run.get_active_branch().head_step_id == step3.id
     assert execution1.step_ids == [step1.id, step2.id]
-    assert execution2.step_ids == [step3.id, inserted.id]
+    assert execution2.step_ids == [inserted.id, step3.id]
     assert run.get_step(step2.id).parent_step_id == inserted.id
     _assert_execution_iteration_matches_history_view(history, execution2)
 
