@@ -59,6 +59,56 @@ def test_exec_tool_basic_stderr_and_timeout(tmp_path: Path):
     asyncio.run(scenario())
 
 
+def test_exec_tool_timeout_respects_argument_parameter(tmp_path: Path):
+    async def scenario():
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        proj = StubProject(process_manager=pm)
+        tool = ExecTool(proj)
+        spec = ToolSpec(name="exec")
+        execution = vocode_state.WorkflowExecution(workflow_name="test")
+        tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+
+        resp = await tool.run(
+            tool_req,
+            {"command": "sleep 5", "timeout_s": 0.1},
+        )
+        data = json.loads(resp.text or "{}")
+
+        assert data["timed_out"] is True
+        assert data["exit_code"] is None
+        assert data["output"] == ""
+
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_exec_tool_timeout_respects_project_settings(tmp_path: Path):
+    async def scenario():
+        pm = ProcessManager(backend_name="local", default_cwd=tmp_path)
+        settings = Settings(
+            tool_settings=ToolSettings(
+                exec_tool=ExecToolSettings(timeout_s=0.1),
+            ),
+        )
+        proj = StubProject(settings=settings, process_manager=pm)
+        tool = ExecTool(proj)
+        spec = ToolSpec(name="exec")
+        execution = vocode_state.WorkflowExecution(workflow_name="test")
+        tool_req = tools_base.ToolReq(execution=execution, spec=spec)
+
+        resp = await tool.run(tool_req, {"command": "sleep 5"})
+        data = json.loads(resp.text or "{}")
+
+        assert data["timed_out"] is True
+        assert data["exit_code"] is None
+        assert data["output"] == ""
+
+        await pm.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_exec_tool_cancellation_stops_process(tmp_path: Path):
     async def scenario():
         pm = ProcessManager(backend_name="local", default_cwd=tmp_path)

@@ -119,39 +119,50 @@ class ExecTool(tools_base.BaseTool):
 
         # Parse args
         command: Optional[str] = None
+        arg_timeout: Optional[float] = None
         if isinstance(args, str):
             command = args
         elif isinstance(args, dict):
             arg_cmd = args.get("command")
             if isinstance(arg_cmd, str):
                 command = arg_cmd
+            raw_arg_timeout = args.get("timeout_s")
+            if raw_arg_timeout is not None:
+                try:
+                    arg_timeout = float(raw_arg_timeout)
+                except (TypeError, ValueError):
+                    arg_timeout = None
         if not command:
             raise ValueError("ExecTool requires 'command' (string) argument")
 
-        # Determine timeout: allow override via tool spec config, then
-        # fall back to project-level settings, then constant default.
+        # Determine timeout: allow override via tool args, then tool spec
+        # config, then fall back to project-level settings, then constant
+        # default.
         cfg = spec.config or {}
         timeout_s: float
-        raw_timeout = cfg.get("timeout_s")
-        if raw_timeout is not None:
-            try:
-                timeout_s = float(raw_timeout)
-            except (TypeError, ValueError):
-                timeout_s = EXEC_TOOL_TIMEOUT_S
+        if arg_timeout is not None:
+            timeout_s = arg_timeout
         else:
-            settings = self.prj.settings
-            if (
-                settings is not None
-                and settings.tool_settings is not None
-                and settings.tool_settings.exec_tool is not None
-                and settings.tool_settings.exec_tool.timeout_s is not None
-            ):
+            raw_timeout = cfg.get("timeout_s")
+            if raw_timeout is not None:
                 try:
-                    timeout_s = float(settings.exec_tool.timeout_s)
-                except (TypeError, ValueError):  # pragma: no cover - defensive
+                    timeout_s = float(raw_timeout)
+                except (TypeError, ValueError):
                     timeout_s = EXEC_TOOL_TIMEOUT_S
             else:
-                timeout_s = EXEC_TOOL_TIMEOUT_S
+                settings = self.prj.settings
+                if (
+                    settings is not None
+                    and settings.tool_settings is not None
+                    and settings.tool_settings.exec_tool is not None
+                    and settings.tool_settings.exec_tool.timeout_s is not None
+                ):
+                    try:
+                        timeout_s = float(settings.tool_settings.exec_tool.timeout_s)
+                    except (TypeError, ValueError):  # pragma: no cover - defensive
+                        timeout_s = EXEC_TOOL_TIMEOUT_S
+                else:
+                    timeout_s = EXEC_TOOL_TIMEOUT_S
 
         handle = await shell_manager.run(command, timeout=timeout_s)
 
@@ -207,7 +218,7 @@ class ExecTool(tools_base.BaseTool):
             "name": self.name,
             "description": (
                 "Execute a shell command and return combined stdout/stderr, exit code, and timeout status. "
-                f"Timeout is configurable via tool config (timeout_s) and defaults to {EXEC_TOOL_TIMEOUT_S} seconds. "
+                f"Timeout is configurable via the timeout_s parameter or tool config and defaults to {EXEC_TOOL_TIMEOUT_S} seconds. "
                 "Output is truncated to ~10KB."
             ),
             "parameters": {
@@ -216,6 +227,10 @@ class ExecTool(tools_base.BaseTool):
                     "command": {
                         "type": "string",
                         "description": "Command to run (executed via system shell).",
+                    },
+                    "timeout_s": {
+                        "type": "number",
+                        "description": "Optional per-call timeout in seconds.",
                     },
                 },
                 "required": ["command"],
